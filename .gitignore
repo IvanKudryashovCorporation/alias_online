@@ -1,0 +1,13 @@
+venv/
+.buildozer/
+bin/
+dist/
+build/
+data/*.db
+data/*.sqlite3
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.idea/
+.vscode/
