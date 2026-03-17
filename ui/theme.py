@@ -16,6 +16,8 @@ COLORS = {
     "button": (0.16, 0.43, 0.83, 0.95),
     "button_pressed": (0.13, 0.34, 0.68, 0.98),
     "surface": (0.06, 0.1, 0.17, 0.72),
+    "surface_card": (0.07, 0.11, 0.18, 0.92),
+    "surface_panel": (0.10, 0.15, 0.24, 0.90),
     "surface_strong": (0.05, 0.09, 0.15, 0.84),
     "avatar_placeholder_bg": (0.56, 0.61, 0.67, 0.96),
     "avatar_placeholder_text": (0.96, 0.97, 0.99, 1),

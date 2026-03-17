@@ -333,19 +333,19 @@ class BrandTitle(Widget):
         height = kwargs.pop("height", dp(320))
         super().__init__(size_hint_y=None, height=height, **kwargs)
 
-        font_size = font_size or sp(62)
-        shadow_step = shadow_step or dp(4)
-        layers = layers or [
-            (0, -shadow_step),
-            (shadow_step, -shadow_step),
+        self._font_size = font_size or sp(62)
+        self._shadow_step = shadow_step or dp(4)
+        self._shadow_offsets = layers or [
+            (0, -self._shadow_step),
+            (self._shadow_step, -self._shadow_step),
         ]
 
         self._shadow_layers = []
-        for dx, dy in layers:
+        for dx, dy in self._shadow_offsets:
             shadow = Label(
                 text=text,
                 font_name="BrandFont",
-                font_size=font_size,
+                font_size=self._font_size,
                 color=(0, 0, 0, 0.96),
                 halign="center",
                 valign="middle",
@@ -357,13 +357,31 @@ class BrandTitle(Widget):
         self._main_title = Label(
             text=text,
             font_name="BrandFont",
-            font_size=font_size,
+            font_size=self._font_size,
             color=COLORS["accent"],
             halign="center",
             valign="middle",
         )
         self.add_widget(self._main_title)
         self.bind(pos=self._sync_layers, size=self._sync_layers)
+
+    def set_style(self, font_size=None, shadow_step=None):
+        if font_size is not None:
+            self._font_size = font_size
+
+        if shadow_step is not None:
+            self._shadow_step = shadow_step
+            self._shadow_offsets = [
+                (0, -self._shadow_step),
+                (self._shadow_step, -self._shadow_step),
+            ]
+
+        for shadow, offset in zip(self._shadow_layers, self._shadow_offsets):
+            shadow.font_size = self._font_size
+            shadow._offset = offset
+
+        self._main_title.font_size = self._font_size
+        self._sync_layers()
 
     def _sync_layers(self, *_):
         for shadow in self._shadow_layers:
@@ -405,6 +423,7 @@ class AvatarButton(ButtonBehavior, FloatLayout):
         )
         self.add_widget(self._label)
         self.bind(pos=self._sync_canvas, size=self._sync_canvas)
+        self._image.bind(texture=self._sync_visual_state)
 
     def _sync_canvas(self, *_):
         self._shadow_rect.pos = self.pos
@@ -430,15 +449,19 @@ class AvatarButton(ButtonBehavior, FloatLayout):
         Animation.cancel_all(self._bg_color)
         Animation(rgba=COLORS["surface_strong"], duration=0.12).start(self._bg_color)
 
+    def _sync_visual_state(self, *_):
+        has_texture = self._image.texture is not None and bool(self._image.source)
+        self._image.opacity = 1 if has_texture else 0
+        self._label.opacity = 0 if has_texture else 1
+        self._bg_color.rgba = COLORS["surface_strong"] if has_texture else COLORS["avatar_placeholder_bg"]
+
     def set_profile(self, profile):
         source = resolve_image_source(getattr(profile, "avatar_source", None) if profile else None)
         self._label.text = "?"
         self._image.source = source or ""
         if source:
             self._image.reload()
-        self._image.opacity = 1 if source else 0
-        self._label.opacity = 0 if source else 1
-        self._bg_color.rgba = COLORS["surface_strong"] if source else COLORS["avatar_placeholder_bg"]
+        self._sync_visual_state()
 
 
 class BodyLabel(Label):

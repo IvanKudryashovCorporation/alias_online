@@ -6,6 +6,7 @@ from kivy.metrics import dp, sp
 from kivy.uix.behaviors import ButtonBehavior
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.filechooser import FileChooserListView
+from kivy.uix.floatlayout import FloatLayout
 from kivy.uix.image import Image
 from kivy.uix.label import Label
 from kivy.uix.popup import Popup
@@ -40,11 +41,10 @@ class SubtleActionButton(ButtonBehavior, Label):
         self.opacity = 0.85
 
 
-class AvatarPreview(BoxLayout):
+class AvatarPreview(FloatLayout):
     def __init__(self, **kwargs):
         register_game_font()
         super().__init__(
-            orientation="vertical",
             size_hint=(None, None),
             size=(dp(88), dp(88)),
             **kwargs,
@@ -70,6 +70,7 @@ class AvatarPreview(BoxLayout):
         self.add_widget(self._placeholder)
 
         self.bind(pos=self._sync_children, size=self._sync_children)
+        self._image.bind(texture=self._sync_visual_state)
 
     def _sync_children(self, *_):
         self._bg_rect.pos = self.pos
@@ -82,14 +83,18 @@ class AvatarPreview(BoxLayout):
         self._placeholder.size = self.size
         self._placeholder.text_size = self.size
 
+    def _sync_visual_state(self, *_):
+        has_texture = self._image.texture is not None and bool(self._image.source)
+        self._image.opacity = 1 if has_texture else 0
+        self._placeholder.opacity = 0 if has_texture else 1
+        self._bg_color.rgba = COLORS["surface_strong"] if has_texture else COLORS["avatar_placeholder_bg"]
+
     def set_avatar(self, source=None):
         resolved_source = resolve_image_source(source)
         self._image.source = resolved_source or ""
         if resolved_source:
             self._image.reload()
-        self._image.opacity = 1 if resolved_source else 0
-        self._placeholder.opacity = 0 if resolved_source else 1
-        self._bg_color.rgba = COLORS["surface_strong"] if resolved_source else COLORS["avatar_placeholder_bg"]
+        self._sync_visual_state()
 
 
 class RegistrationScreen(Screen):
@@ -102,13 +107,16 @@ class RegistrationScreen(Screen):
         self.default_content_spacing = dp(8)
         self.compact_content_spacing = dp(4)
         self.default_content_padding = [dp(18), dp(16), dp(18), dp(18)]
-        self.compact_content_padding = [dp(12), dp(10), dp(12), dp(10)]
+        self.compact_content_padding = [dp(12), dp(12), dp(12), dp(8)]
         self.default_card_padding = [dp(16), dp(14), dp(16), dp(14)]
-        self.compact_card_padding = [dp(18), dp(12), dp(18), dp(12)]
+        self.compact_card_padding = [dp(18), dp(16), dp(18), dp(12)]
         self.default_card_spacing = dp(8)
         self.compact_card_spacing = dp(4)
         self.default_input_padding = [dp(16), dp(18), dp(16), dp(12)]
-        self.profile_input_padding = [dp(14), dp(12), dp(14), dp(12)]
+        self.profile_input_padding = [dp(12), dp(10), dp(12), dp(8)]
+        self.field_width = dp(292)
+        self.button_width = dp(274)
+        self.avatar_panel_width = dp(214)
 
         root = ScreenBackground()
 
@@ -138,18 +146,46 @@ class RegistrationScreen(Screen):
         self.brand_title = BrandTitle(text="ALIAS ONLINE", height=dp(136), font_size=sp(44), shadow_step=dp(3))
         content.add_widget(self.brand_title)
 
+        self.profile_header = BoxLayout(
+            orientation="vertical",
+            spacing=dp(2),
+            size_hint_y=None,
+            height=0,
+            opacity=0,
+        )
+        self.profile_title = PixelLabel(
+            text="\u041f\u0440\u043e\u0444\u0438\u043b\u044c",
+            font_size=sp(16),
+            center=True,
+            size_hint_y=None,
+        )
+        self.profile_summary = BodyLabel(
+            center=True,
+            color=COLORS["text_muted"],
+            font_size=sp(10),
+            size_hint_y=None,
+            text="",
+        )
+        self.profile_header.add_widget(self.profile_title)
+        self.profile_header.add_widget(self.profile_summary)
+        content.add_widget(self.profile_header)
+
         self.top_spacer = Widget(size_hint_y=None, height=dp(10))
         content.add_widget(self.top_spacer)
 
         self.card = RoundedPanel(
+            bg_color=COLORS["surface_card"],
+            shadow_alpha=0.28,
             orientation="vertical",
             padding=self.default_card_padding,
             spacing=self.default_card_spacing,
             size_hint_y=None,
             height=dp(560),
         )
+        self.card.pos_hint = {"center_x": 0.5}
 
         self.title_label = PixelLabel(text="\u0420\u0435\u0433\u0438\u0441\u0442\u0440\u0430\u0446\u0438\u044f", font_size=sp(18), center=True, size_hint_y=None)
+        self.title_label.height = dp(28)
         self.card.add_widget(self.title_label)
 
         self.subtitle_row = BoxLayout(orientation="vertical", size_hint_y=None, height=dp(32))
@@ -169,30 +205,41 @@ class RegistrationScreen(Screen):
         self.email_input.padding = self.default_input_padding[:]
         self.password_input.padding = self.default_input_padding[:]
 
-        self.name_caption_row = BoxLayout(orientation="vertical", size_hint_y=None, height=0, opacity=0)
+        self.name_caption_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=0, opacity=0)
         self.name_caption = BodyLabel(
             text="\u041d\u0438\u043a\u043d\u0435\u0439\u043c",
             color=COLORS["text_muted"],
             font_size=sp(11),
             size_hint_y=None,
         )
+        self.name_caption.size_hint_x = None
+        self.name_caption.width = self.field_width
+        self.name_caption.halign = "left"
+        self.name_caption_row.add_widget(Widget())
         self.name_caption_row.add_widget(self.name_caption)
+        self.name_caption_row.add_widget(Widget())
 
-        self.email_caption_row = BoxLayout(orientation="vertical", size_hint_y=None, height=0, opacity=0)
+        self.email_caption_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=0, opacity=0)
         self.email_caption = BodyLabel(
             text="E-mail",
             color=COLORS["text_muted"],
             font_size=sp(11),
             size_hint_y=None,
         )
+        self.email_caption.size_hint_x = None
+        self.email_caption.width = self.field_width
+        self.email_caption.halign = "left"
+        self.email_caption_row.add_widget(Widget())
         self.email_caption_row.add_widget(self.email_caption)
+        self.email_caption_row.add_widget(Widget())
 
-        self.password_row = BoxLayout(orientation="vertical", size_hint_y=None, height=dp(48))
-        self.password_row.add_widget(self.password_input)
+        self.name_row = self._centered_row(self.name_input, height=dp(48), width=self.field_width)
+        self.email_row = self._centered_row(self.email_input, height=dp(48), width=self.field_width)
+        self.password_row = self._centered_row(self.password_input, height=dp(48), width=self.field_width)
         self.card.add_widget(self.name_caption_row)
-        self.card.add_widget(self.name_input)
+        self.card.add_widget(self.name_row)
         self.card.add_widget(self.email_caption_row)
-        self.card.add_widget(self.email_input)
+        self.card.add_widget(self.email_row)
         self.card.add_widget(self.password_row)
 
         self.avatar_mode_note_row = BoxLayout(orientation="vertical", size_hint_y=None, height=dp(22))
@@ -205,7 +252,18 @@ class RegistrationScreen(Screen):
         self.avatar_mode_note_row.add_widget(self.avatar_mode_note)
         self.card.add_widget(self.avatar_mode_note_row)
 
-        self.avatar_section = BoxLayout(orientation="vertical", spacing=dp(6), size_hint_y=None, height=0, opacity=0)
+        self.avatar_section = RoundedPanel(
+            bg_color=COLORS["surface_panel"],
+            shadow_alpha=0.16,
+            orientation="vertical",
+            spacing=dp(8),
+            padding=[dp(14), dp(12), dp(14), dp(12)],
+            size_hint=(None, None),
+            width=self.avatar_panel_width,
+            height=0,
+            opacity=0,
+        )
+        self.avatar_section_row = self._centered_row(self.avatar_section, height=0)
 
         self.preview_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(92))
         self.avatar_preview = AvatarPreview()
@@ -239,8 +297,6 @@ class RegistrationScreen(Screen):
         self.clear_row.add_widget(Widget())
         self.avatar_section.add_widget(self.clear_row)
 
-        self.card.add_widget(self.avatar_section)
-
         self.avatar_status_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=0, opacity=0)
         self.avatar_status_label = BodyLabel(
             center=True,
@@ -251,19 +307,22 @@ class RegistrationScreen(Screen):
             text="",
         )
         self.avatar_status_row.add_widget(self.avatar_status_label)
-        self.card.add_widget(self.avatar_status_row)
+        self.avatar_section.add_widget(self.avatar_status_row)
+        self.card.add_widget(self.avatar_section_row)
 
         self.bio_input = AppTextInput(
             hint_text="\u041e\u043f\u0438\u0441\u0430\u043d\u0438\u0435 \u043f\u0440\u043e\u0444\u0438\u043b\u044f (\u043d\u0435\u043e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u044c\u043d\u043e)",
             multiline=True,
             height=dp(72),
         )
-        self.card.add_widget(self.bio_input)
+        self.bio_row = self._centered_row(self.bio_input, height=dp(72), width=self.field_width)
+        self.card.add_widget(self.bio_row)
 
         self.save_btn = AppButton(text="\u0421\u043e\u0437\u0434\u0430\u0442\u044c \u043f\u0440\u043e\u0444\u0438\u043b\u044c", font_size=sp(18))
         self.save_btn.height = dp(64)
         self.save_btn.bind(on_release=self.submit_profile)
-        self.card.add_widget(self.save_btn)
+        self.save_row = self._centered_row(self.save_btn, height=dp(64), width=self.button_width)
+        self.card.add_widget(self.save_row)
 
         self.status_row = BoxLayout(orientation="vertical", size_hint_y=None, height=dp(36))
         self.status_label = BodyLabel(
@@ -272,7 +331,12 @@ class RegistrationScreen(Screen):
             font_size=sp(11),
             text="\u041f\u043e\u0441\u043b\u0435 \u0440\u0435\u0433\u0438\u0441\u0442\u0440\u0430\u0446\u0438\u0438 \u043e\u0442\u043a\u0440\u043e\u0435\u0442\u0441\u044f \u0433\u043b\u0430\u0432\u043d\u043e\u0435 \u043c\u0435\u043d\u044e.",
         )
+        self.status_label.size_hint_x = None
+        self.status_label.width = self.field_width
+        self.status_row.orientation = "horizontal"
+        self.status_row.add_widget(Widget())
         self.status_row.add_widget(self.status_label)
+        self.status_row.add_widget(Widget())
         self.card.add_widget(self.status_row)
 
         self.logout_btn = AppButton(
@@ -287,7 +351,8 @@ class RegistrationScreen(Screen):
         self.logout_btn.opacity = 0
         self.logout_btn.disabled = True
         self.logout_btn.bind(on_release=self._logout)
-        self.card.add_widget(self.logout_btn)
+        self.logout_row = self._centered_row(self.logout_btn, height=0, width=self.button_width)
+        self.card.add_widget(self.logout_row)
 
         content.add_widget(self.card)
         self.bottom_spacer = Widget(size_hint_y=None, height=dp(10))
@@ -297,6 +362,20 @@ class RegistrationScreen(Screen):
         root.add_widget(self.scroll)
         self.add_widget(root)
         self._sync_avatar_actions()
+
+    def _centered_row(self, widget, height, width=None):
+        if width is not None:
+            widget.size_hint_x = None
+            widget.width = width
+
+        widget.size_hint_y = None
+        widget.height = height
+
+        row = BoxLayout(orientation="horizontal", size_hint_y=None, height=height)
+        row.add_widget(Widget())
+        row.add_widget(widget)
+        row.add_widget(Widget())
+        return row
 
     def on_pre_enter(self, *_):
         app = App.get_running_app()
@@ -319,6 +398,7 @@ class RegistrationScreen(Screen):
             self.status_label.text = "\u0421\u043e\u0437\u0434\u0430\u0439 \u0430\u043a\u043a\u0430\u0443\u043d\u0442, \u0430 \u0444\u043e\u0442\u043e \u0434\u043e\u0431\u0430\u0432\u0438\u0448\u044c \u043f\u043e\u0437\u0436\u0435 \u0432 \u043f\u0440\u043e\u0444\u0438\u043b\u0435."
             return
 
+        latest_profile = self._ensure_profile_avatar_ready(latest_profile)
         self.name_input.text = latest_profile.name
         self.email_input.text = latest_profile.email
         self.password_input.text = ""
@@ -422,11 +502,17 @@ class RegistrationScreen(Screen):
             self.avatar_status_label.text = "\u0421\u043d\u0430\u0447\u0430\u043b\u0430 \u0432\u044b\u0431\u0435\u0440\u0438 \u0438\u0437\u043e\u0431\u0440\u0430\u0436\u0435\u043d\u0438\u0435 \u0432 \u0441\u043f\u0438\u0441\u043a\u0435 \u0444\u0430\u0439\u043b\u043e\u0432."
             return
 
-        chosen_path = str(Path(selection[0]).expanduser().resolve())
+        try:
+            chosen_path = self._store_avatar_file(selection[0])
+        except (OSError, ValueError) as error:
+            self.avatar_status_label.color = COLORS["error"]
+            self.avatar_status_label.text = str(error)
+            return
+
         self.selected_avatar_path = chosen_path
         self.avatar_preview.set_avatar(chosen_path)
         self.avatar_status_label.color = COLORS["success"]
-        self.avatar_status_label.text = Path(chosen_path).name
+        self.avatar_status_label.text = Path(selection[0]).name
         self._sync_avatar_actions()
         self.dismiss_avatar_picker()
 
@@ -441,28 +527,42 @@ class RegistrationScreen(Screen):
         self.profile_mode = enabled
 
         if enabled:
+            self.profile_header.height = dp(38)
+            self.profile_header.opacity = 1
+            self.profile_title.font_size = sp(16)
+            self.profile_summary.font_size = sp(10)
             self.title_label.text = "\u041f\u0440\u043e\u0444\u0438\u043b\u044c"
-            self.title_label.font_size = sp(18)
+            self.title_label.font_size = sp(16)
+            self.title_label.height = 0
+            self.title_label.opacity = 0
             self.subtitle_label.text = ""
-            self.subtitle_label.font_size = sp(10.5)
+            self.subtitle_label.font_size = sp(9.5)
             self.avatar_mode_note.text = "\u0424\u043e\u0442\u043e \u043f\u0440\u043e\u0444\u0438\u043b\u044f"
             self.scroll.do_scroll_y = False
-            self.content.spacing = self.compact_content_spacing
-            self.content.padding = self.compact_content_padding
-            self.card.spacing = self.compact_card_spacing
-            self.card.padding = self.compact_card_padding
-            self.brand_title.height = dp(68)
-            self.top_spacer.height = dp(8)
-            self.bottom_spacer.height = dp(2)
-            self.subtitle_row.height = dp(18)
-            self.subtitle_row.opacity = 1
-            self.name_caption_row.height = dp(16)
+            self.content.spacing = dp(3)
+            self.content.padding = [dp(8), dp(10), dp(8), dp(8)]
+            self.card.spacing = dp(1)
+            self.card.padding = [dp(18), dp(14), dp(18), dp(14)]
+            self.brand_title.height = dp(60)
+            self.brand_title.set_style(font_size=sp(30), shadow_step=dp(2))
+            self.profile_header.height = dp(30)
+            self.top_spacer.height = dp(18)
+            self.bottom_spacer.height = dp(6)
+            self.subtitle_row.height = 0
+            self.subtitle_row.opacity = 0
+            self.name_caption_row.height = dp(14)
             self.name_caption_row.opacity = 1
+            self.name_caption.font_size = sp(10.5)
             self.email_caption.text = "E-mail"
-            self.email_caption_row.height = dp(16)
+            self.email_caption_row.height = dp(14)
             self.email_caption_row.opacity = 1
-            self.name_input.height = dp(44)
-            self.email_input.height = dp(44)
+            self.email_caption.font_size = sp(10.5)
+            self.name_row.height = dp(36)
+            self.email_row.height = dp(36)
+            self.name_input.height = dp(36)
+            self.email_input.height = dp(36)
+            self.name_input.font_size = sp(14)
+            self.email_input.font_size = sp(14)
             self.name_input.padding = self.profile_input_padding[:]
             self.email_input.padding = self.profile_input_padding[:]
             self.name_input.readonly = True
@@ -474,31 +574,43 @@ class RegistrationScreen(Screen):
             self.password_input.disabled = True
             self.avatar_mode_note_row.height = 0
             self.avatar_mode_note_row.opacity = 0
-            self.avatar_preview.size = (dp(76), dp(76))
-            self.preview_row.height = dp(78)
-            self.avatar_button_gap.height = dp(6)
-            self.add_photo_row.height = dp(36)
-            self.pick_avatar_btn.size = (dp(188), dp(36))
-            self.avatar_section.height = dp(146)
+            self.avatar_section.spacing = dp(4)
+            self.avatar_section.padding = [dp(12), dp(10), dp(12), dp(10)]
+            self.avatar_section_row.height = dp(184)
+            self.avatar_preview.size = (dp(68), dp(68))
+            self.preview_row.height = dp(70)
+            self.avatar_button_gap.height = dp(4)
+            self.add_photo_row.height = dp(32)
+            self.pick_avatar_btn.size = (dp(170), dp(32))
+            self.avatar_section.height = dp(184)
             self.avatar_section.opacity = 1
-            self.avatar_status_row.height = dp(18)
+            self.avatar_status_row.height = dp(16)
             self.avatar_status_row.opacity = 1
-            self.bio_input.height = dp(52)
+            self.bio_row.height = dp(42)
+            self.bio_input.height = dp(42)
+            self.bio_input.font_size = sp(14)
             self.bio_input.hint_text = "\u0420\u0430\u0441\u0441\u043a\u0430\u0436\u0438 \u043f\u0430\u0440\u0443 \u0441\u043b\u043e\u0432 \u043e \u0441\u0435\u0431\u0435"
             self.pick_avatar_btn.disabled = False
-            self.save_btn.height = dp(46)
+            self.save_row.height = dp(40)
+            self.save_btn.height = dp(40)
             self.status_row.height = 0
             self.status_row.opacity = 0
-            self.card.height = dp(470)
+            self.card.height = dp(454)
             self.logout_btn.disabled = False
             self.logout_btn.opacity = 1
-            self.logout_btn.height = dp(46)
+            self.logout_row.height = dp(40)
+            self.logout_btn.height = dp(40)
             self._sync_avatar_actions()
             self.save_btn.text = "\u0421\u043e\u0445\u0440\u0430\u043d\u0438\u0442\u044c \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f"
             return
 
+        self.profile_header.height = 0
+        self.profile_header.opacity = 0
+        self.profile_summary.text = ""
         self.title_label.text = "\u0420\u0435\u0433\u0438\u0441\u0442\u0440\u0430\u0446\u0438\u044f"
         self.title_label.font_size = sp(18)
+        self.title_label.height = dp(28)
+        self.title_label.opacity = 1
         self.subtitle_label.text = "\u0421\u043e\u0437\u0434\u0430\u0439 \u043f\u0440\u043e\u0444\u0438\u043b\u044c, \u0447\u0442\u043e\u0431\u044b \u0432\u043e\u0439\u0442\u0438 \u0432 \u0438\u0433\u0440\u0443."
         self.subtitle_label.font_size = sp(12)
         self.avatar_mode_note.text = "\u0410\u0432\u0430\u0442\u0430\u0440 \u043c\u043e\u0436\u043d\u043e \u0431\u0443\u0434\u0435\u0442 \u0434\u043e\u0431\u0430\u0432\u0438\u0442\u044c \u043f\u043e\u0437\u0436\u0435 \u0432 \u043f\u0440\u043e\u0444\u0438\u043b\u0435."
@@ -508,16 +620,24 @@ class RegistrationScreen(Screen):
         self.card.spacing = self.default_card_spacing
         self.card.padding = self.default_card_padding
         self.brand_title.height = dp(136)
+        self.brand_title.set_style(font_size=sp(44), shadow_step=dp(3))
+        self.profile_header.height = 0
         self.top_spacer.height = dp(10)
         self.bottom_spacer.height = dp(10)
         self.subtitle_row.height = dp(32)
         self.subtitle_row.opacity = 1
         self.name_caption_row.height = 0
         self.name_caption_row.opacity = 0
+        self.name_caption.font_size = sp(11)
         self.email_caption_row.height = 0
         self.email_caption_row.opacity = 0
+        self.email_caption.font_size = sp(11)
+        self.name_row.height = dp(48)
+        self.email_row.height = dp(48)
         self.name_input.height = dp(48)
         self.email_input.height = dp(48)
+        self.name_input.font_size = sp(16)
+        self.email_input.font_size = sp(16)
         self.name_input.padding = self.default_input_padding[:]
         self.email_input.padding = self.default_input_padding[:]
         self.password_input.padding = self.default_input_padding[:]
@@ -530,34 +650,43 @@ class RegistrationScreen(Screen):
         self.password_input.disabled = False
         self.avatar_mode_note_row.height = dp(22)
         self.avatar_mode_note_row.opacity = 1
+        self.avatar_section.spacing = dp(8)
+        self.avatar_section.padding = [dp(14), dp(12), dp(14), dp(12)]
         self.avatar_preview.size = (dp(88), dp(88))
         self.preview_row.height = dp(92)
         self.avatar_button_gap.height = dp(12)
         self.add_photo_row.height = dp(42)
         self.pick_avatar_btn.size = (dp(210), dp(40))
+        self.avatar_section_row.height = 0
         self.avatar_section.height = 0
         self.avatar_section.opacity = 0
         self.avatar_status_row.height = 0
         self.avatar_status_row.opacity = 0
+        self.bio_row.height = dp(72)
         self.bio_input.height = dp(72)
+        self.bio_input.font_size = sp(16)
         self.bio_input.hint_text = "\u041e\u043f\u0438\u0441\u0430\u043d\u0438\u0435 \u043f\u0440\u043e\u0444\u0438\u043b\u044f (\u043d\u0435\u043e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u044c\u043d\u043e)"
         self.pick_avatar_btn.disabled = True
         self.clear_avatar_btn.disabled = True
         self.clear_avatar_btn.opacity = 0
         self.clear_avatar_btn.height = 0
         self.clear_row.height = 0
+        self.save_row.height = dp(64)
         self.save_btn.height = dp(64)
         self.status_row.height = dp(36)
         self.status_row.opacity = 1
         self.card.height = dp(560)
         self.logout_btn.disabled = True
         self.logout_btn.opacity = 0
+        self.logout_row.height = 0
         self.logout_btn.height = 0
         self.save_btn.text = "\u0421\u043e\u0437\u0434\u0430\u0442\u044c \u043f\u0440\u043e\u0444\u0438\u043b\u044c"
 
     def _apply_profile_summary(self, profile):
         joined_label = self._format_profile_date(profile.created_at)
-        self.subtitle_label.text = f"\u041a\u043e\u0434 \u0438\u0433\u0440\u043e\u043a\u0430 #{profile.id}  •  \u0432 \u0438\u0433\u0440\u0435 \u0441 {joined_label}"
+        summary = f"\u041a\u043e\u0434 \u0438\u0433\u0440\u043e\u043a\u0430 #{profile.id} | \u0432 \u0438\u0433\u0440\u0435 \u0441 {joined_label}"
+        self.profile_summary.text = summary
+        self.subtitle_label.text = summary
 
     def _format_profile_date(self, created_at):
         raw_value = (created_at or "").strip()
@@ -582,8 +711,65 @@ class RegistrationScreen(Screen):
         has_avatar = bool(self.selected_avatar_path)
         self.clear_avatar_btn.disabled = not has_avatar
         self.clear_avatar_btn.opacity = 0.85 if has_avatar else 0
-        self.clear_avatar_btn.height = dp(22) if has_avatar else 0
-        self.clear_row.height = dp(14) if has_avatar else 0
+        self.clear_avatar_btn.height = dp(20) if has_avatar else 0
+        self.clear_row.height = dp(20) if has_avatar else 0
+
+    def _avatar_storage_dir(self):
+        app = App.get_running_app()
+        if app is not None and getattr(app, "user_data_dir", None):
+            return Path(app.user_data_dir) / "avatars"
+        return Path(__file__).resolve().parents[1] / "data" / "avatars"
+
+    def _ensure_profile_avatar_ready(self, profile):
+        if profile is None or not profile.avatar_path:
+            return profile
+
+        avatar_path = Path(profile.avatar_path).expanduser()
+        if not avatar_path.exists():
+            return profile
+
+        storage_dir = self._avatar_storage_dir().resolve()
+        resolved_avatar = avatar_path.resolve()
+        if resolved_avatar.suffix.lower() == ".png" and resolved_avatar.parent == storage_dir:
+            return profile
+
+        try:
+            normalized_path = self._store_avatar_file(resolved_avatar)
+        except ValueError:
+            return profile
+
+        return update_profile(email=profile.email, avatar_path=normalized_path, bio=profile.bio)
+
+    def _store_avatar_file(self, source_path):
+        from PIL import Image as PILImage, ImageOps, UnidentifiedImageError
+
+        source = Path(source_path).expanduser()
+        if not source.exists():
+            raise ValueError("\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043d\u0430\u0439\u0442\u0438 \u0432\u044b\u0431\u0440\u0430\u043d\u043d\u043e\u0435 \u0444\u043e\u0442\u043e.")
+
+        extension = source.suffix.lower()
+        if extension not in {".png", ".jpg", ".jpeg", ".webp", ".bmp"}:
+            raise ValueError("\u042d\u0442\u043e\u0442 \u0444\u043e\u0440\u043c\u0430\u0442 \u0444\u043e\u0442\u043e \u043f\u043e\u043a\u0430 \u043d\u0435 \u043f\u043e\u0434\u0434\u0435\u0440\u0436\u0438\u0432\u0430\u0435\u0442\u0441\u044f.")
+
+        target_dir = self._avatar_storage_dir()
+        target_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S%f")
+        target_path = target_dir / f"avatar_{timestamp}.png"
+
+        try:
+            with PILImage.open(source) as image:
+                prepared = ImageOps.exif_transpose(image).convert("RGBA")
+                side = min(prepared.size)
+                left = max(0, int((prepared.width - side) / 2))
+                top = max(0, int((prepared.height - side) / 2))
+                avatar_image = prepared.crop((left, top, left + side, top + side))
+                resampling = getattr(getattr(PILImage, "Resampling", PILImage), "LANCZOS", PILImage.LANCZOS)
+                avatar_image.thumbnail((512, 512), resampling)
+                avatar_image.save(target_path, format="PNG", optimize=True)
+        except (OSError, UnidentifiedImageError) as error:
+            raise ValueError("\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043e\u0442\u043a\u0440\u044b\u0442\u044c \u044d\u0442\u043e \u0444\u043e\u0442\u043e. \u0412\u044b\u0431\u0435\u0440\u0438 \u0434\u0440\u0443\u0433\u043e\u0439 \u0444\u0430\u0439\u043b.") from error
+
+        return str(target_path.resolve())
 
     def _go_back(self, *_):
         app = App.get_running_app()
