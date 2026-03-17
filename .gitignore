@@ -11,3 +11,6 @@ __pycache__/
 .mypy_cache/
 .idea/
 .vscode/
+server/rooms.db
+server/*.log
+server/__pycache__/

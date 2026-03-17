@@ -9,6 +9,7 @@ from screens.friends import FriendsScreen
 from screens.join_room import JoinRoomScreen
 from screens.login_screen import LoginScreen
 from screens.registration_screen import RegistrationScreen
+from screens.room_screen import RoomScreen
 from screens.rules import RulesScreen
 from screens.start_screen import StartScreen
 from services import get_active_profile, initialize_database, set_active_profile
@@ -29,6 +30,7 @@ class AliasApp(App):
         self.authenticated = False
         self.guest_mode = False
         self.guest_counter = 0
+        self.active_room = {}
 
     def build(self):
         register_game_font()
@@ -47,6 +49,7 @@ class AliasApp(App):
         screen_manager.add_widget(JoinRoomScreen(name="join_room"))
         screen_manager.add_widget(FriendsScreen(name="friends"))
         screen_manager.add_widget(RulesScreen(name="rules"))
+        screen_manager.add_widget(RoomScreen(name="room"))
         screen_manager.bind(current=self._guard_session)
         screen_manager.current = "start" if self.authenticated else "entry"
         return screen_manager
@@ -69,6 +72,7 @@ class AliasApp(App):
     def sign_in(self, profile=None):
         self.authenticated = profile is not None
         self.guest_mode = False
+        self.clear_active_room()
 
         if profile is not None:
             set_active_profile(profile.email)
@@ -80,16 +84,28 @@ class AliasApp(App):
         self.guest_mode = True
         self.guest_counter += 1
         self.guest_name = f"Гость{self.guest_counter}"
+        self.clear_active_room()
 
     def start_registration_flow(self):
         self.authenticated = False
         self.guest_mode = False
         set_active_profile(None)
+        self.clear_active_room()
 
     def sign_out(self):
         self.authenticated = False
         self.guest_mode = False
         set_active_profile(None)
+        self.clear_active_room()
+
+    def set_active_room(self, room):
+        self.active_room = dict(room or {})
+
+    def get_active_room(self):
+        return dict(self.active_room or {})
+
+    def clear_active_room(self):
+        self.active_room = {}
 
     def _guard_session(self, manager, current_screen_name):
         if current_screen_name in {"entry", "login", "registration"}:
