@@ -242,16 +242,27 @@ class LobbyPlayerCard(RoundedPanel):
     def __init__(self, **kwargs):
         super().__init__(
             orientation="vertical",
-            spacing=dp(2),
+            spacing=dp(1),
             padding=[dp(5), dp(5), dp(5), dp(5)],
             size_hint_x=None,
             size_hint_y=None,
-            height=dp(78),
+            height=dp(80),
             bg_color=COLORS["surface_panel"],
             shadow_alpha=0.14,
             **kwargs,
         )
-        avatar_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(28))
+        self.role_label = PixelLabel(
+            text="",
+            center=True,
+            font_size=sp(7.5),
+            color=COLORS["accent"],
+            size_hint_y=None,
+            height=0,
+            opacity=0,
+        )
+        self.add_widget(self.role_label)
+
+        avatar_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(26))
         avatar_row.add_widget(Widget())
         self.avatar = AvatarButton()
         self.avatar.size = (dp(26), dp(26))
@@ -260,7 +271,7 @@ class LobbyPlayerCard(RoundedPanel):
         avatar_row.add_widget(Widget())
         self.add_widget(avatar_row)
 
-        text_col = BoxLayout(orientation="vertical", spacing=dp(0), size_hint_y=None, height=dp(28))
+        text_col = BoxLayout(orientation="vertical", spacing=dp(0), size_hint_y=None, height=dp(30))
         self.games_label = BodyLabel(text="", center=True, color=COLORS["text_soft"], font_size=sp(8.5), size_hint_y=None)
         text_col.add_widget(self.games_label)
         self.earned_label = BodyLabel(text="", center=True, color=COLORS["accent"], font_size=sp(8.5), size_hint_y=None)
@@ -273,6 +284,20 @@ class LobbyPlayerCard(RoundedPanel):
         total_earned = getattr(profile, "total_points", 0) if profile is not None else 0
         self.games_label.text = f"Игр: {games_played}"
         self.earned_label.text = f"Монет: {total_earned} AC"
+        if is_explainer:
+            self.role_label.text = "ВЕДУЩИЙ"
+            self.role_label.height = dp(12)
+            self.role_label.opacity = 1
+            self._bg_color.rgba = (0.19, 0.27, 0.39, 0.98)
+            self._border_color.rgba = COLORS["accent"]
+            self._border_line.width = 1.8
+        else:
+            self.role_label.text = ""
+            self.role_label.height = 0
+            self.role_label.opacity = 0
+            self._bg_color.rgba = COLORS["surface_panel"]
+            self._border_color.rgba = COLORS["outline"]
+            self._border_line.width = 1.2
 
 
 class FullscreenCountdownOverlay(FloatLayout):
@@ -343,6 +368,7 @@ class RoomScreen(Screen):
         self._last_chat_signature = None
         self._leave_sent = False
         self.voice_engine = RoomVoiceEngine()
+        self._start_game_scheduled = False
 
         root = ScreenBackground(variant="game")
         content = BoxLayout(
@@ -391,7 +417,7 @@ class RoomScreen(Screen):
             spacing=dp(6),
             padding=[dp(2), dp(2), dp(2), dp(2)],
             size_hint=(None, None),
-            row_default_height=dp(78),
+            row_default_height=dp(84),
             row_force_default=True,
             col_default_width=dp(96),
             col_force_default=True,
@@ -426,7 +452,7 @@ class RoomScreen(Screen):
             size_hint=(None, None),
             size=(dp(228), dp(46)),
         )
-        self.start_game_btn.bind(on_release=self._start_game)
+        self.start_game_btn.bind(on_press=self._queue_start_game, on_release=self._queue_start_game)
         self.lobby_start_row.add_widget(self.start_game_btn)
         self.lobby_start_row.add_widget(Widget())
         content.add_widget(self.lobby_start_row)
@@ -611,7 +637,7 @@ class RoomScreen(Screen):
         return self._same_player(self._player_name(), room.get("host_name"))
 
     def _can_start_game(self):
-        return self._current_phase() == "lobby" and bool(self._player_name())
+        return bool(self._player_name()) and (self._is_host() or self._is_explainer())
 
     def _sync_players_grid_width(self, *_):
         cols = max(1, int(getattr(self.players_box, "cols", 1) or 1))
@@ -679,7 +705,7 @@ class RoomScreen(Screen):
 
     def _render_player_cards(self, players, explainer_name):
         self.players_box.clear_widgets()
-        self.players_box.cols = 1 if not players else max(1, min(3, len(players)))
+        self.players_box.cols = 1 if not players else 3
         self._sync_players_grid_width()
         if not players:
             self.players_box.add_widget(
@@ -784,7 +810,7 @@ class RoomScreen(Screen):
         else:
             mic_state_text = "молчит"
         if phase == "lobby":
-            self.explainer_status_label.text = f"Ведущий после старта: {explainer_name}"
+            self.explainer_status_label.text = f"Ведущий игры: {explainer_name} • объясняет слова"
         else:
             self.explainer_status_label.text = f"Ведущий: {explainer_name} | Микрофон: {mic_state_text}"
 
@@ -921,7 +947,14 @@ class RoomScreen(Screen):
         target_scroll = 0 if was_near_bottom else previous_scroll_y
         Clock.schedule_once(lambda *_: setattr(self.chat_scroll, "scroll_y", target_scroll), 0)
 
+    def _queue_start_game(self, *_):
+        if self._start_game_scheduled or self.start_game_btn.disabled:
+            return
+        self._start_game_scheduled = True
+        Clock.schedule_once(self._start_game, 0)
+
     def _start_game(self, *_):
+        self._start_game_scheduled = False
         if self._current_phase() != "lobby":
             self.status_label.color = COLORS["warning"]
             self.status_label.text = "Игра уже запущена."

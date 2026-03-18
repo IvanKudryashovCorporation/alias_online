@@ -4,7 +4,7 @@ from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.screenmanager import Screen
 from kivy.uix.spinner import Spinner, SpinnerOption
 
-from services import ROOM_CREATION_COST, create_online_room, room_server_url, spend_alias_coins
+from services import ROOM_CREATION_COST, create_online_room, join_online_room, room_server_url, spend_alias_coins
 from ui import (
     AppButton,
     AppTextInput,
@@ -61,6 +61,7 @@ class CreateRoomScreen(Screen):
         super().__init__(**kwargs)
         register_game_font()
         self.pending_room_config = None
+        self._autofill_bots_on_next_create = 4
 
         root = ScreenBackground()
         scroll, content = build_scrollable_content(padding=[dp(20), dp(24), dp(20), dp(20)], spacing=10)
@@ -214,6 +215,26 @@ class CreateRoomScreen(Screen):
         self.open_list_btn.opacity = 1 if enabled else 0
         self.open_list_btn.height = dp(44) if enabled else 0
 
+    def _spawn_test_bots(self, room_code, max_players):
+        bots_to_add = max(0, int(self._autofill_bots_on_next_create or 0))
+        free_slots = max(0, int(max_players) - 1)
+        target_count = min(bots_to_add, free_slots)
+        latest_room = None
+        spawned = 0
+
+        for index in range(1, target_count + 1):
+            bot_name = f"Bot {index}"
+            try:
+                latest_room = join_online_room(room_code=room_code, player_name=bot_name)
+                spawned += 1
+            except (ConnectionError, ValueError):
+                break
+
+        if spawned:
+            self._autofill_bots_on_next_create = 0
+
+        return spawned, latest_room
+
     def prepare_room(self, *_):
         app = App.get_running_app()
         player_name = app.resolve_player_name() if app is not None else None
@@ -283,11 +304,15 @@ class CreateRoomScreen(Screen):
             self.status_label.text = "Выбери количество раундов."
             return
 
+        requested_players = int(players)
+        if self._autofill_bots_on_next_create:
+            requested_players = max(requested_players, 1 + int(self._autofill_bots_on_next_create))
+
         try:
             room = create_online_room(
                 host_name=player_name,
                 room_name=room_name,
-                max_players=int(players),
+                max_players=requested_players,
                 difficulty=difficulty,
                 visibility=visibility,
                 visibility_scope="public" if visibility.startswith("Публичная") else "private",
@@ -303,7 +328,13 @@ class CreateRoomScreen(Screen):
             self.status_label.text = str(error)
             return
 
-        self.pending_room_config = room
+        spawned_bots = 0
+        latest_room = None
+        if room.get("code"):
+            spawned_bots, latest_room = self._spawn_test_bots(room.get("code"), room.get("max_players", requested_players))
+
+        active_room = latest_room or room
+        self.pending_room_config = active_room
         try:
             updated_profile = spend_alias_coins(email=profile.email, amount=ROOM_CREATION_COST)
         except ValueError:
@@ -313,9 +344,10 @@ class CreateRoomScreen(Screen):
         self.status_label.text = (
             f"Комната '{room.get('room_name', room_name)}' создана. "
             f"Код: {room.get('code', '----')}. "
-            f"Осталось {updated_profile.alias_coins} Alias Coin."
+            f"Осталось {updated_profile.alias_coins} Alias Coin. "
+            f"Ботов подключено: {spawned_bots}."
         )
         self._set_join_list_button(True)
         if app is not None:
-            app.set_active_room(room)
+            app.set_active_room(active_room)
         self.manager.current = "room"
