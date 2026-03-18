@@ -1,7 +1,7 @@
 from kivy.metrics import dp, sp
 from kivy.uix.screenmanager import Screen
 
-from ui import AppButton, BodyLabel, BrandTitle, COLORS, PixelLabel, RoundedPanel, ScreenBackground, build_scrollable_content, register_game_font
+from ui import AppButton, BodyLabel, BrandTitle, CoinBadge, COLORS, PixelLabel, RoundedPanel, ScreenBackground, build_scrollable_content, register_game_font
 
 RULES = [
     "Соберите команды и выберите объясняющего на текущий раунд.",
@@ -79,4 +79,9 @@ class RulesScreen(Screen):
         content.add_widget(notes_card)
 
         root.add_widget(scroll)
+        self.coin_badge = CoinBadge(pos_hint={"right": 0.965, "top": 0.96})
+        root.add_widget(self.coin_badge)
         self.add_widget(root)
+
+    def on_pre_enter(self, *_):
+        self.coin_badge.refresh_from_session()

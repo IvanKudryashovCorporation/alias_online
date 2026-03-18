@@ -87,6 +87,16 @@ def join_online_room(*, room_code, player_name, base_url=None):
     return response.get("room", {})
 
 
+def leave_online_room(*, room_code, player_name, base_url=None):
+    payload = {"player_name": player_name}
+    return _request_json(
+        "POST",
+        f"/api/rooms/{urllib.parse.quote(room_code)}/leave",
+        payload=payload,
+        base_url=base_url,
+    )
+
+
 def get_online_room(*, room_code, base_url=None):
     response = _request_json("GET", f"/api/rooms/{urllib.parse.quote(room_code)}", base_url=base_url)
     return response.get("room", {})

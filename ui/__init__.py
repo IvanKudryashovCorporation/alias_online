@@ -4,6 +4,7 @@ from .components import (
     AvatarButton,
     BrandTitle,
     BodyLabel,
+    CoinBadge,
     PixelLabel,
     RoundedPanel,
     ScreenBackground,

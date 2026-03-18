@@ -10,6 +10,7 @@ from ui import (
     AppTextInput,
     BodyLabel,
     BrandTitle,
+    CoinBadge,
     COLORS,
     PixelLabel,
     RoundedPanel,
@@ -100,11 +101,14 @@ class JoinRoomScreen(Screen):
         content.add_widget(self.status_label)
 
         root.add_widget(scroll)
+        self.coin_badge = CoinBadge(pos_hint={"right": 0.965, "top": 0.96})
+        root.add_widget(self.coin_badge)
         self.add_widget(root)
 
     def on_pre_enter(self, *_):
         app = App.get_running_app()
         player_name = app.resolve_player_name() if app is not None else None
+        self.coin_badge.refresh_from_session()
         if not player_name:
             self.profile_name_label.color = COLORS["warning"]
             self.profile_name_label.text = "Сначала войди в аккаунт или начни гостевую сессию."

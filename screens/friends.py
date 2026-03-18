@@ -7,7 +7,7 @@ from kivy.uix.screenmanager import Screen
 from kivy.uix.widget import Widget
 
 from services import add_friend, list_friend_profiles, search_profiles
-from ui import AppButton, AppTextInput, BodyLabel, BrandTitle, COLORS, PixelLabel, RoundedPanel, ScreenBackground, build_scrollable_content, register_game_font
+from ui import AppButton, AppTextInput, BodyLabel, BrandTitle, CoinBadge, COLORS, PixelLabel, RoundedPanel, ScreenBackground, build_scrollable_content, register_game_font
 
 
 class FriendsScreen(Screen):
@@ -93,9 +93,12 @@ class FriendsScreen(Screen):
         content.add_widget(friends_card)
 
         root.add_widget(scroll)
+        self.coin_badge = CoinBadge(pos_hint={"right": 0.965, "top": 0.96})
+        root.add_widget(self.coin_badge)
         self.add_widget(root)
 
     def on_pre_enter(self, *_):
+        self.coin_badge.refresh_from_session()
         self.search_input.text = ""
         self._clear_box(self.search_results_box)
         self._refresh_view()

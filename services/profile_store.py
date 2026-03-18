@@ -13,6 +13,13 @@ from kivy.utils import platform
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 GUEST_NAME_PATTERN = re.compile(r"^гость\s*\d+$", re.IGNORECASE)
 DEFAULT_DB_PATH = Path(__file__).resolve().parents[1] / "data" / "alias_online.db"
+ROOM_CREATION_COST = 10
+STARTER_ALIAS_COINS = 100
+PROFILE_COLUMNS = (
+    "id, name, email, avatar_path, bio, alias_coins, games_played, total_points, rooms_created, "
+    "guessed_words, explained_words, "
+    "created_at, updated_at"
+)
 
 
 @dataclass
@@ -22,6 +29,12 @@ class Profile:
     email: str
     avatar_path: str | None
     bio: str | None
+    alias_coins: int
+    games_played: int
+    total_points: int
+    rooms_created: int
+    guessed_words: int
+    explained_words: int
     created_at: str
     updated_at: str
 
@@ -92,6 +105,60 @@ def _connect(db_path=None):
     return connection
 
 
+def _table_columns(connection, table_name):
+    rows = connection.execute(f"PRAGMA table_info({table_name})").fetchall()
+    return {row["name"] for row in rows}
+
+
+def _ensure_profile_schema(connection):
+    columns = _table_columns(connection, "profiles")
+    for column_name, definition in (
+        ("alias_coins", f"INTEGER NOT NULL DEFAULT {STARTER_ALIAS_COINS}"),
+        ("games_played", "INTEGER NOT NULL DEFAULT 0"),
+        ("total_points", "INTEGER NOT NULL DEFAULT 0"),
+        ("rooms_created", "INTEGER NOT NULL DEFAULT 0"),
+        ("guessed_words", "INTEGER NOT NULL DEFAULT 0"),
+        ("explained_words", "INTEGER NOT NULL DEFAULT 0"),
+    ):
+        if column_name not in columns:
+            connection.execute(f"ALTER TABLE profiles ADD COLUMN {column_name} {definition}")
+
+    connection.execute(
+        """
+        UPDATE profiles
+        SET alias_coins = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE alias_coins = 0
+          AND games_played = 0
+          AND total_points = 0
+          AND rooms_created = 0
+        """,
+        (STARTER_ALIAS_COINS,),
+    )
+
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS room_progress_claims (
+            profile_email TEXT NOT NULL,
+            room_code TEXT NOT NULL,
+            last_score_seen INTEGER NOT NULL DEFAULT 0,
+            game_counted INTEGER NOT NULL DEFAULT 0,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (profile_email, room_code),
+            FOREIGN KEY(profile_email) REFERENCES profiles(email) ON DELETE CASCADE
+        )
+        """
+    )
+    connection.execute("DROP VIEW IF EXISTS users")
+    connection.execute(
+        f"""
+        CREATE VIEW users AS
+        SELECT {PROFILE_COLUMNS}
+        FROM profiles
+        """
+    )
+
+
 def _normalize_text(value):
     value = (value or "").strip()
     return value or None
@@ -108,16 +175,34 @@ def _verify_password(password, salt, expected_hash):
     return hmac.compare_digest(derived_hash, expected_hash)
 
 
+def _fetch_profile_row(connection, where_clause, params=()):
+    return connection.execute(
+        f"""
+        SELECT {PROFILE_COLUMNS}
+        FROM profiles
+        WHERE {where_clause}
+        """,
+        params,
+    ).fetchone()
+
+
 def _row_to_profile(row):
     if row is None:
         return None
 
+    keys = set(row.keys())
     return Profile(
         id=row["id"],
         name=row["name"],
         email=row["email"],
         avatar_path=row["avatar_path"],
         bio=row["bio"],
+        alias_coins=int(row["alias_coins"]) if "alias_coins" in keys and row["alias_coins"] is not None else 0,
+        games_played=int(row["games_played"]) if "games_played" in keys and row["games_played"] is not None else 0,
+        total_points=int(row["total_points"]) if "total_points" in keys and row["total_points"] is not None else 0,
+        rooms_created=int(row["rooms_created"]) if "rooms_created" in keys and row["rooms_created"] is not None else 0,
+        guessed_words=int(row["guessed_words"]) if "guessed_words" in keys and row["guessed_words"] is not None else 0,
+        explained_words=int(row["explained_words"]) if "explained_words" in keys and row["explained_words"] is not None else 0,
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -143,20 +228,7 @@ def initialize_database(db_path=None):
             )
             """
         )
-        connection.execute(
-            """
-            CREATE VIEW IF NOT EXISTS users AS
-            SELECT
-                id,
-                name,
-                email,
-                avatar_path,
-                bio,
-                created_at,
-                updated_at
-            FROM profiles
-            """
-        )
+        _ensure_profile_schema(connection)
         connection.execute(
             """
             CREATE TABLE IF NOT EXISTS app_session (
@@ -208,14 +280,7 @@ def get_profile_by_email(email, db_path=None):
         return None
 
     with _connect(db_path) as connection:
-        row = connection.execute(
-            """
-            SELECT id, name, email, avatar_path, bio, created_at, updated_at
-            FROM profiles
-            WHERE email = ?
-            """,
-            (clean_email,),
-        ).fetchone()
+        row = _fetch_profile_row(connection, "email = ?", (clean_email,))
 
     return _row_to_profile(row)
 
@@ -236,14 +301,7 @@ def get_active_profile(db_path=None):
         if not active_email:
             return None
 
-        row = connection.execute(
-            """
-            SELECT id, name, email, avatar_path, bio, created_at, updated_at
-            FROM profiles
-            WHERE email = ?
-            """,
-            (active_email,),
-        ).fetchone()
+        row = _fetch_profile_row(connection, "email = ?", (active_email,))
 
         if row is None:
             connection.execute(
@@ -330,21 +388,15 @@ def save_profile(name, email, password, avatar_path=None, bio=None, db_path=None
                     email,
                     password_hash,
                     password_salt,
+                    alias_coins,
                     avatar_path,
                     bio
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (clean_name, clean_email, password_hash, salt, clean_avatar, clean_bio),
+                (clean_name, clean_email, password_hash, salt, STARTER_ALIAS_COINS, clean_avatar, clean_bio),
             )
 
-        row = connection.execute(
-            """
-            SELECT id, name, email, avatar_path, bio, created_at, updated_at
-            FROM profiles
-            WHERE email = ?
-            """,
-            (clean_email,),
-        ).fetchone()
+        row = _fetch_profile_row(connection, "email = ?", (clean_email,))
 
     return _row_to_profile(row)
 
@@ -383,14 +435,7 @@ def update_profile(email, avatar_path=None, bio=None, db_path=None):
             (clean_avatar, clean_bio, clean_email),
         )
 
-        row = connection.execute(
-            """
-            SELECT id, name, email, avatar_path, bio, created_at, updated_at
-            FROM profiles
-            WHERE email = ?
-            """,
-            (clean_email,),
-        ).fetchone()
+        row = _fetch_profile_row(connection, "email = ?", (clean_email,))
 
     return _row_to_profile(row)
 
@@ -400,8 +445,8 @@ def get_latest_profile(db_path=None):
 
     with _connect(db_path) as connection:
         row = connection.execute(
-            """
-            SELECT id, name, email, avatar_path, bio, created_at, updated_at
+            f"""
+            SELECT {PROFILE_COLUMNS}
             FROM profiles
             ORDER BY updated_at DESC, id DESC
             LIMIT 1
@@ -416,8 +461,8 @@ def list_profiles(db_path=None):
 
     with _connect(db_path) as connection:
         rows = connection.execute(
-            """
-            SELECT id, name, email, avatar_path, bio, created_at, updated_at
+            f"""
+            SELECT {PROFILE_COLUMNS}
             FROM profiles
             ORDER BY created_at ASC, id ASC
             """
@@ -443,7 +488,7 @@ def search_profiles(query, exclude_email=None, db_path=None, limit=12):
         params.append(clean_query)
 
     sql = f"""
-        SELECT id, name, email, avatar_path, bio, created_at, updated_at
+        SELECT {PROFILE_COLUMNS}
         FROM profiles
         WHERE ({' OR '.join(filters)})
     """
@@ -480,8 +525,8 @@ def list_friend_profiles(owner_email, db_path=None):
 
     with _connect(db_path) as connection:
         rows = connection.execute(
-            """
-            SELECT p.id, p.name, p.email, p.avatar_path, p.bio, p.created_at, p.updated_at
+            f"""
+            SELECT {PROFILE_COLUMNS}
             FROM friendships AS f
             JOIN profiles AS p ON p.email = f.friend_email
             WHERE f.owner_email = ?
@@ -556,8 +601,8 @@ def login_profile(email, password, db_path=None):
 
     with _connect(db_path) as connection:
         row = connection.execute(
-            """
-            SELECT id, name, email, avatar_path, bio, created_at, updated_at,
+            f"""
+            SELECT {PROFILE_COLUMNS},
                    password_hash, password_salt
             FROM profiles
             WHERE email = ?
@@ -578,8 +623,8 @@ def login_profile(email, password, db_path=None):
         )
 
         fresh_row = connection.execute(
-            """
-            SELECT id, name, email, avatar_path, bio, created_at, updated_at
+            f"""
+            SELECT {PROFILE_COLUMNS}
             FROM profiles
             WHERE id = ?
             """,
@@ -596,3 +641,167 @@ def has_profiles(db_path=None):
         row = connection.execute("SELECT 1 FROM profiles LIMIT 1").fetchone()
 
     return row is not None
+
+
+def spend_alias_coins(email, amount, db_path=None):
+    initialize_database(db_path)
+
+    clean_email = (email or "").strip().lower()
+    spend_amount = int(amount or 0)
+    if not clean_email or not EMAIL_PATTERN.match(clean_email):
+        raise ValueError("Укажи корректный e-mail.")
+    if spend_amount <= 0:
+        raise ValueError("Сумма списания должна быть больше нуля.")
+
+    with _connect(db_path) as connection:
+        row = connection.execute(
+            """
+            SELECT alias_coins
+            FROM profiles
+            WHERE email = ?
+            """,
+            (clean_email,),
+        ).fetchone()
+
+        if row is None:
+            raise ValueError("Профиль не найден.")
+
+        current_coins = int(row["alias_coins"] or 0)
+        if current_coins < spend_amount:
+            raise ValueError(f"Нужно минимум {spend_amount} Alias Coin, чтобы создать комнату.")
+
+        connection.execute(
+            """
+            UPDATE profiles
+            SET alias_coins = alias_coins - ?,
+                rooms_created = rooms_created + 1,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE email = ?
+            """,
+            (spend_amount, clean_email),
+        )
+        updated = _fetch_profile_row(connection, "email = ?", (clean_email,))
+
+    return _row_to_profile(updated)
+
+
+def sync_room_progress(email, room_code, current_score, round_started=False, role=None, db_path=None):
+    initialize_database(db_path)
+
+    clean_email = (email or "").strip().lower()
+    clean_room_code = (room_code or "").strip().upper()
+    if not clean_email or not EMAIL_PATTERN.match(clean_email) or not clean_room_code:
+        return {"coins_awarded": 0, "game_counted": False, "profile": None}
+
+    try:
+        score_value = int(current_score or 0)
+    except (TypeError, ValueError):
+        score_value = 0
+
+    round_flag = 1 if round_started else 0
+    role_name = (role or "").strip().lower()
+
+    with _connect(db_path) as connection:
+        profile_exists = connection.execute(
+            """
+            SELECT 1
+            FROM profiles
+            WHERE email = ?
+            """,
+            (clean_email,),
+        ).fetchone()
+        if profile_exists is None:
+            return {"coins_awarded": 0, "game_counted": False, "profile": None}
+
+        claim = connection.execute(
+            """
+            SELECT last_score_seen, game_counted
+            FROM room_progress_claims
+            WHERE profile_email = ? AND room_code = ?
+            """,
+            (clean_email, clean_room_code),
+        ).fetchone()
+
+        coins_awarded = 0
+        game_counted = False
+        if claim is None:
+            connection.execute(
+                """
+                INSERT INTO room_progress_claims (
+                    profile_email,
+                    room_code,
+                    last_score_seen,
+                    game_counted,
+                    updated_at
+                ) VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)
+                """,
+                (clean_email, clean_room_code, score_value, round_flag),
+            )
+            if round_flag:
+                coins_awarded = max(0, score_value)
+                guessed_words_awarded = coins_awarded if role_name == "guesser" else 0
+                explained_words_awarded = coins_awarded if role_name == "explainer" else 0
+                connection.execute(
+                    """
+                    UPDATE profiles
+                    SET alias_coins = alias_coins + ?,
+                        total_points = total_points + ?,
+                        games_played = games_played + 1,
+                        guessed_words = guessed_words + ?,
+                        explained_words = explained_words + ?,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE email = ?
+                    """,
+                    (coins_awarded, coins_awarded, guessed_words_awarded, explained_words_awarded, clean_email),
+                )
+                game_counted = True
+        else:
+            previous_score = int(claim["last_score_seen"] or 0)
+            previous_game_counted = int(claim["game_counted"] or 0)
+            coins_awarded = max(0, score_value - previous_score)
+            game_counted = bool(round_flag and not previous_game_counted)
+            guessed_words_awarded = coins_awarded if role_name == "guesser" else 0
+            explained_words_awarded = coins_awarded if role_name == "explainer" else 0
+
+            if coins_awarded or game_counted:
+                connection.execute(
+                    """
+                    UPDATE profiles
+                    SET alias_coins = alias_coins + ?,
+                        total_points = total_points + ?,
+                        games_played = games_played + ?,
+                        guessed_words = guessed_words + ?,
+                        explained_words = explained_words + ?,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE email = ?
+                    """,
+                    (
+                        coins_awarded,
+                        coins_awarded,
+                        1 if game_counted else 0,
+                        guessed_words_awarded,
+                        explained_words_awarded,
+                        clean_email,
+                    ),
+                )
+
+            next_game_counted = max(previous_game_counted, round_flag)
+            if previous_score != score_value or previous_game_counted != next_game_counted:
+                connection.execute(
+                    """
+                    UPDATE room_progress_claims
+                    SET last_score_seen = ?,
+                        game_counted = ?,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE profile_email = ? AND room_code = ?
+                    """,
+                    (score_value, next_game_counted, clean_email, clean_room_code),
+                )
+
+        updated = _fetch_profile_row(connection, "email = ?", (clean_email,))
+
+    return {
+        "coins_awarded": coins_awarded,
+        "game_counted": game_counted,
+        "profile": _row_to_profile(updated),
+    }

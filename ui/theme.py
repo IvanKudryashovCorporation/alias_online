@@ -41,6 +41,16 @@ COLORS = {
     "scene_house_mint": (0.79, 0.92, 0.88, 0.98),
     "scene_roof": (0.98, 0.42, 0.20, 0.98),
     "scene_shadow": (0.15, 0.26, 0.38, 0.18),
+    "game_overlay": (0.03, 0.07, 0.12, 0.22),
+    "game_stage": (0.09, 0.14, 0.22, 0.82),
+    "game_stage_glow": (0.98, 0.82, 0.25, 0.16),
+    "game_spotlight": (1, 0.98, 0.82, 0.10),
+    "game_card_blue": (0.28, 0.58, 0.92, 0.18),
+    "game_card_gold": (0.98, 0.84, 0.28, 0.17),
+    "game_card_cyan": (0.42, 0.88, 0.90, 0.15),
+    "game_card_outline": (1, 1, 1, 0.11),
+    "game_token_orange": (0.98, 0.50, 0.18, 0.22),
+    "game_token_mint": (0.38, 0.92, 0.74, 0.18),
 }
 
 _FONT_REGISTERED = False

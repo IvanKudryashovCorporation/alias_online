@@ -445,6 +445,44 @@ def _adjust_score(connection, room_code, player_name, delta):
     return int(row["score"])
 
 
+def _delete_room(connection, room_code):
+    connection.execute("DELETE FROM room_messages WHERE room_code = ?", (room_code,))
+    connection.execute("DELETE FROM room_scores WHERE room_code = ?", (room_code,))
+    connection.execute("DELETE FROM room_voice_chunks WHERE room_code = ?", (room_code,))
+    connection.execute("DELETE FROM room_players WHERE room_code = ?", (room_code,))
+    connection.execute("DELETE FROM rooms WHERE code = ?", (room_code,))
+
+
+def _sync_room_after_player_leave(connection, room_code):
+    room = connection.execute("SELECT * FROM rooms WHERE code = ?", (room_code,)).fetchone()
+    if room is None:
+        return {"deleted": True, "players": []}
+
+    players = _room_players(connection, room_code)
+    if not players:
+        _delete_room(connection, room_code)
+        return {"deleted": True, "players": []}
+
+    host_name = room["host_name"] if room["host_name"] in players else players[0]
+    current_explainer = room["current_explainer"] if room["current_explainer"] in players else host_name
+    voice_speaker = room["voice_speaker"] if room["voice_speaker"] in players else None
+    voice_until = room["voice_until"] if voice_speaker else None
+
+    connection.execute(
+        """
+        UPDATE rooms
+        SET host_name = ?,
+            current_explainer = ?,
+            voice_speaker = ?,
+            voice_until = ?,
+            updated_at = ?
+        WHERE code = ?
+        """,
+        (host_name, current_explainer, voice_speaker, voice_until, _now(), room_code),
+    )
+    return {"deleted": False, "players": players}
+
+
 def _prune_voice_chunks(connection, room_code, keep_last=200):
     threshold_row = connection.execute(
         """
@@ -655,7 +693,7 @@ def _room_payload(connection, room_code, player_name="", since_id=None):
 
 
 class RoomHandler(BaseHTTPRequestHandler):
-    server_version = "AliasRoomServer/1.3"
+    server_version = "AliasRoomServer/1.4"
 
     def _json_response(self, code, payload):
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -714,6 +752,10 @@ class RoomHandler(BaseHTTPRequestHandler):
 
         if len(parts) == 4 and parts[0] == "api" and parts[1] == "rooms" and parts[3] == "join":
             self._handle_join_room(parts[2].upper())
+            return
+
+        if len(parts) == 4 and parts[0] == "api" and parts[1] == "rooms" and parts[3] == "leave":
+            self._handle_leave_room(parts[2].upper())
             return
 
         if len(parts) == 4 and parts[0] == "api" and parts[1] == "rooms" and parts[3] == "chat":
@@ -941,6 +983,84 @@ class RoomHandler(BaseHTTPRequestHandler):
         room_data["current_word"] = ""
         self._json_response(200, {"room": room_data})
 
+    def _handle_leave_room(self, room_code):
+        try:
+            payload = self._parse_json_body()
+        except ValueError as error:
+            self._json_response(400, {"error": str(error)})
+            return
+
+        player_name = (payload.get("player_name") or "").strip()
+        if not player_name:
+            self._json_response(400, {"error": "Player name is required."})
+            return
+
+        with _connect() as connection:
+            room = connection.execute("SELECT * FROM rooms WHERE code = ?", (room_code,)).fetchone()
+            if room is None:
+                self._json_response(200, {"ok": True, "room_deleted": True, "already_left": True, "players": []})
+                return
+
+            is_player = _is_room_player(connection, room_code, player_name)
+            if not is_player:
+                room_data = _room_with_count(connection, room_code)
+                players = _room_players(connection, room_code)
+                self._json_response(
+                    200,
+                    {
+                        "ok": True,
+                        "room_deleted": False,
+                        "already_left": True,
+                        "room": room_data or {},
+                        "players": players,
+                    },
+                )
+                return
+
+            connection.execute(
+                """
+                DELETE FROM room_players
+                WHERE room_code = ? AND player_name = ?
+                """,
+                (room_code, player_name),
+            )
+            connection.execute(
+                """
+                DELETE FROM room_scores
+                WHERE room_code = ? AND player_name = ?
+                """,
+                (room_code, player_name),
+            )
+            connection.execute(
+                """
+                DELETE FROM room_voice_chunks
+                WHERE room_code = ? AND player_name = ?
+                """,
+                (room_code, player_name),
+            )
+
+            leave_state = _sync_room_after_player_leave(connection, room_code)
+            if leave_state["deleted"]:
+                self._json_response(200, {"ok": True, "room_deleted": True, "players": []})
+                return
+
+            _insert_message(connection, room_code, "System", f"{player_name} left the room.", "system")
+            _touch_room(connection, room_code)
+            room_data = _room_with_count(connection, room_code)
+            players = _room_players(connection, room_code)
+
+        if room_data:
+            room_data["current_word"] = ""
+        self._json_response(
+            200,
+            {
+                "ok": True,
+                "room_deleted": False,
+                "room": room_data or {},
+                "players": players,
+            },
+        )
+
     def _handle_room_state(self, room_code, query):
         params = parse_qs(query)
         player_name = (params.get("player_name", [""])[0] or "").strip()
@@ -981,7 +1101,7 @@ class RoomHandler(BaseHTTPRequestHandler):
 
         with _connect() as connection:
             room = connection.execute(
-                "SELECT code, current_explainer FROM rooms WHERE code = ?",
+                "SELECT code, current_explainer, game_phase FROM rooms WHERE code = ?",
                 (room_code,),
             ).fetchone()
             if room is None:
@@ -990,7 +1110,8 @@ class RoomHandler(BaseHTTPRequestHandler):
             if not _is_room_player(connection, room_code, player_name):
                 self._json_response(403, {"error": "Player is not in this room."})
                 return
-            if player_name == (room["current_explainer"] or "").strip():
+            phase = (room["game_phase"] or "lobby").strip().lower()
+            if phase == "round" and player_name == (room["current_explainer"] or "").strip():
                 self._json_response(403, {"error": "Current explainer cannot send chat messages."})
                 return
 
@@ -1105,10 +1226,6 @@ class RoomHandler(BaseHTTPRequestHandler):
 
             if not _is_room_player(connection, room_code, player_name):
                 self._json_response(403, {"error": "Player is not in this room."})
-                return
-
-            if player_name != room["current_explainer"]:
-                self._json_response(403, {"error": "Only current explainer can start the game."})
                 return
 
             players_row = connection.execute(

@@ -1,3 +1,10 @@
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+
 from kivy.app import App
 from kivy.core.window import Window
 from kivy.uix.screenmanager import FadeTransition, ScreenManager
@@ -12,7 +19,7 @@ from screens.registration_screen import RegistrationScreen
 from screens.room_screen import RoomScreen
 from screens.rules import RulesScreen
 from screens.start_screen import StartScreen
-from services import get_active_profile, initialize_database, set_active_profile
+from services import get_active_profile, initialize_database, leave_online_room, set_active_profile
 from ui.theme import register_game_font
 
 Window.title = "Alias Online"
@@ -31,10 +38,12 @@ class AliasApp(App):
         self.guest_mode = False
         self.guest_counter = 0
         self.active_room = {}
+        self._room_server_process = None
 
     def build(self):
         register_game_font()
         initialize_database()
+        self._ensure_local_room_server()
 
         active_profile = get_active_profile()
         self.authenticated = active_profile is not None
@@ -53,6 +62,52 @@ class AliasApp(App):
         screen_manager.bind(current=self._guard_session)
         screen_manager.current = "start" if self.authenticated else "entry"
         return screen_manager
+
+    def _room_server_is_healthy(self):
+        try:
+            with urllib.request.urlopen("http://127.0.0.1:8765/health", timeout=1.2) as response:
+                return response.status == 200
+        except (urllib.error.URLError, TimeoutError):
+            return False
+
+    def _ensure_local_room_server(self):
+        if platform in ("android", "ios"):
+            return
+        if self._room_server_is_healthy():
+            return
+
+        root_dir = Path(__file__).resolve().parent
+        server_script = root_dir / "server" / "room_server.py"
+        if not server_script.exists():
+            return
+
+        creation_flags = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
+        try:
+            self._room_server_process = subprocess.Popen(
+                [sys.executable, str(server_script), "--host", "127.0.0.1", "--port", "8765"],
+                cwd=str(root_dir),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                creationflags=creation_flags,
+            )
+        except OSError:
+            self._room_server_process = None
+            return
+
+        for _ in range(18):
+            if self._room_server_is_healthy():
+                return
+            time.sleep(0.2)
+
+    def on_stop(self):
+        self._leave_active_room()
+        process = self._room_server_process
+        if process is not None and process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=1.2)
+            except subprocess.TimeoutExpired:
+                process.kill()
 
     def has_session_access(self):
         return self.authenticated or self.guest_mode
@@ -93,6 +148,7 @@ class AliasApp(App):
         self.clear_active_room()
 
     def sign_out(self):
+        self._leave_active_room()
         self.authenticated = False
         self.guest_mode = False
         set_active_profile(None)
@@ -106,6 +162,17 @@ class AliasApp(App):
 
     def clear_active_room(self):
         self.active_room = {}
+
+    def _leave_active_room(self):
+        room_code = (self.active_room or {}).get("code", "")
+        player_name = self.resolve_player_name()
+        if not room_code or not player_name:
+            return
+
+        try:
+            leave_online_room(room_code=room_code, player_name=player_name)
+        except (ConnectionError, ValueError):
+            pass
 
     def _guard_session(self, manager, current_screen_name):
         if current_screen_name in {"entry", "login", "registration"}:

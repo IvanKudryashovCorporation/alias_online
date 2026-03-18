@@ -15,7 +15,7 @@ from kivy.uix.screenmanager import Screen
 from kivy.uix.widget import Widget
 
 from services import save_profile, update_profile
-from ui import AppButton, AppTextInput, BodyLabel, BrandTitle, COLORS, PixelLabel, RoundedPanel, ScreenBackground, register_game_font, resolve_image_source
+from ui import AppButton, AppTextInput, BodyLabel, BrandTitle, CoinBadge, COLORS, PixelLabel, RoundedPanel, ScreenBackground, register_game_font, resolve_image_source
 
 
 class SubtleActionButton(ButtonBehavior, Label):
@@ -95,6 +95,27 @@ class AvatarPreview(FloatLayout):
         if resolved_source:
             self._image.reload()
         self._sync_visual_state()
+
+
+class ProfileStatCard(RoundedPanel):
+    def __init__(self, title="", **kwargs):
+        super().__init__(
+            bg_color=COLORS["surface_panel"],
+            shadow_alpha=0.12,
+            orientation="vertical",
+            spacing=dp(1),
+            padding=[dp(8), dp(6), dp(8), dp(6)],
+            size_hint=(None, None),
+            size=(dp(126), dp(52)),
+            **kwargs,
+        )
+        self.title_label = BodyLabel(center=True, color=COLORS["text_muted"], font_size=sp(9.5), text=title)
+        self.value_label = PixelLabel(center=True, font_size=sp(15), text="0")
+        self.add_widget(self.title_label)
+        self.add_widget(self.value_label)
+
+    def set_value(self, value):
+        self.value_label.text = str(value)
 
 
 class RegistrationScreen(Screen):
@@ -242,6 +263,32 @@ class RegistrationScreen(Screen):
         self.card.add_widget(self.email_row)
         self.card.add_widget(self.password_row)
 
+        self.stats_wrap = BoxLayout(
+            orientation="vertical",
+            spacing=dp(6),
+            size_hint_y=None,
+            height=0,
+            opacity=0,
+        )
+        stats_row_one = BoxLayout(orientation="horizontal", spacing=dp(8), size_hint_y=None, height=dp(52))
+        stats_row_one.add_widget(Widget())
+        self.coins_stat = ProfileStatCard(title="Коины")
+        self.games_stat = ProfileStatCard(title="Игр")
+        stats_row_one.add_widget(self.coins_stat)
+        stats_row_one.add_widget(self.games_stat)
+        stats_row_one.add_widget(Widget())
+        self.stats_wrap.add_widget(stats_row_one)
+
+        stats_row_two = BoxLayout(orientation="horizontal", spacing=dp(8), size_hint_y=None, height=dp(52))
+        stats_row_two.add_widget(Widget())
+        self.points_stat = ProfileStatCard(title="Очки")
+        self.rooms_stat = ProfileStatCard(title="Комнат")
+        stats_row_two.add_widget(self.points_stat)
+        stats_row_two.add_widget(self.rooms_stat)
+        stats_row_two.add_widget(Widget())
+        self.stats_wrap.add_widget(stats_row_two)
+        self.card.add_widget(self.stats_wrap)
+
         self.avatar_mode_note_row = BoxLayout(orientation="vertical", size_hint_y=None, height=dp(22))
         self.avatar_mode_note = BodyLabel(
             center=True,
@@ -360,6 +407,8 @@ class RegistrationScreen(Screen):
 
         self.scroll.add_widget(content)
         root.add_widget(self.scroll)
+        self.coin_badge = CoinBadge(pos_hint={"right": 0.965, "top": 0.96})
+        root.add_widget(self.coin_badge)
         self.add_widget(root)
         self._sync_avatar_actions()
 
@@ -379,6 +428,7 @@ class RegistrationScreen(Screen):
 
     def on_pre_enter(self, *_):
         app = App.get_running_app()
+        self.coin_badge.refresh_from_session()
         self.back_btn.text = "\u0412 \u043c\u0435\u043d\u044e" if app is not None and app.has_session_access() else "\u041d\u0430\u0437\u0430\u0434"
         self.scroll.scroll_y = 1
 
@@ -394,6 +444,10 @@ class RegistrationScreen(Screen):
             self.avatar_preview.set_avatar(None)
             self.avatar_status_label.color = COLORS["text_muted"]
             self.avatar_status_label.text = ""
+            self.coins_stat.set_value(0)
+            self.games_stat.set_value(0)
+            self.points_stat.set_value(0)
+            self.rooms_stat.set_value(0)
             self.status_label.color = COLORS["text_muted"]
             self.status_label.text = "\u0421\u043e\u0437\u0434\u0430\u0439 \u0430\u043a\u043a\u0430\u0443\u043d\u0442, \u0430 \u0444\u043e\u0442\u043e \u0434\u043e\u0431\u0430\u0432\u0438\u0448\u044c \u043f\u043e\u0437\u0436\u0435 \u0432 \u043f\u0440\u043e\u0444\u0438\u043b\u0435."
             return
@@ -572,6 +626,8 @@ class RegistrationScreen(Screen):
             self.password_row.height = 0
             self.password_row.opacity = 0
             self.password_input.disabled = True
+            self.stats_wrap.height = dp(110)
+            self.stats_wrap.opacity = 1
             self.avatar_mode_note_row.height = 0
             self.avatar_mode_note_row.opacity = 0
             self.avatar_section.spacing = dp(4)
@@ -595,7 +651,7 @@ class RegistrationScreen(Screen):
             self.save_btn.height = dp(40)
             self.status_row.height = 0
             self.status_row.opacity = 0
-            self.card.height = dp(454)
+            self.card.height = dp(566)
             self.logout_btn.disabled = False
             self.logout_btn.opacity = 1
             self.logout_row.height = dp(40)
@@ -648,6 +704,8 @@ class RegistrationScreen(Screen):
         self.password_row.height = dp(48)
         self.password_row.opacity = 1
         self.password_input.disabled = False
+        self.stats_wrap.height = 0
+        self.stats_wrap.opacity = 0
         self.avatar_mode_note_row.height = dp(22)
         self.avatar_mode_note_row.opacity = 1
         self.avatar_section.spacing = dp(8)
@@ -687,6 +745,10 @@ class RegistrationScreen(Screen):
         summary = f"\u041a\u043e\u0434 \u0438\u0433\u0440\u043e\u043a\u0430 #{profile.id} | \u0432 \u0438\u0433\u0440\u0435 \u0441 {joined_label}"
         self.profile_summary.text = summary
         self.subtitle_label.text = summary
+        self.coins_stat.set_value(profile.alias_coins)
+        self.games_stat.set_value(profile.games_played)
+        self.points_stat.set_value(profile.total_points)
+        self.rooms_stat.set_value(profile.rooms_created)
 
     def _format_profile_date(self, created_at):
         raw_value = (created_at or "").strip()

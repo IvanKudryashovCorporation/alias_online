@@ -1,5 +1,6 @@
 from .profile_store import (
     Profile,
+    ROOM_CREATION_COST,
     add_friend,
     get_active_profile,
     get_database_path,
@@ -13,6 +14,8 @@ from .profile_store import (
     save_profile,
     search_profiles,
     set_active_profile,
+    spend_alias_coins,
+    sync_room_progress,
     update_profile,
 )
 from .room_hub import (
@@ -21,6 +24,7 @@ from .room_hub import (
     get_online_room_state,
     get_room_voice_chunks,
     join_online_room,
+    leave_online_room,
     list_online_rooms,
     next_room_word,
     ping_room_voice,

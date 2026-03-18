@@ -4,7 +4,7 @@ from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.screenmanager import Screen
 from kivy.uix.widget import Widget
 
-from ui import AppButton, BodyLabel, BrandTitle, COLORS, RoundedPanel, ScreenBackground, register_game_font
+from ui import AppButton, BodyLabel, BrandTitle, CoinBadge, COLORS, RoundedPanel, ScreenBackground, register_game_font
 
 
 class EntryScreen(Screen):
@@ -58,7 +58,12 @@ class EntryScreen(Screen):
         content.add_widget(Widget())
 
         root.add_widget(content)
+        self.coin_badge = CoinBadge(pos_hint={"right": 0.965, "top": 0.96})
+        root.add_widget(self.coin_badge)
         self.add_widget(root)
+
+    def on_pre_enter(self, *_):
+        self.coin_badge.refresh_from_session()
 
     def _go_to_registration(self, *_):
         app = App.get_running_app()

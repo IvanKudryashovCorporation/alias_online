@@ -4,12 +4,13 @@ from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.screenmanager import Screen
 from kivy.uix.spinner import Spinner, SpinnerOption
 
-from services import create_online_room, room_server_url
+from services import ROOM_CREATION_COST, create_online_room, room_server_url, spend_alias_coins
 from ui import (
     AppButton,
     AppTextInput,
     BodyLabel,
     BrandTitle,
+    CoinBadge,
     COLORS,
     PixelLabel,
     RoundedPanel,
@@ -83,6 +84,12 @@ class CreateRoomScreen(Screen):
             text="Имя подтянется из текущего профиля или гостевого входа.",
         )
         profile_card.add_widget(self.profile_name_label)
+        self.coin_balance_label = BodyLabel(
+            color=COLORS["text_muted"],
+            font_size=sp(11),
+            text=f"Создание комнаты стоит {ROOM_CREATION_COST} Alias Coin.",
+        )
+        profile_card.add_widget(self.coin_balance_label)
         self.server_label = BodyLabel(
             color=COLORS["text_muted"],
             font_size=sp(11),
@@ -168,18 +175,36 @@ class CreateRoomScreen(Screen):
         content.add_widget(actions)
 
         root.add_widget(scroll)
+        self.coin_badge = CoinBadge(pos_hint={"right": 0.965, "top": 0.96})
+        root.add_widget(self.coin_badge)
         self.add_widget(root)
 
     def on_pre_enter(self, *_):
         app = App.get_running_app()
         player_name = app.resolve_player_name() if app is not None else None
+        profile = app.current_profile() if app is not None else None
+        self.coin_badge.refresh_from_session()
         if not player_name:
             self.profile_name_label.color = COLORS["warning"]
             self.profile_name_label.text = "Сначала войди в аккаунт или начни гостевую сессию."
+            self.coin_balance_label.color = COLORS["text_muted"]
+            self.coin_balance_label.text = f"Создание комнаты стоит {ROOM_CREATION_COST} Alias Coin."
+            return
+
+        if profile is None:
+            self.profile_name_label.color = COLORS["warning"]
+            self.profile_name_label.text = "Гость может только присоединяться к комнатам."
+            self.coin_balance_label.color = COLORS["warning"]
+            self.coin_balance_label.text = f"Чтобы создать комнату, войди в аккаунт и накопи {ROOM_CREATION_COST} Alias Coin."
             return
 
         self.profile_name_label.color = COLORS["accent"]
         self.profile_name_label.text = f"Комната будет создана от имени: {player_name}"
+        self.coin_balance_label.color = COLORS["text_muted"]
+        self.coin_balance_label.text = (
+            f"Баланс: {profile.alias_coins} Alias Coin. "
+            f"Создание комнаты стоит {ROOM_CREATION_COST}."
+        )
 
     def _timer_to_seconds(self, timer_value):
         return int((timer_value or "").split()[0])
@@ -192,6 +217,7 @@ class CreateRoomScreen(Screen):
     def prepare_room(self, *_):
         app = App.get_running_app()
         player_name = app.resolve_player_name() if app is not None else None
+        profile = app.current_profile() if app is not None else None
         room_name = self.room_name_input.text.strip()
         players = self.players_spinner.selected_value()
         difficulty = self.difficulty_spinner.selected_value()
@@ -204,6 +230,22 @@ class CreateRoomScreen(Screen):
         if not player_name:
             self.status_label.color = COLORS["error"]
             self.status_label.text = "Сначала начни сессию через вход, регистрацию или гостевой режим."
+            return
+
+        if profile is None:
+            self.status_label.color = COLORS["warning"]
+            self.status_label.text = (
+                f"Гостевой режим не может создавать комнаты. "
+                f"Войди в аккаунт и накопи {ROOM_CREATION_COST} Alias Coin."
+            )
+            return
+
+        if profile.alias_coins < ROOM_CREATION_COST:
+            self.status_label.color = COLORS["warning"]
+            self.status_label.text = (
+                f"Недостаточно Alias Coin. Нужно {ROOM_CREATION_COST}, "
+                f"а у тебя сейчас {profile.alias_coins}."
+            )
             return
 
         if not room_name:
@@ -262,10 +304,16 @@ class CreateRoomScreen(Screen):
             return
 
         self.pending_room_config = room
+        try:
+            updated_profile = spend_alias_coins(email=profile.email, amount=ROOM_CREATION_COST)
+        except ValueError:
+            updated_profile = profile
+        self.coin_badge.set_value(updated_profile.alias_coins)
         self.status_label.color = COLORS["success"]
         self.status_label.text = (
             f"Комната '{room.get('room_name', room_name)}' создана. "
-            f"Код: {room.get('code', '----')}."
+            f"Код: {room.get('code', '----')}. "
+            f"Осталось {updated_profile.alias_coins} Alias Coin."
         )
         self._set_join_list_button(True)
         if app is not None:

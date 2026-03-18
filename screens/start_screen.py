@@ -8,7 +8,7 @@ from kivy.uix.popup import Popup
 from kivy.uix.screenmanager import Screen
 from kivy.uix.widget import Widget
 
-from ui import AvatarButton, AppButton, BodyLabel, BrandTitle, COLORS, PixelLabel, RoundedPanel, ScreenBackground, register_game_font
+from ui import AvatarButton, AppButton, BodyLabel, BrandTitle, CoinBadge, COLORS, PixelLabel, RoundedPanel, ScreenBackground, register_game_font
 
 APP_VERSION = "0.1.0"
 
@@ -66,46 +66,118 @@ class SupportIconButton(ButtonBehavior, Widget):
         self._bg_color.rgba = COLORS["surface"]
 
 
-class LanguageFlagBadge(Widget):
+class LegacyCoinBadge(RoundedPanel):
     def __init__(self, **kwargs):
-        super().__init__(size_hint=(None, None), size=(dp(42), dp(42)), **kwargs)
+        super().__init__(
+            orientation="horizontal",
+            spacing=dp(8),
+            padding=[dp(12), dp(8), dp(12), dp(8)],
+            size_hint=(None, None),
+            size=(dp(122), dp(52)),
+            bg_color=COLORS["surface"],
+            shadow_alpha=0.22,
+            **kwargs,
+        )
+        self.coin_icon = PixelLabel(text="C", font_size=sp(20), center=True, size_hint=(None, None))
+        self.coin_icon.size = (dp(20), dp(20))
+        self.add_widget(self.coin_icon)
 
-        with self.canvas.before:
-            self._shadow_color = Color(0, 0, 0, 0.20)
-            self._shadow = Ellipse(pos=self.pos, size=self.size)
+        self.coin_value = PixelLabel(text="0", font_size=sp(18), center=False, size_hint_y=None)
+        self.add_widget(self.coin_value)
 
-            StencilPush()
-            self._mask = Ellipse(pos=self.pos, size=self.size)
-            StencilUse()
+    def set_value(self, value):
+        self.coin_value.text = f"{int(value)} AC"
 
-            self._white_color = Color(1, 1, 1, 1)
-            self._white_band = Rectangle()
-            self._blue_color = Color(0.12, 0.35, 0.82, 1)
-            self._blue_band = Rectangle()
-            self._red_color = Color(0.84, 0.16, 0.2, 1)
-            self._red_band = Rectangle()
 
-            StencilUnUse()
-            self._outline_color = Color(1, 1, 1, 0.18)
-            self._outline = Line(width=1.2, ellipse=(self.x, self.y, self.width, self.height))
-            StencilPop()
+class StatTile(RoundedPanel):
+    def __init__(self, title, **kwargs):
+        super().__init__(
+            orientation="vertical",
+            spacing=dp(1),
+            padding=[dp(8), dp(4), dp(8), dp(4)],
+            size_hint=(None, None),
+            size=(dp(118), dp(36)),
+            bg_color=COLORS["surface_panel"],
+            shadow_alpha=0.14,
+            **kwargs,
+        )
+        self.title_label = BodyLabel(center=True, color=COLORS["text_muted"], font_size=sp(9), text=title)
+        self.value_label = PixelLabel(center=True, font_size=sp(13), text="0")
+        self.add_widget(self.title_label)
+        self.add_widget(self.value_label)
 
-        self.bind(pos=self._sync_canvas, size=self._sync_canvas)
+    def set_value(self, value):
+        self.value_label.text = str(value)
 
-    def _sync_canvas(self, *_):
-        self._shadow.pos = (self.x, self.y - dp(2))
-        self._shadow.size = self.size
-        self._mask.pos = self.pos
-        self._mask.size = self.size
 
-        band_height = self.height / 3
-        self._red_band.pos = self.pos
-        self._red_band.size = (self.width, band_height)
-        self._blue_band.pos = (self.x, self.y + band_height)
-        self._blue_band.size = (self.width, band_height)
-        self._white_band.pos = (self.x, self.y + band_height * 2)
-        self._white_band.size = (self.width, self.height - band_height * 2)
-        self._outline.ellipse = (self.x, self.y, self.width, self.height)
+class ProfileSummaryCard(ButtonBehavior, RoundedPanel):
+    def __init__(self, **kwargs):
+        super().__init__(
+            orientation="vertical",
+            spacing=dp(4),
+            padding=[dp(16), dp(8), dp(16), dp(8)],
+            size_hint=(None, None),
+            size=(dp(286), dp(202)),
+            bg_color=COLORS["surface"],
+            shadow_alpha=0.22,
+            **kwargs,
+        )
+
+        avatar_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(48))
+        avatar_row.add_widget(Widget())
+        self.avatar_button = AvatarButton()
+        self.avatar_button.size = (dp(46), dp(46))
+        avatar_row.add_widget(self.avatar_button)
+        avatar_row.add_widget(Widget())
+        self.add_widget(avatar_row)
+
+        self.name_label = PixelLabel(center=True, font_size=sp(18), text="Профиль", size_hint_y=None)
+        self.add_widget(self.name_label)
+
+        self.meta_label = BodyLabel(center=True, color=COLORS["text_muted"], font_size=sp(10), text="", size_hint_y=None)
+        self.add_widget(self.meta_label)
+
+        first_row = BoxLayout(orientation="horizontal", spacing=dp(8), size_hint_y=None, height=dp(36))
+        self.games_tile = StatTile("Игр")
+        self.earned_tile = StatTile("Заработано")
+        first_row.add_widget(self.games_tile)
+        first_row.add_widget(self.earned_tile)
+        self.add_widget(first_row)
+
+        second_row = BoxLayout(orientation="horizontal", spacing=dp(8), size_hint_y=None, height=dp(36))
+        self.guessed_tile = StatTile("Отгадано")
+        self.explained_tile = StatTile("Объяснено")
+        second_row.add_widget(self.guessed_tile)
+        second_row.add_widget(self.explained_tile)
+        self.add_widget(second_row)
+
+    def on_press(self):
+        self.opacity = 0.9
+
+    def on_release(self):
+        self.opacity = 1
+
+    def set_guest(self, guest_name):
+        self.avatar_button.set_profile(None)
+        self.name_label.text = guest_name or "Гость"
+        self.meta_label.text = "Гостевой режим"
+        self.games_tile.set_value(0)
+        self.earned_tile.set_value(0)
+        self.guessed_tile.set_value(0)
+        self.explained_tile.set_value(0)
+
+    def set_profile(self, profile, player_name=None):
+        self.avatar_button.set_profile(profile)
+        if profile is None:
+            self.set_guest(player_name or "Профиль")
+            return
+
+        self.name_label.text = player_name or profile.name
+        self.meta_label.text = f"Код игрока #{profile.id}"
+        self.games_tile.set_value(profile.games_played)
+        self.earned_tile.set_value(profile.total_points)
+        self.guessed_tile.set_value(profile.guessed_words)
+        self.explained_tile.set_value(profile.explained_words)
 
 
 class StartScreen(Screen):
@@ -120,33 +192,11 @@ class StartScreen(Screen):
         self.support_button = SupportIconButton(pos_hint={"x": 0.04, "top": 0.957})
         self.support_button.bind(on_release=self._open_support_popup)
 
-        self.profile_corner = BoxLayout(
-            orientation="vertical",
-            spacing=dp(6),
-            size_hint=(None, None),
-            size=(dp(114), dp(94)),
-            pos_hint={"right": 0.965, "top": 0.96},
-        )
+        self.coin_badge = CoinBadge(pos_hint={"right": 0.965, "top": 0.96})
 
-        avatar_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(64))
-        avatar_row.add_widget(Widget())
-        self.avatar_button = AvatarButton()
-        self.avatar_button.bind(on_release=self._on_profile_pressed)
-        avatar_row.add_widget(self.avatar_button)
-        avatar_row.add_widget(Widget())
-        self.profile_corner.add_widget(avatar_row)
-
-        self.profile_name_label = ProfileNameButton(
-            size_hint_y=None,
-            height=dp(20),
-            font_size=sp(11),
-            color=COLORS["text"],
-            shorten=True,
-            shorten_from="center",
-            text="",
-        )
-        self.profile_name_label.bind(on_release=self._on_profile_pressed)
-        self.profile_corner.add_widget(self.profile_name_label)
+        self.profile_card = ProfileSummaryCard()
+        self.profile_card.bind(on_release=self._on_profile_pressed)
+        self.profile_card.avatar_button.bind(on_release=self._on_profile_pressed)
 
         content = BoxLayout(
             orientation="vertical",
@@ -154,22 +204,21 @@ class StartScreen(Screen):
             padding=[dp(20), dp(24), dp(20), dp(18)],
         )
 
-        content.add_widget(Widget(size_hint_y=None, height=dp(14)))
-        content.add_widget(BrandTitle(height=dp(286), font_size=sp(62)))
-
-        language_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(58))
-        language_row.add_widget(Widget())
-        self.language_badge = LanguageFlagBadge()
-        language_row.add_widget(self.language_badge)
-        language_row.add_widget(Widget())
-        content.add_widget(language_row)
         content.add_widget(Widget(size_hint_y=None, height=dp(10)))
+        content.add_widget(BrandTitle(height=dp(212), font_size=sp(56)))
+
+        profile_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(210))
+        profile_row.add_widget(Widget())
+        profile_row.add_widget(self.profile_card)
+        profile_row.add_widget(Widget())
+        content.add_widget(profile_row)
+        content.add_widget(Widget(size_hint_y=None, height=dp(8)))
 
         menu_holder = BoxLayout(
             orientation="vertical",
             size_hint_y=None,
-            height=dp(352),
-            spacing=dp(14),
+            height=dp(308),
+            spacing=dp(12),
         )
 
         create_btn = AppButton(text="Создать комнату", font_size=sp(22))
@@ -178,7 +227,7 @@ class StartScreen(Screen):
         rules_btn = AppButton(text="Правила", font_size=sp(22))
 
         for button in (create_btn, join_btn, friends_btn, rules_btn):
-            button.height = dp(74)
+            button.height = dp(68)
             menu_holder.add_widget(button)
 
         create_btn.bind(on_release=lambda *_: setattr(self.manager, "current", "create_room"))
@@ -201,7 +250,7 @@ class StartScreen(Screen):
 
         root.add_widget(content)
         root.add_widget(self.support_button)
-        root.add_widget(self.profile_corner)
+        root.add_widget(self.coin_badge)
         root.add_widget(self.version_label)
         self.add_widget(root)
 
@@ -217,13 +266,13 @@ class StartScreen(Screen):
         player_name = app.resolve_player_name() if app is not None else ""
 
         if app is not None and getattr(app, "guest_mode", False):
-            self.avatar_button.set_profile(None)
-            self.profile_name_label.text = player_name or "Гость"
+            self.profile_card.set_guest(player_name or "Гость")
+            self.coin_badge.set_value(0)
             return
 
         profile = app.current_profile() if app is not None else None
-        self.avatar_button.set_profile(profile)
-        self.profile_name_label.text = player_name or ""
+        self.profile_card.set_profile(profile, player_name=player_name or "")
+        self.coin_badge.set_value(getattr(profile, "alias_coins", 0) if profile is not None else 0)
 
     def _on_profile_pressed(self, *_):
         app = App.get_running_app()

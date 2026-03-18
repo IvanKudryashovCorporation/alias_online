@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from kivy.animation import Animation
+from kivy.app import App
 from kivy.graphics import Color, Ellipse, Line, Rectangle, RoundedRectangle, Triangle
 from kivy.metrics import dp, sp
 from kivy.uix.behaviors import ButtonBehavior
@@ -31,46 +32,80 @@ def resolve_image_source(source):
 
 
 class ScreenBackground(FloatLayout):
-    def __init__(self, **kwargs):
+    def __init__(self, variant="lobby", **kwargs):
         super().__init__(**kwargs)
+        self.variant = (variant or "lobby").strip().lower()
 
-        self.add_widget(Image(source=str(BACKGROUND_PATH), fit_mode="fill"))
+        self._background_image = Image(source=str(BACKGROUND_PATH), fit_mode="fill")
+        self.add_widget(self._background_image)
 
         self._scene = Widget()
         with self._scene.canvas.before:
-            self._scene_shadow_color = Color(*COLORS["scene_shadow"])
-            self._scene_shadow = Rectangle(pos=self.pos, size=self.size)
+            if self.variant == "game":
+                self._scene_shadow_color = Color(0.03, 0.08, 0.12, 0.22)
+                self._scene_shadow = Rectangle(pos=self.pos, size=self.size)
 
-            self._back_hill_color = Color(*COLORS["scene_back_hill"])
-            self._back_hill_left = Ellipse()
-            self._back_hill_mid = Ellipse()
-            self._back_hill_right = Ellipse()
+                self._spotlight_color = Color(*COLORS["game_spotlight"])
+                self._spotlight_left = Triangle()
+                self._spotlight_center = Triangle()
+                self._spotlight_right = Triangle()
 
-            self._house_blue_color = Color(*COLORS["scene_house_blue"])
-            self._house_blue = Rectangle()
-            self._house_cream_color = Color(*COLORS["scene_house_cream"])
-            self._house_cream = Rectangle()
-            self._house_mint_color = Color(*COLORS["scene_house_mint"])
-            self._house_mint = Rectangle()
-            self._house_yellow_color = Color(*COLORS["scene_house_yellow"])
-            self._house_yellow = Rectangle()
+                self._game_card_blue_color = Color(*COLORS["game_card_blue"])
+                self._game_card_blue = RoundedRectangle(radius=radius(14))
+                self._game_card_gold_color = Color(*COLORS["game_card_gold"])
+                self._game_card_gold = RoundedRectangle(radius=radius(14))
+                self._game_card_cyan_color = Color(*COLORS["game_card_cyan"])
+                self._game_card_cyan = RoundedRectangle(radius=radius(14))
 
-            self._roof_color = Color(*COLORS["scene_roof"])
-            self._roof_blue = Triangle()
-            self._roof_cream = Triangle()
-            self._roof_mint = Triangle()
-            self._roof_yellow = Triangle()
+                self._game_card_outline_color = Color(*COLORS["game_card_outline"])
+                self._game_card_blue_outline = Line(width=1.1)
+                self._game_card_gold_outline = Line(width=1.1)
+                self._game_card_cyan_outline = Line(width=1.1)
 
-            self._front_hill_color = Color(*COLORS["scene_front_hill"])
-            self._front_hill_left = Ellipse()
-            self._front_hill_mid = Ellipse()
-            self._front_hill_right = Ellipse()
+                self._token_orange_color = Color(*COLORS["game_token_orange"])
+                self._token_orange = Ellipse()
+                self._token_mint_color = Color(*COLORS["game_token_mint"])
+                self._token_mint = Ellipse()
+
+                self._stage_glow_color = Color(*COLORS["game_stage_glow"])
+                self._stage_glow = Ellipse()
+                self._stage_color = Color(*COLORS["game_stage"])
+                self._stage = RoundedRectangle(radius=radius(34))
+            else:
+                self._scene_shadow_color = Color(*COLORS["scene_shadow"])
+                self._scene_shadow = Rectangle(pos=self.pos, size=self.size)
+
+                self._back_hill_color = Color(*COLORS["scene_back_hill"])
+                self._back_hill_left = Ellipse()
+                self._back_hill_mid = Ellipse()
+                self._back_hill_right = Ellipse()
+
+                self._house_blue_color = Color(*COLORS["scene_house_blue"])
+                self._house_blue = Rectangle()
+                self._house_cream_color = Color(*COLORS["scene_house_cream"])
+                self._house_cream = Rectangle()
+                self._house_mint_color = Color(*COLORS["scene_house_mint"])
+                self._house_mint = Rectangle()
+                self._house_yellow_color = Color(*COLORS["scene_house_yellow"])
+                self._house_yellow = Rectangle()
+
+                self._roof_color = Color(*COLORS["scene_roof"])
+                self._roof_blue = Triangle()
+                self._roof_cream = Triangle()
+                self._roof_mint = Triangle()
+                self._roof_yellow = Triangle()
+
+                self._front_hill_color = Color(*COLORS["scene_front_hill"])
+                self._front_hill_left = Ellipse()
+                self._front_hill_mid = Ellipse()
+                self._front_hill_right = Ellipse()
         self._scene.bind(pos=self._sync_scene, size=self._sync_scene)
         self.add_widget(self._scene)
 
         self._overlay = Widget()
         with self._overlay.canvas.before:
-            self._overlay_color = Color(*COLORS["overlay"])
+            overlay_color = COLORS["game_overlay"] if self.variant == "game" else COLORS["overlay"]
+            self._overlay_color = Color(*overlay_color)
             self._overlay_rect = Rectangle(pos=self._overlay.pos, size=self._overlay.size)
         self._overlay.bind(pos=self._sync_overlay, size=self._sync_overlay)
         self.add_widget(self._overlay)
@@ -80,6 +115,13 @@ class ScreenBackground(FloatLayout):
         self._overlay_rect.size = self._overlay.size
 
     def _sync_scene(self, *_):
+        if self.variant == "game":
+            self._sync_game_scene()
+            return
+
+        self._sync_lobby_scene()
+
+    def _sync_lobby_scene(self):
         width = self._scene.width
         height = self._scene.height
         x = self._scene.x
@@ -153,6 +195,71 @@ class ScreenBackground(FloatLayout):
         self._front_hill_mid.size = (width * 0.60, front_h * 1.02)
         self._front_hill_right.pos = (x + width * 0.58, front_y)
         self._front_hill_right.size = (width * 0.56, front_h)
+
+    def _sync_game_scene(self):
+        width = self._scene.width
+        height = self._scene.height
+        x = self._scene.x
+        y = self._scene.y
+
+        self._scene_shadow.pos = (x, y)
+        self._scene_shadow.size = (width, height * 0.34)
+
+        top_y = y + height
+        beam_bottom_y = y + height * 0.34
+        self._spotlight_left.points = [
+            x + width * 0.05,
+            top_y,
+            x + width * 0.22,
+            top_y,
+            x + width * 0.36,
+            beam_bottom_y,
+        ]
+        self._spotlight_center.points = [
+            x + width * 0.40,
+            top_y,
+            x + width * 0.60,
+            top_y,
+            x + width * 0.50,
+            y + height * 0.40,
+        ]
+        self._spotlight_right.points = [
+            x + width * 0.78,
+            top_y,
+            x + width * 0.95,
+            top_y,
+            x + width * 0.64,
+            beam_bottom_y,
+        ]
+
+        stage_w = width * 0.74
+        stage_h = height * 0.115
+        stage_x = x + (width - stage_w) * 0.5
+        stage_y = y + height * 0.06
+        self._stage.pos = (stage_x, stage_y)
+        self._stage.size = (stage_w, stage_h)
+        self._stage_glow.pos = (stage_x - width * 0.08, stage_y - height * 0.05)
+        self._stage_glow.size = (stage_w + width * 0.16, stage_h + height * 0.12)
+
+        blue_card = (x + width * 0.12, y + height * 0.18, width * 0.17, height * 0.11)
+        gold_card = (x + width * 0.73, y + height * 0.20, width * 0.15, height * 0.10)
+        cyan_card = (x + width * 0.62, y + height * 0.52, width * 0.13, height * 0.09)
+
+        self._game_card_blue.pos = blue_card[:2]
+        self._game_card_blue.size = blue_card[2:]
+        self._game_card_gold.pos = gold_card[:2]
+        self._game_card_gold.size = gold_card[2:]
+        self._game_card_cyan.pos = cyan_card[:2]
+        self._game_card_cyan.size = cyan_card[2:]
+
+        self._game_card_blue_outline.rounded_rectangle = (*blue_card, dp(14))
+        self._game_card_gold_outline.rounded_rectangle = (*gold_card, dp(14))
+        self._game_card_cyan_outline.rounded_rectangle = (*cyan_card, dp(14))
+
+        self._token_orange.pos = (x + width * 0.24, y + height * 0.58)
+        self._token_orange.size = (width * 0.09, width * 0.09)
+        self._token_mint.pos = (x + width * 0.78, y + height * 0.42)
+        self._token_mint.size = (width * 0.07, width * 0.07)
 
 
 class RoundedPanel(BoxLayout):
@@ -508,6 +615,75 @@ class PixelLabel(Label):
 
     def _sync_height(self, *_):
         self.height = max(dp(22), self.texture_size[1] + dp(4))
+
+
+class AliasCoinIcon(Widget):
+    def __init__(self, **kwargs):
+        super().__init__(size_hint=(None, None), size=(dp(28), dp(28)), **kwargs)
+        self._glyph = Label(
+            text="AC",
+            font_name="BrandFont",
+            font_size=sp(11),
+            color=(0.35, 0.20, 0.03, 1),
+            halign="center",
+            valign="middle",
+        )
+        with self.canvas.before:
+            self._shadow_color = Color(0, 0, 0, 0.18)
+            self._shadow = Ellipse()
+            self._outer_color = Color(0.96, 0.71, 0.10, 1)
+            self._outer = Ellipse()
+            self._inner_color = Color(1.0, 0.84, 0.22, 1)
+            self._inner = Ellipse()
+            self._shine_color = Color(1, 1, 1, 0.22)
+            self._shine = Ellipse()
+            self._border_color = Color(0.69, 0.42, 0.05, 0.95)
+            self._border = Line(width=1.1)
+        self.add_widget(self._glyph)
+        self.bind(pos=self._sync_canvas, size=self._sync_canvas)
+
+    def _sync_canvas(self, *_):
+        self._shadow.pos = (self.x, self.y - dp(1.4))
+        self._shadow.size = self.size
+        self._outer.pos = self.pos
+        self._outer.size = self.size
+        self._inner.pos = (self.x + dp(2), self.y + dp(2))
+        self._inner.size = (max(dp(0), self.width - dp(4)), max(dp(0), self.height - dp(4)))
+        self._shine.pos = (self.x + self.width * 0.16, self.y + self.height * 0.56)
+        self._shine.size = (self.width * 0.28, self.height * 0.18)
+        self._border.ellipse = (self.x, self.y, self.width, self.height)
+        self._glyph.pos = self.pos
+        self._glyph.size = self.size
+        self._glyph.text_size = self.size
+
+
+class CoinBadge(RoundedPanel):
+    def __init__(self, **kwargs):
+        size = kwargs.pop("size", (dp(122), dp(52)))
+        size_hint = kwargs.pop("size_hint", (None, None))
+        super().__init__(
+            orientation="horizontal",
+            spacing=dp(8),
+            padding=[dp(12), dp(8), dp(12), dp(8)],
+            size_hint=size_hint,
+            size=size,
+            bg_color=COLORS["surface"],
+            shadow_alpha=0.22,
+            **kwargs,
+        )
+        self.coin_icon = AliasCoinIcon()
+        self.add_widget(self.coin_icon)
+
+        self.coin_value = PixelLabel(text="0", font_size=sp(18), center=False, size_hint_y=None)
+        self.add_widget(self.coin_value)
+
+    def set_value(self, value):
+        self.coin_value.text = str(int(value))
+
+    def refresh_from_session(self):
+        app = App.get_running_app()
+        profile = app.current_profile() if app is not None and hasattr(app, "current_profile") else None
+        self.set_value(getattr(profile, "alias_coins", 0) if profile is not None else 0)
 
 
 def build_scrollable_content(padding=None, spacing=16):
