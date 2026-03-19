@@ -576,6 +576,7 @@ class BodyLabel(Label):
         register_game_font()
         halign = kwargs.pop("halign", "center" if center else "left")
         size_hint_y = kwargs.pop("size_hint_y", None)
+        auto_height = kwargs.pop("auto_height", True)
         super().__init__(
             font_name="GameFont",
             color=kwargs.pop("color", COLORS["text_soft"]),
@@ -585,7 +586,11 @@ class BodyLabel(Label):
             size_hint_y=size_hint_y,
             **kwargs,
         )
-        self.bind(width=self._sync_text, texture_size=self._sync_height)
+        self._auto_height = bool(auto_height)
+        self.bind(width=self._sync_text)
+        if self._auto_height:
+            self.bind(texture_size=self._sync_height)
+        self._sync_text()
 
     def _sync_text(self, *_):
         self.text_size = (max(0, self.width), None)
@@ -599,6 +604,7 @@ class PixelLabel(Label):
         register_game_font()
         halign = kwargs.pop("halign", "center" if center else "left")
         size_hint_y = kwargs.pop("size_hint_y", None)
+        auto_height = kwargs.pop("auto_height", True)
         super().__init__(
             font_name="GameFont",
             font_size=kwargs.pop("font_size", sp(16)),
@@ -608,7 +614,11 @@ class PixelLabel(Label):
             size_hint_y=size_hint_y,
             **kwargs,
         )
-        self.bind(width=self._sync_text, texture_size=self._sync_height)
+        self._auto_height = bool(auto_height)
+        self.bind(width=self._sync_text)
+        if self._auto_height:
+            self.bind(texture_size=self._sync_height)
+        self._sync_text()
 
     def _sync_text(self, *_):
         self.text_size = (max(0, self.width), None)
@@ -830,7 +840,13 @@ class IconMetaChip(RoundedPanel):
         self._border_line.width = 1.0
         self.icon = MiniIcon(icon=icon, color=COLORS["text_muted"])
         self.add_widget(self.icon)
-        self.label = BodyLabel(text=text, font_size=sp(10.5), color=COLORS["text_soft"], size_hint=(None, None))
+        self.label = BodyLabel(
+            text=text,
+            font_size=sp(10.5),
+            color=COLORS["text_soft"],
+            size_hint=(None, 1),
+            auto_height=False,
+        )
         self.label.bind(texture_size=self._sync_label_width)
         self.add_widget(self.label)
         self.bind(minimum_width=self.setter("width"))
