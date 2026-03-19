@@ -2,9 +2,11 @@ from .profile_store import (
     Profile,
     ROOM_CREATION_COST,
     add_friend,
+    apply_match_exit_penalty,
     get_active_profile,
     get_database_path,
     get_latest_profile,
+    get_matchmaking_penalty,
     get_profile_by_email,
     has_profiles,
     initialize_database,
@@ -20,6 +22,7 @@ from .profile_store import (
 )
 from .room_hub import (
     create_online_room,
+    generate_room_code_preview,
     get_online_room,
     get_online_room_state,
     get_room_voice_chunks,

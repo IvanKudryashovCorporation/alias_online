@@ -11,6 +11,11 @@ def room_server_url():
     return DEFAULT_ROOM_SERVER_URL
 
 
+def generate_room_code_preview(*, base_url=None):
+    response = _request_json("GET", "/api/rooms/preview-code", base_url=base_url)
+    return (response.get("code") or "").strip().upper()
+
+
 def _request_json(method, path, payload=None, timeout=7, base_url=None):
     server_url = (base_url or DEFAULT_ROOM_SERVER_URL).rstrip("/")
     url = f"{server_url}{path}"
@@ -54,6 +59,7 @@ def create_online_room(
     visibility_scope,
     round_timer_sec,
     rounds,
+    requested_code=None,
     base_url=None,
 ):
     payload = {
@@ -66,6 +72,8 @@ def create_online_room(
         "round_timer_sec": int(round_timer_sec),
         "rounds": int(rounds),
     }
+    if requested_code:
+        payload["requested_code"] = str(requested_code).strip().upper()
     response = _request_json("POST", "/api/rooms", payload=payload, base_url=base_url)
     return response.get("room", {})
 

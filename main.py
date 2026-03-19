@@ -3,6 +3,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from contextlib import suppress
 from pathlib import Path
 
 from kivy.app import App
@@ -19,7 +20,14 @@ from screens.registration_screen import RegistrationScreen
 from screens.room_screen import RoomScreen
 from screens.rules import RulesScreen
 from screens.start_screen import StartScreen
-from services import get_active_profile, initialize_database, leave_online_room, set_active_profile
+from services import (
+    apply_match_exit_penalty,
+    get_active_profile,
+    get_matchmaking_penalty,
+    initialize_database,
+    leave_online_room,
+    set_active_profile,
+)
 from ui.theme import register_game_font
 
 Window.title = "Alias Online"
@@ -27,6 +35,37 @@ Window.softinput_mode = "below_target"
 
 if platform not in ("android", "ios"):
     Window.size = (430, 820)
+
+
+class _SingleInstanceGuard:
+    def __init__(self, name):
+        self.name = name
+        self._handle = None
+
+    def acquire(self):
+        if sys.platform != "win32":
+            return True
+
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.CreateMutexW(None, False, self.name)
+        if not handle:
+            return True
+
+        self._handle = handle
+        already_exists = kernel32.GetLastError() == 183
+        return not already_exists
+
+    def release(self):
+        if self._handle is None or sys.platform != "win32":
+            return
+
+        import ctypes
+
+        with suppress(Exception):
+            ctypes.windll.kernel32.CloseHandle(self._handle)
+        self._handle = None
 
 
 class AliasApp(App):
@@ -39,6 +78,7 @@ class AliasApp(App):
         self.guest_counter = 0
         self.active_room = {}
         self._room_server_process = None
+        self.guest_room_lock_until = 0.0
 
     def build(self):
         register_game_font()
@@ -163,6 +203,36 @@ class AliasApp(App):
     def clear_active_room(self):
         self.active_room = {}
 
+    def room_access_state(self):
+        if self.authenticated:
+            profile = self.current_profile()
+            if profile is not None:
+                return get_matchmaking_penalty(profile.email)
+
+        remaining_seconds = max(0, int(self.guest_room_lock_until - time.time()))
+        return {
+            "active": remaining_seconds > 0,
+            "remaining_seconds": remaining_seconds,
+            "blocked_until": None,
+        }
+
+    def apply_room_exit_penalty(self, coin_penalty=50, cooldown_minutes=5):
+        if self.authenticated:
+            profile = self.current_profile()
+            if profile is not None:
+                return apply_match_exit_penalty(profile.email, coin_penalty=coin_penalty, cooldown_minutes=cooldown_minutes)
+
+        self.guest_room_lock_until = max(self.guest_room_lock_until, time.time() + max(1, int(cooldown_minutes or 0)) * 60)
+        remaining_seconds = max(0, int(self.guest_room_lock_until - time.time()))
+        return {
+            "profile": None,
+            "coins_deducted": 0,
+            "remaining_coins": 0,
+            "blocked_until": None,
+            "remaining_seconds": remaining_seconds,
+            "cooldown_minutes": max(1, int(cooldown_minutes or 0)),
+        }
+
     def _leave_active_room(self):
         room_code = (self.active_room or {}).get("code", "")
         player_name = self.resolve_player_name()
@@ -183,4 +253,10 @@ class AliasApp(App):
 
 
 if __name__ == "__main__":
-    AliasApp().run()
+    _instance_guard = _SingleInstanceGuard("AliasOnlineDesktopAppMutex")
+    if not _instance_guard.acquire():
+        raise SystemExit(0)
+    try:
+        AliasApp().run()
+    finally:
+        _instance_guard.release()

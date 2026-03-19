@@ -5,6 +5,7 @@ import re
 import shutil
 import sqlite3
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from kivy.app import App
@@ -17,7 +18,7 @@ ROOM_CREATION_COST = 10
 STARTER_ALIAS_COINS = 100
 PROFILE_COLUMNS = (
     "id, name, email, avatar_path, bio, alias_coins, games_played, total_points, rooms_created, "
-    "guessed_words, explained_words, "
+    "guessed_words, explained_words, match_penalty_until, "
     "created_at, updated_at"
 )
 
@@ -35,6 +36,7 @@ class Profile:
     rooms_created: int
     guessed_words: int
     explained_words: int
+    match_penalty_until: str | None
     created_at: str
     updated_at: str
 
@@ -119,6 +121,7 @@ def _ensure_profile_schema(connection):
         ("rooms_created", "INTEGER NOT NULL DEFAULT 0"),
         ("guessed_words", "INTEGER NOT NULL DEFAULT 0"),
         ("explained_words", "INTEGER NOT NULL DEFAULT 0"),
+        ("match_penalty_until", "TEXT"),
     ):
         if column_name not in columns:
             connection.execute(f"ALTER TABLE profiles ADD COLUMN {column_name} {definition}")
@@ -164,6 +167,20 @@ def _normalize_text(value):
     return value or None
 
 
+def _utc_now():
+    return datetime.utcnow()
+
+
+def _parse_timestamp(raw_value):
+    raw = (raw_value or "").strip()
+    if not raw:
+        return None
+    try:
+        return datetime.strptime(raw, "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return None
+
+
 def _hash_password(password, salt=None):
     salt = salt or os.urandom(16).hex()
     derived = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), bytes.fromhex(salt), 120000)
@@ -203,6 +220,7 @@ def _row_to_profile(row):
         rooms_created=int(row["rooms_created"]) if "rooms_created" in keys and row["rooms_created"] is not None else 0,
         guessed_words=int(row["guessed_words"]) if "guessed_words" in keys and row["guessed_words"] is not None else 0,
         explained_words=int(row["explained_words"]) if "explained_words" in keys and row["explained_words"] is not None else 0,
+        match_penalty_until=row["match_penalty_until"] if "match_penalty_until" in keys else None,
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -683,6 +701,90 @@ def spend_alias_coins(email, amount, db_path=None):
         updated = _fetch_profile_row(connection, "email = ?", (clean_email,))
 
     return _row_to_profile(updated)
+
+
+def get_matchmaking_penalty(email, db_path=None):
+    initialize_database(db_path)
+
+    clean_email = (email or "").strip().lower()
+    if not clean_email or not EMAIL_PATTERN.match(clean_email):
+        return {"active": False, "remaining_seconds": 0, "blocked_until": None}
+
+    with _connect(db_path) as connection:
+        row = connection.execute(
+            """
+            SELECT match_penalty_until
+            FROM profiles
+            WHERE email = ?
+            """,
+            (clean_email,),
+        ).fetchone()
+
+    blocked_until = _parse_timestamp(row["match_penalty_until"]) if row is not None else None
+    if blocked_until is None:
+        return {"active": False, "remaining_seconds": 0, "blocked_until": None}
+
+    remaining_seconds = max(0, int((blocked_until - _utc_now()).total_seconds()))
+    return {
+        "active": remaining_seconds > 0,
+        "remaining_seconds": remaining_seconds,
+        "blocked_until": blocked_until.strftime("%Y-%m-%d %H:%M:%S"),
+    }
+
+
+def apply_match_exit_penalty(email, coin_penalty=50, cooldown_minutes=5, db_path=None):
+    initialize_database(db_path)
+
+    clean_email = (email or "").strip().lower()
+    if not clean_email or not EMAIL_PATTERN.match(clean_email):
+        raise ValueError("Укажи корректный e-mail.")
+
+    penalty_amount = max(0, int(coin_penalty or 0))
+    cooldown_value = max(1, int(cooldown_minutes or 0))
+    target_until = _utc_now() + timedelta(minutes=cooldown_value)
+
+    with _connect(db_path) as connection:
+        row = connection.execute(
+            f"""
+            SELECT {PROFILE_COLUMNS}
+            FROM profiles
+            WHERE email = ?
+            """,
+            (clean_email,),
+        ).fetchone()
+
+        if row is None:
+            raise ValueError("Профиль не найден.")
+
+        current_profile = _row_to_profile(row)
+        current_until = _parse_timestamp(current_profile.match_penalty_until)
+        final_until = max(target_until, current_until) if current_until is not None else target_until
+        current_coins = max(0, int(current_profile.alias_coins or 0))
+        deducted_coins = min(current_coins, penalty_amount)
+        remaining_coins = max(0, current_coins - deducted_coins)
+
+        connection.execute(
+            """
+            UPDATE profiles
+            SET alias_coins = ?,
+                match_penalty_until = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE email = ?
+            """,
+            (remaining_coins, final_until.strftime("%Y-%m-%d %H:%M:%S"), clean_email),
+        )
+        updated = _fetch_profile_row(connection, "email = ?", (clean_email,))
+
+    updated_profile = _row_to_profile(updated)
+    penalty_info = get_matchmaking_penalty(clean_email, db_path=db_path)
+    return {
+        "profile": updated_profile,
+        "coins_deducted": deducted_coins,
+        "remaining_coins": getattr(updated_profile, "alias_coins", remaining_coins),
+        "blocked_until": penalty_info["blocked_until"],
+        "remaining_seconds": penalty_info["remaining_seconds"],
+        "cooldown_minutes": cooldown_value,
+    }
 
 
 def sync_room_progress(email, room_code, current_score, round_started=False, role=None, db_path=None):

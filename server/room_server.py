@@ -117,6 +117,10 @@ def _normalize_guess(value):
     return compact
 
 
+def _required_players_to_start(max_players):
+    return 1
+
+
 def _init_db():
     with _connect() as connection:
         connection.execute(
@@ -136,6 +140,7 @@ def _init_db():
                 game_phase TEXT NOT NULL DEFAULT 'lobby',
                 countdown_end_at TEXT,
                 round_end_at TEXT,
+                bot_next_action_at TEXT,
                 voice_speaker TEXT,
                 voice_until TEXT,
                 created_at TEXT NOT NULL,
@@ -202,6 +207,7 @@ def _init_db():
             ("game_phase", "TEXT NOT NULL DEFAULT 'lobby'"),
             ("countdown_end_at", "TEXT"),
             ("round_end_at", "TEXT"),
+            ("bot_next_action_at", "TEXT"),
             ("voice_speaker", "TEXT"),
             ("voice_until", "TEXT"),
         ]
@@ -287,6 +293,7 @@ def _normalize_room(row, players_count):
         "room_name": row["room_name"],
         "host_name": row["host_name"],
         "max_players": row["max_players"],
+        "required_players_to_start": _required_players_to_start(row["max_players"]),
         "difficulty": row["difficulty"],
         "visibility": row["visibility"],
         "visibility_scope": row["visibility_scope"],
@@ -297,6 +304,7 @@ def _normalize_room(row, players_count):
         "game_phase": row["game_phase"],
         "countdown_end_at": row["countdown_end_at"],
         "round_end_at": row["round_end_at"],
+        "bot_next_action_at": row["bot_next_action_at"],
         "voice_speaker": row["voice_speaker"],
         "voice_until": row["voice_until"],
         "players_count": players_count,
@@ -333,6 +341,20 @@ def _generate_room_code(connection):
     raise RuntimeError("Failed to generate unique room code.")
 
 
+def _normalize_requested_code(value):
+    raw = "".join(character for character in (value or "").upper() if character.isalnum())
+    return raw[:10]
+
+
+def _resolve_room_code(connection, requested_code=None):
+    preferred = _normalize_requested_code(requested_code)
+    if preferred and 4 <= len(preferred) <= 10:
+        existing = connection.execute("SELECT 1 FROM rooms WHERE code = ?", (preferred,)).fetchone()
+        if existing is None:
+            return preferred
+    return _generate_room_code(connection)
+
+
 def _room_with_count(connection, room_code):
     row = connection.execute("SELECT * FROM rooms WHERE code = ?", (room_code,)).fetchone()
     if row is None:
@@ -351,7 +373,7 @@ def _room_players(connection, room_code):
         SELECT player_name
         FROM room_players
         WHERE room_code = ?
-        ORDER BY joined_at ASC, player_name ASC
+        ORDER BY joined_at ASC, rowid ASC
         """,
         (room_code,),
     ).fetchall()
@@ -392,6 +414,138 @@ def _touch_room(connection, room_code):
         """,
         (_now(), room_code),
     )
+
+
+def _is_bot_player(player_name):
+    normalized = (player_name or "").strip().lower()
+    return normalized.startswith("bot ")
+
+
+def _pick_bot_delay_seconds():
+    return random.uniform(1.6, 4.2)
+
+
+def _next_bot_action_at():
+    return _dt_to_str(_utc_now() + timedelta(seconds=_pick_bot_delay_seconds()))
+
+
+def _pick_wrong_bot_guess(current_word, difficulty):
+    current = _normalize_guess(current_word)
+    for _ in range(12):
+        candidate = _pick_word(difficulty)
+        if _normalize_guess(candidate) != current:
+            return candidate
+    fallback_pool = ["ракета", "лампа", "окно", "музыка", "яблоко", "поезд"]
+    for candidate in fallback_pool:
+        if _normalize_guess(candidate) != current:
+            return candidate
+    return "другое"
+
+
+def _process_room_guess(connection, room_code, player_name, guess):
+    room = connection.execute("SELECT * FROM rooms WHERE code = ?", (room_code,)).fetchone()
+    if room is None:
+        raise ValueError("Room not found.")
+    if not _is_room_player(connection, room_code, player_name):
+        raise ValueError("Player is not in this room.")
+    if (room["game_phase"] or "lobby").strip().lower() != "round":
+        raise ValueError("Round has not started yet.")
+    if player_name == (room["current_explainer"] or "").strip():
+        raise ValueError("Current explainer cannot send guesses.")
+
+    _insert_message(connection, room_code, player_name, guess, "guess")
+
+    explainer_name = room["current_explainer"]
+    current_word = room["current_word"] or ""
+    normalized_guess = _normalize_guess(guess)
+    normalized_word = _normalize_guess(current_word)
+    correct = bool(normalized_guess and normalized_word and normalized_guess == normalized_word)
+
+    awarded_explainer_score = None
+    awarded_guesser_score = None
+    if correct:
+        awarded_explainer_score = _adjust_score(connection, room_code, explainer_name, +1)
+        awarded_guesser_score = _adjust_score(connection, room_code, player_name, +1)
+        new_word = _pick_word(room["difficulty"])
+        connection.execute(
+            """
+            UPDATE rooms
+            SET current_word = ?,
+                bot_next_action_at = ?,
+                updated_at = ?
+            WHERE code = ?
+            """,
+            (new_word, _next_bot_action_at(), _now(), room_code),
+        )
+        _insert_message(
+            connection,
+            room_code,
+            "System",
+            f"{player_name} guessed the word. {explainer_name} +1 and {player_name} +1.",
+            "system",
+        )
+    else:
+        connection.execute(
+            """
+            UPDATE rooms
+            SET bot_next_action_at = ?,
+                updated_at = ?
+            WHERE code = ?
+            """,
+            (_next_bot_action_at(), _now(), room_code),
+        )
+
+    response_payload = _room_payload(connection, room_code, player_name=player_name)
+    return {
+        "correct": correct,
+        "awarded_player": explainer_name if correct else None,
+        "awarded_delta": 1 if correct else 0,
+        "awarded_score": awarded_explainer_score,
+        "guesser_player": player_name if correct else None,
+        "guesser_delta": 1 if correct else 0,
+        "guesser_score": awarded_guesser_score,
+        "room": response_payload["room"] if response_payload else {},
+        "scores": response_payload.get("scores", []) if response_payload else [],
+        "current_word": response_payload.get("current_word", "") if response_payload else "",
+    }
+
+
+def _run_bot_activity(connection, room_code):
+    room = connection.execute("SELECT * FROM rooms WHERE code = ?", (room_code,)).fetchone()
+    if room is None:
+        return
+
+    phase = (room["game_phase"] or "lobby").strip().lower()
+    if phase != "round":
+        return
+
+    scheduled_at = _str_to_dt(room["bot_next_action_at"])
+    if scheduled_at is not None and scheduled_at > _utc_now():
+        return
+
+    players = _room_players(connection, room_code)
+    bot_players = [player for player in players if _is_bot_player(player) and player != (room["current_explainer"] or "").strip()]
+    if not bot_players:
+        return
+
+    actor = random.choice(bot_players)
+    if random.random() < 0.38:
+        guess_text = room["current_word"] or _pick_word(room["difficulty"])
+    else:
+        guess_text = _pick_wrong_bot_guess(room["current_word"], room["difficulty"])
+
+    try:
+        _process_room_guess(connection, room_code, actor, guess_text)
+    except ValueError:
+        connection.execute(
+            """
+            UPDATE rooms
+            SET bot_next_action_at = ?,
+                updated_at = ?
+            WHERE code = ?
+            """,
+            (_next_bot_action_at(), _now(), room_code),
+        )
 
 
 def _insert_message(connection, room_code, player_name, message, message_type):
@@ -544,6 +698,7 @@ def _start_game_countdown(connection, room_code, started_by, auto_start=False):
         SET game_phase = 'countdown',
             countdown_end_at = ?,
             round_end_at = ?,
+            bot_next_action_at = NULL,
             voice_speaker = NULL,
             voice_until = NULL,
             updated_at = ?
@@ -580,10 +735,11 @@ def _refresh_room_phase(connection, room_code):
                 SET game_phase = 'round',
                     countdown_end_at = NULL,
                     round_end_at = ?,
+                    bot_next_action_at = ?,
                     updated_at = ?
                 WHERE code = ?
                 """,
-                (_dt_to_str(round_end), _now(), room_code),
+                (_dt_to_str(round_end), _next_bot_action_at(), _now(), room_code),
             )
             _insert_message(connection, room_code, "System", "Round started.", "system")
             return
@@ -597,6 +753,7 @@ def _refresh_room_phase(connection, room_code):
                 SET game_phase = 'lobby',
                     countdown_end_at = NULL,
                     round_end_at = NULL,
+                    bot_next_action_at = NULL,
                     voice_speaker = NULL,
                     voice_until = NULL,
                     updated_at = ?
@@ -609,6 +766,7 @@ def _refresh_room_phase(connection, room_code):
 
 def _room_payload(connection, room_code, player_name="", since_id=None):
     _refresh_room_phase(connection, room_code)
+    _run_bot_activity(connection, room_code)
     room = _room_with_count(connection, room_code)
     if room is None:
         return None
@@ -676,6 +834,12 @@ def _room_payload(connection, room_code, player_name="", since_id=None):
         if round_end_dt is not None:
             round_left_sec = max(0, int((round_end_dt - _utc_now()).total_seconds() + 0.999))
 
+    players_count = int(room.get("players_count") or len(players) or 0)
+    required_players = _required_players_to_start(room.get("max_players"))
+    is_viewer_player = bool(player_name) and any(player_name == listed_player for listed_player in players)
+    is_viewer_explainer = bool(player_name) and player_name == room.get("current_explainer")
+    is_viewer_host = bool(player_name) and player_name == room.get("host_name")
+
     return {
         "room": room_view,
         "players": players,
@@ -688,6 +852,17 @@ def _room_payload(connection, room_code, player_name="", since_id=None):
         "game_phase": phase,
         "countdown_left_sec": countdown_left_sec,
         "round_left_sec": round_left_sec,
+        "viewer": {
+            "player_name": player_name,
+            "is_player": is_viewer_player,
+            "is_explainer": is_viewer_explainer,
+            "is_host": is_viewer_host,
+            "can_control_start": bool(is_viewer_explainer and phase == "lobby"),
+            "can_start_game": bool(is_viewer_explainer and phase == "lobby" and players_count >= required_players),
+            "can_send_chat": bool(is_viewer_player and not (is_viewer_explainer and phase in {"countdown", "round"})),
+            "can_use_voice": bool(is_viewer_explainer and phase == "round"),
+            "required_players_to_start": required_players,
+        },
         "server_time": _now(),
     }
 
@@ -726,6 +901,10 @@ class RoomHandler(BaseHTTPRequestHandler):
 
         if parts == ["api", "rooms"]:
             self._handle_list_rooms(parsed.query)
+            return
+
+        if parts == ["api", "rooms", "preview-code"]:
+            self._handle_preview_room_code()
             return
 
         if len(parts) == 3 and parts[0] == "api" and parts[1] == "rooms":
@@ -827,6 +1006,11 @@ class RoomHandler(BaseHTTPRequestHandler):
         room["current_word"] = ""
         self._json_response(200, {"room": room})
 
+    def _handle_preview_room_code(self):
+        with _connect() as connection:
+            code = _generate_room_code(connection)
+        self._json_response(200, {"code": code})
+
     def _handle_create_room(self):
         try:
             payload = self._parse_json_body()
@@ -839,6 +1023,7 @@ class RoomHandler(BaseHTTPRequestHandler):
         difficulty = (payload.get("difficulty") or "").strip()
         visibility = (payload.get("visibility") or "").strip()
         visibility_scope = _normalize_scope(payload.get("visibility_scope"), visibility)
+        requested_code = payload.get("requested_code")
 
         try:
             max_players = int(payload.get("max_players"))
@@ -868,7 +1053,7 @@ class RoomHandler(BaseHTTPRequestHandler):
             return
 
         with _connect() as connection:
-            room_code = _generate_room_code(connection)
+            room_code = _resolve_room_code(connection, requested_code if visibility_scope == "private" else None)
             timestamp = _now()
             current_word = _pick_word(difficulty)
             connection.execute(
@@ -940,15 +1125,6 @@ class RoomHandler(BaseHTTPRequestHandler):
                 self._json_response(404, {"error": "Room not found."})
                 return
 
-            count_row = connection.execute(
-                "SELECT COUNT(*) AS players_count FROM room_players WHERE room_code = ?",
-                (room_code,),
-            ).fetchone()
-            players_count = int(count_row["players_count"])
-            if players_count >= int(room["max_players"]):
-                self._json_response(409, {"error": "Room is already full."})
-                return
-
             exists = connection.execute(
                 """
                 SELECT 1
@@ -959,6 +1135,15 @@ class RoomHandler(BaseHTTPRequestHandler):
             ).fetchone()
 
             if exists is None:
+                count_row = connection.execute(
+                    "SELECT COUNT(*) AS players_count FROM room_players WHERE room_code = ?",
+                    (room_code,),
+                ).fetchone()
+                players_count = int(count_row["players_count"])
+                if players_count >= int(room["max_players"]):
+                    self._json_response(409, {"error": "Room is already full."})
+                    return
+
                 connection.execute(
                     """
                     INSERT INTO room_players (room_code, player_name, joined_at)
@@ -968,14 +1153,6 @@ class RoomHandler(BaseHTTPRequestHandler):
                 )
                 _ensure_score_row(connection, room_code, player_name)
                 _insert_message(connection, room_code, "System", f"{player_name} joined the room.", "system")
-
-            current_count_row = connection.execute(
-                "SELECT COUNT(*) AS players_count FROM room_players WHERE room_code = ?",
-                (room_code,),
-            ).fetchone()
-            current_players_count = int(current_count_row["players_count"])
-            if current_players_count >= int(room["max_players"]) and (room["game_phase"] or "lobby") == "lobby":
-                _start_game_countdown(connection, room_code, started_by=room["current_explainer"], auto_start=True)
 
             _touch_room(connection, room_code)
             room_data = _room_with_count(connection, room_code)
@@ -1073,6 +1250,9 @@ class RoomHandler(BaseHTTPRequestHandler):
                 since_id = None
 
         with _connect() as connection:
+            if player_name and not _is_room_player(connection, room_code, player_name):
+                self._json_response(403, {"error": "Player is not in this room."})
+                return
             payload = _room_payload(connection, room_code, player_name=player_name, since_id=since_id)
 
         if payload is None:
@@ -1111,7 +1291,7 @@ class RoomHandler(BaseHTTPRequestHandler):
                 self._json_response(403, {"error": "Player is not in this room."})
                 return
             phase = (room["game_phase"] or "lobby").strip().lower()
-            if phase == "round" and player_name == (room["current_explainer"] or "").strip():
+            if phase in {"countdown", "round"} and player_name == (room["current_explainer"] or "").strip():
                 self._json_response(403, {"error": "Current explainer cannot send chat messages."})
                 return
 
@@ -1140,70 +1320,21 @@ class RoomHandler(BaseHTTPRequestHandler):
             return
 
         with _connect() as connection:
-            _refresh_room_phase(connection, room_code)
-            room = connection.execute("SELECT * FROM rooms WHERE code = ?", (room_code,)).fetchone()
-            if room is None:
-                self._json_response(404, {"error": "Room not found."})
+            try:
+                result = _process_room_guess(connection, room_code, player_name, guess)
+            except ValueError as error:
+                message = str(error)
+                if message == "Room not found.":
+                    self._json_response(404, {"error": message})
+                elif message in {"Player is not in this room.", "Current explainer cannot send guesses."}:
+                    self._json_response(403, {"error": message})
+                elif message == "Round has not started yet.":
+                    self._json_response(409, {"error": message})
+                else:
+                    self._json_response(400, {"error": message})
                 return
-            if not _is_room_player(connection, room_code, player_name):
-                self._json_response(403, {"error": "Player is not in this room."})
-                return
 
-            if (room["game_phase"] or "lobby").strip().lower() != "round":
-                self._json_response(409, {"error": "Round has not started yet."})
-                return
-
-            _insert_message(connection, room_code, player_name, guess, "guess")
-
-            explainer_name = room["current_explainer"]
-            current_word = room["current_word"] or ""
-            normalized_guess = _normalize_guess(guess)
-            normalized_word = _normalize_guess(current_word)
-            is_explainer = player_name == explainer_name
-            correct = bool(normalized_guess and normalized_word and normalized_guess == normalized_word and not is_explainer)
-
-            awarded_explainer_score = None
-            awarded_guesser_score = None
-            if correct:
-                awarded_explainer_score = _adjust_score(connection, room_code, explainer_name, +1)
-                awarded_guesser_score = _adjust_score(connection, room_code, player_name, +1)
-                new_word = _pick_word(room["difficulty"])
-                connection.execute(
-                    """
-                    UPDATE rooms
-                    SET current_word = ?,
-                        updated_at = ?
-                    WHERE code = ?
-                    """,
-                    (new_word, _now(), room_code),
-                )
-                _insert_message(
-                    connection,
-                    room_code,
-                    "System",
-                    f"{player_name} guessed the word. {explainer_name} +1 and {player_name} +1.",
-                    "system",
-                )
-            else:
-                _touch_room(connection, room_code)
-
-            response_payload = _room_payload(connection, room_code, player_name=player_name)
-
-        self._json_response(
-            200,
-            {
-                "correct": correct,
-                "awarded_player": room["current_explainer"] if correct else None,
-                "awarded_delta": 1 if correct else 0,
-                "awarded_score": awarded_explainer_score,
-                "guesser_player": player_name if correct else None,
-                "guesser_delta": 1 if correct else 0,
-                "guesser_score": awarded_guesser_score,
-                "room": response_payload["room"] if response_payload else {},
-                "scores": response_payload.get("scores", []) if response_payload else [],
-                "current_word": response_payload.get("current_word", "") if response_payload else "",
-            },
-        )
+        self._json_response(200, result)
 
     def _handle_start_game(self, room_code):
         try:
@@ -1227,6 +1358,9 @@ class RoomHandler(BaseHTTPRequestHandler):
             if not _is_room_player(connection, room_code, player_name):
                 self._json_response(403, {"error": "Player is not in this room."})
                 return
+            if player_name != (room["current_explainer"] or "").strip():
+                self._json_response(403, {"error": "Only the current explainer can start the game."})
+                return
 
             players_row = connection.execute(
                 "SELECT COUNT(*) AS players_count FROM room_players WHERE room_code = ?",
@@ -1236,7 +1370,6 @@ class RoomHandler(BaseHTTPRequestHandler):
             if players_count < 1:
                 self._json_response(409, {"error": "Room has no players."})
                 return
-
             phase = (room["game_phase"] or "lobby").strip().lower()
             if phase in {"countdown", "round"}:
                 payload = _room_payload(connection, room_code, player_name=player_name)
@@ -1246,9 +1379,17 @@ class RoomHandler(BaseHTTPRequestHandler):
                         "ok": True,
                         "already_started": True,
                         "room": payload["room"] if payload else {},
+                        "players": payload.get("players", []) if payload else [],
+                        "scores": payload.get("scores", []) if payload else [],
+                        "messages": payload.get("messages", []) if payload else [],
+                        "viewer": payload.get("viewer", {}) if payload else {},
+                        "voice_active": payload.get("voice_active", False) if payload else False,
+                        "voice_speaker": payload.get("voice_speaker") if payload else None,
+                        "current_word": payload.get("current_word", "") if payload else "",
                         "game_phase": payload.get("game_phase") if payload else phase,
                         "countdown_left_sec": payload.get("countdown_left_sec", 0) if payload else 0,
                         "round_left_sec": payload.get("round_left_sec", 0) if payload else 0,
+                        "server_time": payload.get("server_time") if payload else _now(),
                     },
                 )
                 return
@@ -1261,9 +1402,17 @@ class RoomHandler(BaseHTTPRequestHandler):
             {
                 "ok": True,
                 "room": updated["room"] if updated else {},
+                "players": updated.get("players", []) if updated else [],
+                "scores": updated.get("scores", []) if updated else [],
+                "messages": updated.get("messages", []) if updated else [],
+                "viewer": updated.get("viewer", {}) if updated else {},
+                "voice_active": updated.get("voice_active", False) if updated else False,
+                "voice_speaker": updated.get("voice_speaker") if updated else None,
+                "current_word": updated.get("current_word", "") if updated else "",
                 "game_phase": updated.get("game_phase", "countdown") if updated else "countdown",
                 "countdown_left_sec": updated.get("countdown_left_sec", 10) if updated else 10,
                 "round_left_sec": updated.get("round_left_sec", 0) if updated else 0,
+                "server_time": updated.get("server_time") if updated else _now(),
             },
         )
 

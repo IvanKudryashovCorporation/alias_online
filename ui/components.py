@@ -686,6 +686,202 @@ class CoinBadge(RoundedPanel):
         self.set_value(getattr(profile, "alias_coins", 0) if profile is not None else 0)
 
 
+class MiniIcon(Widget):
+    def __init__(self, icon="users", color=None, **kwargs):
+        super().__init__(size_hint=(None, None), size=(dp(16), dp(16)), **kwargs)
+        self.icon = (icon or "users").strip().lower()
+        self._icon_color_value = color or COLORS["text_muted"]
+
+        with self.canvas.before:
+            self._icon_color = Color(*self._icon_color_value)
+            self._shape_a = Line(width=dp(1.6))
+            self._shape_b = Line(width=dp(1.6))
+            self._shape_c = Line(width=dp(1.6))
+            self._fill_a = Ellipse()
+            self._fill_b = Ellipse()
+
+        self.bind(pos=self._sync_canvas, size=self._sync_canvas)
+        self._sync_canvas()
+
+    def set_color(self, color):
+        self._icon_color_value = color
+        self._icon_color.rgba = color
+
+    def _sync_canvas(self, *_):
+        for shape in (self._shape_a, self._shape_b, self._shape_c):
+            shape.points = []
+            shape.ellipse = (0, 0, 0, 0)
+        self._fill_a.size = (0, 0)
+        self._fill_b.size = (0, 0)
+
+        if self.icon == "refresh":
+            arc_x = self.x + self.width * 0.12
+            arc_y = self.y + self.height * 0.12
+            arc_w = self.width * 0.76
+            arc_h = self.height * 0.76
+            self._shape_a.ellipse = (arc_x, arc_y, arc_w, arc_h, 36, 330)
+            self._shape_b.points = [
+                self.x + self.width * 0.70,
+                self.y + self.height * 0.79,
+                self.x + self.width * 0.88,
+                self.y + self.height * 0.78,
+                self.x + self.width * 0.79,
+                self.y + self.height * 0.62,
+            ]
+            return
+
+        if self.icon == "code":
+            self._shape_a.points = [
+                self.x + self.width * 0.34,
+                self.y + self.height * 0.18,
+                self.x + self.width * 0.16,
+                self.center_y,
+                self.x + self.width * 0.34,
+                self.y + self.height * 0.82,
+            ]
+            self._shape_b.points = [
+                self.x + self.width * 0.66,
+                self.y + self.height * 0.18,
+                self.x + self.width * 0.84,
+                self.center_y,
+                self.x + self.width * 0.66,
+                self.y + self.height * 0.82,
+            ]
+            self._shape_c.points = [
+                self.x + self.width * 0.42,
+                self.y + self.height * 0.72,
+                self.x + self.width * 0.58,
+                self.y + self.height * 0.72,
+                self.x + self.width * 0.42,
+                self.y + self.height * 0.30,
+                self.x + self.width * 0.58,
+                self.y + self.height * 0.30,
+            ]
+            return
+
+        if self.icon == "host":
+            crown_y = self.y + self.height * 0.62
+            self._shape_a.points = [
+                self.x + self.width * 0.14,
+                crown_y,
+                self.x + self.width * 0.30,
+                self.y + self.height * 0.82,
+                self.x + self.width * 0.50,
+                self.y + self.height * 0.52,
+                self.x + self.width * 0.70,
+                self.y + self.height * 0.82,
+                self.x + self.width * 0.86,
+                crown_y,
+            ]
+            self._shape_b.points = [
+                self.x + self.width * 0.22,
+                self.y + self.height * 0.32,
+                self.x + self.width * 0.78,
+                self.y + self.height * 0.32,
+            ]
+            return
+
+        # default: users
+        self._shape_a.ellipse = (
+            self.x + self.width * 0.14,
+            self.y + self.height * 0.50,
+            self.width * 0.28,
+            self.height * 0.28,
+        )
+        self._shape_b.ellipse = (
+            self.x + self.width * 0.46,
+            self.y + self.height * 0.56,
+            self.width * 0.22,
+            self.height * 0.22,
+        )
+        self._shape_c.points = [
+            self.x + self.width * 0.08,
+            self.y + self.height * 0.24,
+            self.x + self.width * 0.08,
+            self.y + self.height * 0.18,
+            self.x + self.width * 0.48,
+            self.y + self.height * 0.18,
+            self.x + self.width * 0.48,
+            self.y + self.height * 0.24,
+            self.x + self.width * 0.72,
+            self.y + self.height * 0.24,
+            self.x + self.width * 0.72,
+            self.y + self.height * 0.18,
+            self.x + self.width * 0.92,
+            self.y + self.height * 0.18,
+            self.x + self.width * 0.92,
+            self.y + self.height * 0.24,
+        ]
+
+
+class IconMetaChip(RoundedPanel):
+    def __init__(self, icon="users", text="", **kwargs):
+        super().__init__(
+            orientation="horizontal",
+            spacing=dp(6),
+            padding=[dp(10), dp(6), dp(10), dp(6)],
+            size_hint=(None, None),
+            height=dp(30),
+            bg_color=COLORS["surface_chip"],
+            shadow_alpha=0.08,
+            **kwargs,
+        )
+        self._border_color.rgba = COLORS["outline_soft"]
+        self._border_line.width = 1.0
+        self.icon = MiniIcon(icon=icon, color=COLORS["text_muted"])
+        self.add_widget(self.icon)
+        self.label = BodyLabel(text=text, font_size=sp(10.5), color=COLORS["text_soft"], size_hint=(None, None))
+        self.label.bind(texture_size=self._sync_label_width)
+        self.add_widget(self.label)
+        self.bind(minimum_width=self.setter("width"))
+        self._sync_label_width()
+
+    def set_text(self, text):
+        self.label.text = text
+
+    def _sync_label_width(self, *_):
+        self.label.width = max(dp(18), self.label.texture_size[0] + dp(2))
+
+
+class IconCircleButton(ButtonBehavior, FloatLayout):
+    def __init__(self, icon="refresh", **kwargs):
+        button_size = kwargs.pop("size", (dp(38), dp(38)))
+        super().__init__(size_hint=(None, None), size=button_size, **kwargs)
+        self.icon_name = icon
+
+        with self.canvas.before:
+            self._shadow_color = Color(0, 0, 0, 0.14)
+            self._shadow = Ellipse()
+            self._bg_color = Color(*COLORS["surface_card"])
+            self._bg = Ellipse()
+            self._border_color = Color(*COLORS["outline_soft"])
+            self._border = Line(width=1.1)
+
+        self.icon = MiniIcon(icon=icon, color=COLORS["text"])
+        self.add_widget(self.icon)
+        self.bind(pos=self._sync_canvas, size=self._sync_canvas)
+        self._sync_canvas()
+
+    def _sync_canvas(self, *_):
+        self._shadow.pos = (self.x, self.y - dp(1.5))
+        self._shadow.size = self.size
+        self._bg.pos = self.pos
+        self._bg.size = self.size
+        self._border.ellipse = (self.x, self.y, self.width, self.height)
+        self.icon.pos = (
+            self.center_x - self.icon.width / 2,
+            self.center_y - self.icon.height / 2,
+        )
+
+    def on_press(self):
+        Animation.cancel_all(self._bg_color)
+        Animation(rgba=COLORS["surface_panel"], duration=0.08).start(self._bg_color)
+
+    def on_release(self):
+        Animation.cancel_all(self._bg_color)
+        Animation(rgba=COLORS["surface_card"], duration=0.12).start(self._bg_color)
+
+
 def build_scrollable_content(padding=None, spacing=16):
     scroll = ScrollView(do_scroll_x=False, bar_width=dp(4), scroll_type=["bars", "content"])
     content = BoxLayout(
