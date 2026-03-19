@@ -55,38 +55,42 @@ from ui import (
 
 class VoiceMicButton(ButtonBehavior, Widget):
     def __init__(self, **kwargs):
-        button_size = kwargs.pop("size", (dp(62), dp(62)))
+        button_size = kwargs.pop("size", (dp(84), dp(84)))
         button_size_hint = kwargs.pop("size_hint", (None, None))
         super().__init__(size_hint=button_size_hint, size=button_size, **kwargs)
         self._muted = True
         self._enabled = True
         self._level = 0.0
+        self._hit_padding = dp(30)
+        self._pressed_touch = None
 
         with self.canvas.before:
             self._shadow_color = Color(0, 0, 0, 0.22)
             self._shadow = Ellipse(pos=self.pos, size=self.size)
-            self._bg_color = Color(0.08, 0.13, 0.21, 0.96)
+            self._bg_color = Color(0.08, 0.13, 0.21, 0.98)
             self._bg = Ellipse(pos=self.pos, size=self.size)
+            self._halo_color = Color(0.22, 0.90, 0.42, 0.0)
+            self._halo = Ellipse(pos=self.pos, size=self.size)
+            self._ring_color = Color(1, 1, 1, 0.15)
+            self._ring = Line(width=1.4, ellipse=(self.x, self.y, self.width, self.height))
 
-            self._mic_color = Color(0.96, 0.98, 1.0, 1.0)
-            self._head = Ellipse()
-            self._body = RoundedRectangle(radius=[dp(6)] * 4)
+            self._frame_color = Color(0.96, 0.98, 1.0, 1.0)
+            self._body = RoundedRectangle(radius=[dp(20)] * 4)
+            self._stem = RoundedRectangle(radius=[dp(3.2)] * 4)
+            self._base = RoundedRectangle(radius=[dp(3.2)] * 4)
+            self._yoke = Line(width=dp(4.8), ellipse=(0, 0, 0, 0, 196, 344))
 
             StencilPush()
             self._fill_mask_color = Color(1, 1, 1, 1)
-            self._fill_mask_head = Ellipse()
-            self._fill_mask_body = RoundedRectangle(radius=[dp(6)] * 4)
+            self._fill_mask_body = RoundedRectangle(radius=[dp(18)] * 4)
+            self._fill_mask_stem = RoundedRectangle(radius=[dp(3)] * 4)
             StencilUse()
             self._fill_color = Color(0.22, 0.90, 0.42, 0.0)
             self._fill_rect = Rectangle()
             StencilUnUse()
-            self._fill_mask_release_head = Ellipse()
-            self._fill_mask_release_body = RoundedRectangle(radius=[dp(6)] * 4)
+            self._fill_mask_release_body = RoundedRectangle(radius=[dp(18)] * 4)
+            self._fill_mask_release_stem = RoundedRectangle(radius=[dp(3)] * 4)
             StencilPop()
-
-            self._cradle = Line(width=dp(2.2), ellipse=(0, 0, 0, 0, 205, 335))
-            self._stem = RoundedRectangle(radius=[dp(2)] * 4)
-            self._base = RoundedRectangle(radius=[dp(2)] * 4)
 
             self._outline_color = Color(1, 1, 1, 0.2)
             self._outline = Line(width=1.2, ellipse=(self.x, self.y, self.width, self.height))
@@ -114,10 +118,36 @@ class VoiceMicButton(ButtonBehavior, Widget):
         self._level = max(0.0, min(1.0, float(level)))
         self._refresh_state()
 
+    def collide_point(self, x, y):
+        return (
+            self.x - self._hit_padding <= x <= self.right + self._hit_padding
+            and self.y - self._hit_padding <= y <= self.top + self._hit_padding
+        )
+
+    def on_touch_down(self, touch):
+        if getattr(touch, "is_mouse_scrolling", False):
+            return super().on_touch_down(touch)
+        if not self.collide_point(*touch.pos):
+            return super().on_touch_down(touch)
+        touch.grab(self)
+        self._pressed_touch = touch
+        self.dispatch("on_press")
+        return True
+
+    def on_touch_up(self, touch):
+        if touch.grab_current is self:
+            touch.ungrab(self)
+            was_inside = self.collide_point(*touch.pos)
+            self._pressed_touch = None
+            if was_inside:
+                self.dispatch("on_release")
+            else:
+                self._refresh_state()
+            return True
+        return super().on_touch_up(touch)
+
     def on_press(self):
-        if not self._enabled:
-            return
-        self._bg_color.rgba = (0.06, 0.10, 0.16, 0.96)
+        self._bg_color.rgba = (0.05, 0.09, 0.16, 0.98)
 
     def on_release(self):
         self._refresh_state()
@@ -125,23 +155,35 @@ class VoiceMicButton(ButtonBehavior, Widget):
     def _refresh_state(self):
         if not self._enabled:
             self._bg_color.rgba = (0.14, 0.14, 0.16, 0.82)
-            self._mic_color.rgba = (0.65, 0.68, 0.72, 1.0)
+            self._frame_color.rgba = (0.65, 0.68, 0.72, 1.0)
             self._fill_color.rgba = (0.22, 0.90, 0.42, 0.0)
             self._outline_color.rgba = (1, 1, 1, 0.08)
+            self._ring_color.rgba = (1, 1, 1, 0.08)
+            self._halo_color.rgba = (0.22, 0.90, 0.42, 0.0)
             self._mute_color.rgba = (0.96, 0.23, 0.23, 0.42)
         else:
             if self._muted:
-                self._bg_color.rgba = (0.08, 0.13, 0.21, 0.96)
-                self._mic_color.rgba = (0.96, 0.98, 1.0, 1.0)
+                self._bg_color.rgba = (0.08, 0.13, 0.21, 0.98)
+                self._frame_color.rgba = (0.96, 0.98, 1.0, 1.0)
                 self._fill_color.rgba = (0.22, 0.90, 0.42, 0.0)
                 self._outline_color.rgba = (1, 1, 1, 0.16)
+                self._ring_color.rgba = (1, 1, 1, 0.14)
+                self._halo_color.rgba = (0.22, 0.90, 0.42, 0.0)
             else:
                 level = self._level
-                glow_alpha = 0.16 + level * 0.30
-                self._bg_color.rgba = (0.08, 0.13, 0.21, 0.96)
-                self._mic_color.rgba = (0.96, 0.98, 1.0, 1.0)
-                self._fill_color.rgba = (0.22, 0.90, 0.42, 0.28 + level * 0.72)
+                glow_alpha = 0.16 + level * 0.34
+                self._bg_color.rgba = (0.08, 0.13, 0.21, 0.98)
+                mix = min(1.0, 0.12 + level * 0.58)
+                self._frame_color.rgba = (
+                    0.96 - mix * 0.58,
+                    0.98 - mix * 0.08,
+                    1.0 - mix * 0.52,
+                    1.0,
+                )
+                self._fill_color.rgba = (0.22, 0.90, 0.42, 0.34 + level * 0.66)
                 self._outline_color.rgba = (0.44, 0.94, 0.58, glow_alpha)
+                self._ring_color.rgba = (0.64, 0.98, 0.74, 0.16 + level * 0.26)
+                self._halo_color.rgba = (0.22, 0.90, 0.42, 0.07 + level * 0.18)
             self._mute_color.rgba = (0.96, 0.23, 0.23, 0.95 if self._muted else 0.0)
 
         self._sync_canvas()
@@ -149,25 +191,18 @@ class VoiceMicButton(ButtonBehavior, Widget):
     def _sync_canvas(self, *_):
         self._shadow.pos = (self.x, self.y - dp(1.5))
         self._shadow.size = self.size
+        halo_inset = dp(3.5)
+        self._halo.pos = (self.x + halo_inset, self.y + halo_inset)
+        self._halo.size = (max(0, self.width - halo_inset * 2), max(0, self.height - halo_inset * 2))
         self._bg.pos = self.pos
         self._bg.size = self.size
         self._outline.ellipse = (self.x, self.y, self.width, self.height)
+        self._ring.ellipse = (self.x + dp(1.4), self.y + dp(1.4), self.width - dp(2.8), self.height - dp(2.8))
 
-        head_w = self.width * 0.28
-        head_h = self.height * 0.28
-        head_x = self.center_x - head_w / 2
-        head_y = self.y + self.height * 0.48
-        self._head.pos = (head_x, head_y)
-        self._head.size = (head_w, head_h)
-        self._fill_mask_head.pos = self._head.pos
-        self._fill_mask_head.size = self._head.size
-        self._fill_mask_release_head.pos = self._head.pos
-        self._fill_mask_release_head.size = self._head.size
-
-        body_w = self.width * 0.20
-        body_h = self.height * 0.16
+        body_w = self.width * 0.32
+        body_h = self.height * 0.48
         body_x = self.center_x - body_w / 2
-        body_y = self.y + self.height * 0.36
+        body_y = self.y + self.height * 0.34
         self._body.pos = (body_x, body_y)
         self._body.size = (body_w, body_h)
         self._fill_mask_body.pos = self._body.pos
@@ -175,29 +210,35 @@ class VoiceMicButton(ButtonBehavior, Widget):
         self._fill_mask_release_body.pos = self._body.pos
         self._fill_mask_release_body.size = self._body.size
 
-        fill_w = max(head_w, body_w)
-        fill_x = self.center_x - fill_w / 2
-        fill_bottom = body_y
-        fill_top = head_y + head_h
+        stem_w = self.width * 0.07
+        stem_h = self.height * 0.14
+        stem_x = self.center_x - stem_w / 2
+        stem_y = self.y + self.height * 0.17
+        self._stem.pos = (stem_x, stem_y)
+        self._stem.size = (stem_w, stem_h)
+        self._fill_mask_stem.pos = self._stem.pos
+        self._fill_mask_stem.size = self._stem.size
+        self._fill_mask_release_stem.pos = self._stem.pos
+        self._fill_mask_release_stem.size = self._stem.size
+
+        base_w = self.width * 0.44
+        base_h = self.height * 0.052
+        self._base.pos = (self.center_x - base_w / 2, self.y + self.height * 0.10)
+        self._base.size = (base_w, base_h)
+
+        yoke_w = self.width * 0.60
+        yoke_h = self.height * 0.62
+        yoke_x = self.center_x - yoke_w / 2
+        yoke_y = self.y + self.height * 0.18
+        self._yoke.ellipse = (yoke_x, yoke_y, yoke_w, yoke_h, 198, 342)
+
+        fill_w = body_w
+        fill_x = body_x
+        fill_bottom = stem_y
+        fill_top = body_y + body_h
         fill_h = max(0.0, (fill_top - fill_bottom) * self._level)
         self._fill_rect.pos = (fill_x, fill_bottom)
         self._fill_rect.size = (fill_w, fill_h)
-
-        cradle_w = self.width * 0.36
-        cradle_h = self.height * 0.38
-        cradle_x = self.center_x - cradle_w / 2
-        cradle_y = self.y + self.height * 0.30
-        self._cradle.ellipse = (cradle_x, cradle_y, cradle_w, cradle_h, 205, 335)
-
-        stem_w = self.width * 0.05
-        stem_h = self.height * 0.08
-        self._stem.pos = (self.center_x - stem_w / 2, self.y + self.height * 0.25)
-        self._stem.size = (stem_w, stem_h)
-
-        base_w = self.width * 0.26
-        base_h = self.height * 0.04
-        self._base.pos = (self.center_x - base_w / 2, self.y + self.height * 0.18)
-        self._base.size = (base_w, base_h)
 
         self._mute_line.points = [
             self.x + self.width * 0.26,
@@ -214,6 +255,7 @@ class SwipeWordCard(RoundedPanel):
         self._home_pos = None
         self._animating = False
         self._swipe_threshold = dp(swipe_threshold)
+        self._drag_axis = None
         super().__init__(**kwargs)
 
     def set_swipe_callback(self, callback):
@@ -225,6 +267,7 @@ class SwipeWordCard(RoundedPanel):
         Animation.cancel_all(self)
         self._swipe_start = touch.pos
         self._home_pos = self.pos
+        self._drag_axis = None
         touch.grab(self)
         return True
 
@@ -234,9 +277,18 @@ class SwipeWordCard(RoundedPanel):
 
         delta_x = touch.x - self._swipe_start[0]
         delta_y = touch.y - self._swipe_start[1]
-        if abs(delta_y) >= abs(delta_x):
-            self.y = self._home_pos[1] + delta_y * 0.42
-            fade = min(0.55, abs(delta_y) / max(dp(1), self.height * 1.1))
+        if self._drag_axis is None and max(abs(delta_x), abs(delta_y)) >= dp(8):
+            self._drag_axis = "horizontal" if abs(delta_x) > abs(delta_y) else "vertical"
+
+        if self._drag_axis == "horizontal":
+            self.x = self._home_pos[0] + delta_x * 0.56
+            self.y = self._home_pos[1] + delta_y * 0.12
+            fade = min(0.58, abs(delta_x) / max(dp(1), self.width * 1.05))
+            self.opacity = 1.0 - fade
+        else:
+            self.y = self._home_pos[1] + delta_y * 0.46
+            self.x = self._home_pos[0] + delta_x * 0.10
+            fade = min(0.58, abs(delta_y) / max(dp(1), self.height * 1.05))
             self.opacity = 1.0 - fade
         return True
 
@@ -252,7 +304,9 @@ class SwipeWordCard(RoundedPanel):
 
         delta_x = touch.x - start_pos[0]
         delta_y = touch.y - start_pos[1]
-        if abs(delta_y) >= self._swipe_threshold and abs(delta_y) > abs(delta_x):
+        if abs(delta_x) >= self._swipe_threshold and abs(delta_x) > abs(delta_y):
+            self.animate_swipe_out("right" if delta_x > 0 else "left", callback=self._swipe_callback)
+        elif abs(delta_y) >= self._swipe_threshold and abs(delta_y) >= abs(delta_x):
             self.animate_swipe_out("up" if delta_y > 0 else "down", callback=self._swipe_callback)
         else:
             self.animate_back_home()
@@ -262,7 +316,7 @@ class SwipeWordCard(RoundedPanel):
         if self._home_pos is None:
             return
         Animation.cancel_all(self)
-        Animation(y=self._home_pos[1], opacity=1.0, d=0.12, t="out_quad").start(self)
+        Animation(x=self._home_pos[0], y=self._home_pos[1], opacity=1.0, d=0.12, t="out_quad").start(self)
 
     def animate_swipe_out(self, direction, callback=None):
         if self._home_pos is None or self._animating:
@@ -270,15 +324,25 @@ class SwipeWordCard(RoundedPanel):
 
         self._animating = True
         home_x, home_y = self._home_pos
-        target_y = home_y + (self.height * 1.75 if direction == "up" else -self.height * 1.75)
+        target_x = home_x
+        target_y = home_y
+        if direction == "up":
+            target_y = home_y + self.height * 1.75
+        elif direction == "down":
+            target_y = home_y - self.height * 1.75
+        elif direction == "right":
+            target_x = home_x + self.width * 1.85
+        else:
+            target_x = home_x - self.width * 1.85
 
         Animation.cancel_all(self)
-        animation = Animation(y=target_y, opacity=0.0, d=0.16, t="out_quad")
+        animation = Animation(x=target_x, y=target_y, opacity=0.0, d=0.16, t="out_quad")
 
         def _finish(*_):
             self.pos = (home_x, home_y)
             self.opacity = 1.0
             self._animating = False
+            self._drag_axis = None
             if callback is not None:
                 callback(direction)
 
@@ -353,24 +417,24 @@ class LobbyPlayerCard(RoundedPanel):
     def __init__(self, **kwargs):
         super().__init__(
             orientation="vertical",
-            spacing=dp(1),
-            padding=[dp(5), dp(5), dp(5), dp(5)],
+            spacing=dp(5),
+            padding=[dp(8), dp(8), dp(8), dp(8)],
             size_hint_x=None,
             size_hint_y=None,
-            height=dp(98),
-            bg_color=COLORS["surface_panel"],
-            shadow_alpha=0.14,
+            height=dp(126),
+            bg_color=(0.10, 0.15, 0.24, 0.98),
+            shadow_alpha=0.16,
             **kwargs,
         )
         self.role_label = Label(
             text="",
             font_name="GameFont",
-            font_size=sp(7.5),
+            font_size=sp(8.2),
             color=COLORS["accent"],
             halign="center",
             valign="middle",
             size_hint_y=None,
-            height=0,
+            height=dp(14),
             opacity=0,
         )
         self.role_label.bind(size=lambda *_: setattr(self.role_label, "text_size", self.role_label.size))
@@ -379,27 +443,27 @@ class LobbyPlayerCard(RoundedPanel):
         self.name_label = PixelLabel(
             text="",
             center=True,
-            font_size=sp(9.2),
+            font_size=sp(11.5),
             size_hint_y=None,
             shorten=True,
             shorten_from="right",
             max_lines=1,
         )
-        self.add_widget(self.name_label)
 
-        avatar_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(24))
+        avatar_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(42))
         avatar_row.add_widget(Widget())
         self.avatar = AvatarButton()
-        self.avatar.size = (dp(24), dp(24))
+        self.avatar.size = (dp(42), dp(42))
         self.avatar.disabled = True
         avatar_row.add_widget(self.avatar)
         avatar_row.add_widget(Widget())
         self.add_widget(avatar_row)
+        self.add_widget(self.name_label)
 
-        text_col = BoxLayout(orientation="vertical", spacing=dp(1), size_hint_y=None, height=dp(32))
-        self.games_label = BodyLabel(text="", center=True, color=COLORS["text_soft"], font_size=sp(7.8), size_hint_y=None)
+        text_col = BoxLayout(orientation="vertical", spacing=dp(3), size_hint_y=None, height=dp(42))
+        self.games_label = BodyLabel(text="", center=True, color=COLORS["text_soft"], font_size=sp(8.5), size_hint_y=None)
         text_col.add_widget(self.games_label)
-        self.earned_label = BodyLabel(text="", center=True, color=COLORS["accent"], font_size=sp(7.8), size_hint_y=None)
+        self.earned_label = BodyLabel(text="", center=True, color=COLORS["accent"], font_size=sp(8.5), size_hint_y=None)
         text_col.add_widget(self.earned_label)
         self.add_widget(text_col)
 
@@ -657,6 +721,7 @@ class RoomScreen(Screen):
         self._leave_sent = False
         self.leave_confirm_popup = None
         self.voice_engine = RoomVoiceEngine()
+        self._mic_muted_state = True
         self._start_game_scheduled = False
         self._last_start_attempt_ts = 0.0
         self._start_game_request_in_flight = False
@@ -701,8 +766,8 @@ class RoomScreen(Screen):
         )
         content.add_widget(self.explainer_status_label)
 
-        self.players_wrap_height = dp(214)
-        self.players_wrap_round_height = dp(176)
+        self.players_wrap_height = dp(252)
+        self.players_wrap_round_height = dp(188)
         self.players_wrap = RoundedPanel(
             orientation="vertical",
             spacing=dp(6),
@@ -715,12 +780,12 @@ class RoomScreen(Screen):
         self.players_scroll = ScrollView(do_scroll_x=False, bar_width=dp(4), scroll_type=["bars", "content"])
         self.players_box = GridLayout(
             cols=3,
-            spacing=dp(5),
-            padding=[dp(2), dp(2), dp(2), dp(2)],
+            spacing=dp(8),
+            padding=[dp(4), dp(4), dp(4), dp(4)],
             size_hint=(None, None),
-            row_default_height=dp(102),
+            row_default_height=dp(126),
             row_force_default=True,
-            col_default_width=dp(96),
+            col_default_width=dp(108),
             col_force_default=True,
         )
         self.players_box.bind(minimum_height=self.players_box.setter("height"))
@@ -730,19 +795,20 @@ class RoomScreen(Screen):
         content.add_widget(self.players_wrap)
 
         self.scores_wrap_height = dp(132)
-        self.scores_wrap = BoxLayout(orientation="horizontal", size_hint_y=None, height=self.scores_wrap_height)
-        self.scores_wrap.add_widget(Widget())
-        self.score_badge = ScoreBadge()
+        self.scores_wrap_overlay_height = dp(198)
+        self.scores_wrap = FloatLayout(size_hint_y=None, height=self.scores_wrap_height)
+        self.score_chat_layer = FloatLayout(size_hint=(1, 1), opacity=0, disabled=True)
+        self.scores_wrap.add_widget(self.score_chat_layer)
+        self.score_badge = ScoreBadge(pos_hint={"center_x": 0.5, "top": 0.98})
         self.scores_wrap.add_widget(self.score_badge)
-        self.scores_wrap.add_widget(Widget())
         content.add_widget(self.scores_wrap)
 
-        self.players_summary_wrap_height = dp(56)
+        self.players_summary_wrap_height = dp(84)
         self.players_summary_wrap = BoxLayout(orientation="horizontal", size_hint_y=None, height=self.players_summary_wrap_height)
         self.players_label = BodyLabel(center=True, color=COLORS["text_muted"], font_size=sp(11), size_hint_y=None, text="")
         self.players_summary_wrap.add_widget(self.players_label)
         self.players_summary_wrap.add_widget(Widget())
-        self.mic_button_top = VoiceMicButton(size=(dp(48), dp(48)))
+        self.mic_button_top = VoiceMicButton(size=(dp(84), dp(84)))
         self.mic_button_top.bind(on_release=self._toggle_mic)
         self.players_summary_wrap.add_widget(self.mic_button_top)
         content.add_widget(self.players_summary_wrap)
@@ -773,8 +839,8 @@ class RoomScreen(Screen):
         self.explainer_card.height = self.explainer_card_height
         content.add_widget(self.explainer_card)
 
-        self.word_card_height = dp(136)
-        self.word_stage_height = dp(142)
+        self.word_card_height = dp(142)
+        self.word_stage_height = dp(150)
         self.word_stage = FloatLayout(size_hint_y=None, height=self.word_stage_height)
         self.word_stage.bind(size=self._sync_word_stage_layout, pos=self._sync_word_stage_layout)
         self.word_card = SwipeWordCard(
@@ -802,7 +868,7 @@ class RoomScreen(Screen):
         self.word_stage.add_widget(self.word_card)
         content.add_widget(self.word_stage)
 
-        self.voice_card_height = dp(56)
+        self.voice_card_height = dp(0)
         self.voice_card = RoundedPanel(
             orientation="horizontal",
             size_hint_y=None,
@@ -823,13 +889,16 @@ class RoomScreen(Screen):
         self.voice_card.add_widget(self.mic_button)
         content.add_widget(self.voice_card)
 
+        self.chat_host = BoxLayout(orientation="vertical", size_hint_y=1)
+
         self.chat_card = RoundedPanel(
             orientation="vertical",
             size_hint_y=1,
             spacing=dp(8),
             padding=[dp(14), dp(12), dp(14), dp(12)],
         )
-        self.chat_card.add_widget(PixelLabel(text="Текстовый чат", center=True, font_size=sp(13), size_hint_y=None))
+        self.chat_title = PixelLabel(text="Текстовый чат", center=True, font_size=sp(13), size_hint_y=None)
+        self.chat_card.add_widget(self.chat_title)
 
         self.chat_scroll = ScrollView(do_scroll_x=False, bar_width=dp(4), scroll_type=["bars", "content"])
         self.chat_box = BoxLayout(orientation="vertical", spacing=dp(6), size_hint_y=None)
@@ -853,10 +922,13 @@ class RoomScreen(Screen):
             text="Объясняющий запускает игру, затем объясняет слова голосом.",
         )
         self.chat_card.add_widget(self.status_label)
-        content.add_widget(self.chat_card)
+        self.chat_host.add_widget(self.chat_card)
+        content.add_widget(self.chat_host)
 
         self.countdown_overlay = FullscreenCountdownOverlay()
+        self.chat_overlay_layer = FloatLayout(size_hint=(1, 1), opacity=0, disabled=True)
 
+        root.add_widget(self.chat_overlay_layer)
         root.add_widget(content)
         root.add_widget(self.countdown_overlay)
         self.add_widget(root)
@@ -890,10 +962,8 @@ class RoomScreen(Screen):
         self._leave_sent = False
         self._last_start_attempt_ts = 0.0
         self._start_game_request_in_flight = False
-        self.mic_button.set_muted(True)
-        self.mic_button.set_level(0.0)
-        self.mic_button_top.set_muted(True)
-        self.mic_button_top.set_level(0.0)
+        self._set_mic_muted(True)
+        self._set_mic_level(0.0)
         self.coin_badge.refresh_from_session()
         self.countdown_overlay.hide()
         if self.room_code and player_name:
@@ -1160,10 +1230,11 @@ class RoomScreen(Screen):
 
     def _sync_players_grid_width(self, *_):
         cols = max(1, int(getattr(self.players_box, "cols", 1) or 1))
-        total_spacing = dp(6) * (cols - 1)
-        total_padding = dp(4)
+        total_spacing = self.players_box.spacing[0] * (cols - 1) if isinstance(self.players_box.spacing, (list, tuple)) else self.players_box.spacing * (cols - 1)
+        total_padding = dp(8)
         available_width = max(dp(96), self.players_scroll.width - dp(12))
-        column_width = max(dp(86), (available_width - total_spacing - total_padding) / cols)
+        min_width = dp(110) if self.players_box.row_default_height >= dp(120) else dp(86)
+        column_width = max(min_width, (available_width - total_spacing - total_padding) / cols)
         self.players_box.col_default_width = column_width
         self.players_box.width = column_width * cols + total_spacing + total_padding
 
@@ -1193,9 +1264,9 @@ class RoomScreen(Screen):
         self.voice_engine.start(
             room_code=self.room_code,
             player_name=player_name,
-            should_transmit=lambda: self._can_use_voice() and not self.mic_button.muted,
+            should_transmit=lambda: self._can_use_voice() and not self._mic_is_muted(),
         )
-        self.voice_engine.set_muted(self.mic_button.muted)
+        self.voice_engine.set_muted(self._mic_is_muted())
 
     def _stop_voice_engine(self):
         self.voice_engine.stop()
@@ -1213,6 +1284,23 @@ class RoomScreen(Screen):
     def _show_explainer_controls(self, is_explainer, phase):
         self._set_button_visibility(self.start_game_btn, phase == "lobby" and self._can_control_start())
 
+    def _set_mic_muted(self, muted):
+        self._mic_muted_state = bool(muted)
+        self.mic_button.set_muted(self._mic_muted_state)
+        self.mic_button_top.set_muted(self._mic_muted_state)
+        self.voice_engine.set_muted(self._mic_muted_state)
+
+    def _mic_is_muted(self):
+        return bool(self._mic_muted_state)
+
+    def _set_mic_enabled(self, enabled):
+        self.mic_button.set_enabled(enabled)
+        self.mic_button_top.set_enabled(enabled)
+
+    def _set_mic_level(self, level):
+        self.mic_button.set_level(level)
+        self.mic_button_top.set_level(level)
+
     def _set_chat_input_visibility(self, visible):
         row_height = dp(48) if visible else dp(0)
         self.chat_input_row.height = row_height
@@ -1227,11 +1315,85 @@ class RoomScreen(Screen):
             self.chat_input.focus = False
             self.chat_input.text = ""
 
+    def _move_chat_card(self, target_parent):
+        if target_parent is None:
+            return
+        current_parent = self.chat_card.parent
+        if current_parent is target_parent:
+            return
+        if current_parent is not None:
+            current_parent.remove_widget(self.chat_card)
+        target_parent.add_widget(self.chat_card)
+
+    def _mount_chat_in_column(self):
+        self.chat_overlay_layer.clear_widgets()
+        self.score_chat_layer.clear_widgets()
+        self.chat_overlay_layer.opacity = 0
+        self.chat_overlay_layer.disabled = True
+        self.score_chat_layer.opacity = 0
+        self.score_chat_layer.disabled = True
+        self.chat_host.size_hint_y = 1
+        self.chat_host.height = dp(0)
+        self.chat_host.opacity = 1
+        self.chat_host.disabled = False
+        self.chat_card.size_hint = (1, 1)
+        self.chat_card.height = dp(0)
+        self.chat_card.pos_hint = {}
+        self.chat_card.pos = (0, 0)
+        self._move_chat_card(self.chat_host)
+
+    def _mount_chat_overlay(self, can_chat, is_explainer=False):
+        overlay_height = dp(176 if can_chat else 152)
+        self.chat_host.size_hint_y = None
+        self.chat_host.height = dp(0)
+        self.chat_host.opacity = 0
+        self.chat_host.disabled = True
+        self.chat_card.size_hint = (None, None)
+        self.chat_card.height = overlay_height
+        self.chat_card.pos_hint = {}
+        if is_explainer:
+            self.chat_overlay_layer.clear_widgets()
+            self.chat_overlay_layer.opacity = 0
+            self.chat_overlay_layer.disabled = True
+            self.score_chat_layer.opacity = 1
+            self.score_chat_layer.disabled = False
+            self._move_chat_card(self.score_chat_layer)
+        else:
+            self.score_chat_layer.clear_widgets()
+            self.score_chat_layer.opacity = 0
+            self.score_chat_layer.disabled = True
+            self.chat_overlay_layer.clear_widgets()
+            self.chat_overlay_layer.opacity = 1
+            self.chat_overlay_layer.disabled = False
+            self.chat_card.width = max(dp(280), self.chat_overlay_layer.width - dp(44))
+            self._move_chat_card(self.chat_overlay_layer)
+        Clock.schedule_once(lambda *_: self._sync_overlay_chat_geometry(can_chat, is_explainer), 0)
+
+    def _sync_overlay_chat_geometry(self, can_chat, is_explainer):
+        overlay_height = dp(176 if can_chat else 152)
+        if self.chat_card.parent is self.score_chat_layer:
+            overlay_width = min(max(dp(300), self.score_chat_layer.width - dp(56)), dp(420))
+            left = max(dp(10), (self.score_chat_layer.width - overlay_width) / 2)
+            desired_top = min(self.score_chat_layer.height - dp(10), self.score_badge.center_y + overlay_height * 0.42)
+            bottom = max(dp(10), desired_top - overlay_height)
+            self.chat_card.size = (overlay_width, overlay_height)
+            self.chat_card.pos = (left, bottom)
+            return
+
+        if self.chat_card.parent is not self.chat_overlay_layer:
+            return
+
+        overlay_width = min(max(dp(300), self.chat_overlay_layer.width - dp(44)), dp(430))
+        left = self.chat_overlay_layer.x + (self.chat_overlay_layer.width - overlay_width) / 2
+        bottom = max(dp(22), self.chat_overlay_layer.y + dp(22))
+        self.chat_card.size = (overlay_width, overlay_height)
+        self.chat_card.pos = (left, bottom)
+
     def _render_player_cards(self, players, explainer_name, profile_map=None, score_map=None, phase="lobby"):
         self.players_box.clear_widgets()
         is_round = phase == "round"
         self.players_box.cols = 1 if is_round or not players else 3
-        self.players_box.row_default_height = dp(44) if is_round else dp(102)
+        self.players_box.row_default_height = dp(44) if is_round else dp(126)
         self._sync_players_grid_width()
         if not players:
             self.players_box.add_widget(
@@ -1346,33 +1508,35 @@ class RoomScreen(Screen):
 
         self.brand_title.height = dp(0) if explainer_round else self.brand_title_height
         self.brand_title.opacity = 0 if explainer_round else 1
-        if explainer_round:
-            self.chat_card._bg_color.rgba = (0.05, 0.09, 0.15, 0.34)
+        if phase == "round":
+            self.chat_card._bg_color.rgba = (0.05, 0.09, 0.15, 0.24 if is_explainer else 0.30)
             self.chat_card._border_color.rgba = (1, 1, 1, 0.08)
-            self.chat_card._shadow_color.rgba = (0, 0, 0, 0.08)
+            self.chat_card._shadow_color.rgba = (0, 0, 0, 0.05)
+            self.chat_title.color = COLORS["text"]
         else:
             self.chat_card._bg_color.rgba = COLORS["surface"]
             self.chat_card._border_color.rgba = COLORS["outline"]
             self.chat_card._shadow_color.rgba = (0, 0, 0, 0.24)
+            self.chat_title.color = COLORS["text"]
 
         can_chat = self._can_send_chat()
         if explainer_can_only_voice:
             self._set_word_text(self.room_state.get("current_word"))
             self.chat_input.hint_text = "Объясняющий не пишет в чат."
-            self.mic_button.set_enabled(self._can_toggle_mic())
-            self.mic_button_top.set_enabled(self._can_toggle_mic())
+            self._set_mic_enabled(self._can_toggle_mic())
         else:
             self._set_word_text("Слово скрыто")
             if explainer_chat_locked:
                 self.chat_input.hint_text = "Объясняющий не пишет в чат."
             else:
                 self.chat_input.hint_text = "Пиши догадку в чат..." if phase == "round" else "Сообщение в чат..."
-            self.mic_button.set_enabled(False)
-            self.mic_button.set_muted(True)
-            self.mic_button_top.set_enabled(False)
-            self.mic_button_top.set_muted(True)
-            self.voice_engine.set_muted(True)
+            self._set_mic_enabled(False)
+            self._set_mic_muted(True)
         self._set_chat_input_visibility(can_chat)
+        if phase == "round":
+            self._mount_chat_overlay(can_chat, is_explainer=is_explainer)
+        else:
+            self._mount_chat_in_column()
 
         voice_active = bool(self.room_state.get("voice_active"))
         voice_speaker = self.room_state.get("voice_speaker")
@@ -1382,16 +1546,16 @@ class RoomScreen(Screen):
             mic_state_text = "недоступен"
         elif voice_active and voice_speaker == explainer_name:
             mic_state_text = "говорит"
-        elif is_explainer and self.mic_button.muted:
+        elif is_explainer and self._mic_is_muted():
             mic_state_text = "выключен"
-        elif is_explainer and not self.mic_button.muted:
+        elif is_explainer and not self._mic_is_muted():
             mic_state_text = "включен"
         else:
             mic_state_text = "молчит"
         self.explainer_card.set_explainer(explainer_name, explainer_profile, mic_state_text)
         if not self.voice_engine.available:
             self.voice_status.text = "Голос недоступен на этом устройстве."
-        elif self.mic_button.muted:
+        elif self._mic_is_muted():
             self.voice_status.text = "Выключен"
         elif voice_active and voice_speaker == explainer_name:
             self.voice_status.text = "Говоришь"
@@ -1405,6 +1569,7 @@ class RoomScreen(Screen):
         self._show_explainer_controls(is_explainer, phase)
         show_players_grid = phase in {"lobby", "round"}
         players_panel_height = self.players_wrap_round_height if phase == "round" else self.players_wrap_height
+        scores_panel_height = self.scores_wrap_overlay_height if phase == "round" and is_explainer else self.scores_wrap_height
         self._set_panel_visibility(self.room_meta_wrap, phase != "lobby" and not is_explainer, self.room_meta_wrap_height)
         self._set_panel_visibility(self.players_wrap, show_players_grid, players_panel_height)
         self._set_panel_visibility(self.players_summary_wrap, phase == "round" and is_explainer, self.players_summary_wrap_height)
@@ -1416,7 +1581,7 @@ class RoomScreen(Screen):
         self._set_panel_visibility(self.explainer_card, phase in {"countdown", "round"} and not is_explainer, self.explainer_card_height)
         self._set_panel_visibility(self.word_stage, phase == "round" and is_explainer, self.word_stage_height)
         self._set_panel_visibility(self.voice_card, False, self.voice_card_height)
-        self._set_panel_visibility(self.scores_wrap, phase == "round" and is_explainer, self.scores_wrap_height)
+        self._set_panel_visibility(self.scores_wrap, phase == "round" and is_explainer, scores_panel_height)
         self._set_panel_visibility(self.phase_wrap, phase in {"countdown", "round"}, self.phase_wrap_height)
 
         if phase == "lobby":
@@ -1424,9 +1589,15 @@ class RoomScreen(Screen):
             self.countdown_overlay.hide()
             self.status_label.color = COLORS["text_muted"]
             if self._is_explainer():
-                self.status_label.text = "Нажми \"Начать игру\", когда все готовы."
+                if self._is_host():
+                    self.status_label.text = "Ты хост комнаты. Нажми \"Начать игру\", когда все готовы."
+                else:
+                    self.status_label.text = "Нажми \"Начать игру\", когда все готовы."
             else:
-                self.status_label.text = "Ждите объясняющего. Он запустит игру, когда будет готов."
+                if self._is_host():
+                    self.status_label.text = "Ты хост комнаты. Ждите объясняющего: он запустит игру, когда будет готов."
+                else:
+                    self.status_label.text = "Ждите объясняющего. Он запустит игру, когда будет готов."
         elif phase == "countdown":
             self.phase_label.color = COLORS["accent"]
             self.phase_label.text = f"Игра начнется через {countdown_left} сек"
@@ -1442,7 +1613,7 @@ class RoomScreen(Screen):
             self.countdown_overlay.hide()
             if is_explainer:
                 self.status_label.color = COLORS["text_muted"]
-                self.status_label.text = "Свайпни карточку вверх или вниз, чтобы скипнуть слово."
+                self.status_label.text = "Свайпни карточку в любую сторону, чтобы скипнуть слово."
             else:
                 self.status_label.color = COLORS["text_muted"]
                 self.status_label.text = "Пиши догадки в чат. За верное слово ты тоже получаешь +1."
@@ -1749,10 +1920,8 @@ class RoomScreen(Screen):
             self.status_label.text = "На этом устройстве голосовой микрофон недоступен."
             return
 
-        new_muted = not self.mic_button.muted
-        self.mic_button.set_muted(new_muted)
-        self.mic_button_top.set_muted(new_muted)
-        self.voice_engine.set_muted(new_muted)
+        new_muted = not self._mic_is_muted()
+        self._set_mic_muted(new_muted)
         if new_muted:
             self.voice_status.text = "Микрофон выключен"
             self.status_label.color = COLORS["text_muted"]
@@ -1765,17 +1934,15 @@ class RoomScreen(Screen):
     def _sync_voice_ui(self):
         if not self._can_use_voice():
             self._smoothed_voice_level = 0.0
-            self.mic_button.set_level(0.0)
-            self.mic_button_top.set_level(0.0)
+            self._set_mic_level(0.0)
             return
         if not self.voice_engine.available:
             self._smoothed_voice_level = 0.0
-            self.mic_button.set_level(0.0)
-            self.mic_button_top.set_level(0.0)
+            self._set_mic_level(0.0)
             return
 
         raw_level = self.voice_engine.level() if self.voice_engine.active() else 0.0
-        if self.mic_button.muted:
+        if self._mic_is_muted():
             raw_level = 0.0
 
         smoothing = 0.38 if raw_level >= self._smoothed_voice_level else 0.20
@@ -1783,10 +1950,9 @@ class RoomScreen(Screen):
         if self._smoothed_voice_level < 0.015:
             self._smoothed_voice_level = 0.0
 
-        self.mic_button.set_level(self._smoothed_voice_level)
-        self.mic_button_top.set_level(self._smoothed_voice_level)
+        self._set_mic_level(self._smoothed_voice_level)
 
-        if not self._can_use_voice() or self.mic_button.muted:
+        if not self._can_use_voice() or self._mic_is_muted():
             return
 
         if raw_level < 0.06:

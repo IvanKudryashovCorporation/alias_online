@@ -79,6 +79,7 @@ class AliasApp(App):
         self.active_room = {}
         self._room_server_process = None
         self.guest_room_lock_until = 0.0
+        self.guest_room_lock_reason = None
 
     def build(self):
         register_game_font()
@@ -214,7 +215,29 @@ class AliasApp(App):
             "active": remaining_seconds > 0,
             "remaining_seconds": remaining_seconds,
             "blocked_until": None,
+            "reason": self.guest_room_lock_reason if remaining_seconds > 0 else None,
         }
+
+    def format_room_access_message(self, action_label="Действие"):
+        state = self.room_access_state()
+        if not state.get("active"):
+            return ""
+
+        remaining_seconds = max(0, int(state.get("remaining_seconds") or 0))
+        minutes, seconds = divmod(remaining_seconds, 60)
+        if minutes and seconds:
+            eta = f"{minutes} мин {seconds} сек"
+        elif minutes:
+            eta = f"{minutes} мин"
+        else:
+            eta = f"{max(1, seconds)} сек"
+
+        reason = (state.get("reason") or "Временное ограничение").strip()
+        return (
+            f"{action_label} сейчас недоступно.\n"
+            f"Причина: {reason}.\n"
+            f"Осталось подождать: {eta}."
+        )
 
     def apply_room_exit_penalty(self, coin_penalty=50, cooldown_minutes=5):
         if self.authenticated:
@@ -223,6 +246,7 @@ class AliasApp(App):
                 return apply_match_exit_penalty(profile.email, coin_penalty=coin_penalty, cooldown_minutes=cooldown_minutes)
 
         self.guest_room_lock_until = max(self.guest_room_lock_until, time.time() + max(1, int(cooldown_minutes or 0)) * 60)
+        self.guest_room_lock_reason = "Выход из игры"
         remaining_seconds = max(0, int(self.guest_room_lock_until - time.time()))
         return {
             "profile": None,
@@ -231,6 +255,7 @@ class AliasApp(App):
             "blocked_until": None,
             "remaining_seconds": remaining_seconds,
             "cooldown_minutes": max(1, int(cooldown_minutes or 0)),
+            "reason": self.guest_room_lock_reason,
         }
 
     def _leave_active_room(self):

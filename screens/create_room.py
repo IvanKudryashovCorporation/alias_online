@@ -2,12 +2,13 @@ import random
 import string
 
 from kivy.app import App
+from kivy.clock import Clock
 from kivy.core.clipboard import Clipboard
 from kivy.metrics import dp, sp
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.gridlayout import GridLayout
+from kivy.uix.popup import Popup
 from kivy.uix.screenmanager import Screen
-from kivy.uix.spinner import Spinner, SpinnerOption
 from kivy.uix.widget import Widget
 
 from services import (
@@ -30,47 +31,6 @@ from ui import (
     build_scrollable_content,
     register_game_font,
 )
-
-
-class RoomSpinnerOption(SpinnerOption):
-    def __init__(self, **kwargs):
-        register_game_font()
-        super().__init__(**kwargs)
-        self.font_name = "GameFont"
-        self.font_size = sp(14)
-        self.color = COLORS["text"]
-        self.background_normal = ""
-        self.background_color = COLORS["surface_strong"]
-        self.size_hint_y = None
-        self.height = dp(42)
-
-
-class RoomSpinner(Spinner):
-    def __init__(self, placeholder, values, **kwargs):
-        register_game_font()
-        super().__init__(
-            text=placeholder,
-            values=values,
-            option_cls=RoomSpinnerOption,
-            size_hint_y=None,
-            height=dp(48),
-            **kwargs,
-        )
-        self.placeholder = placeholder
-        self.font_name = "GameFont"
-        self.font_size = sp(14)
-        self.background_normal = ""
-        self.background_down = ""
-        self.bind(text=self._sync_visual_state)
-        self._sync_visual_state()
-
-    def selected_value(self):
-        return None if self.text == self.placeholder else self.text
-
-    def _sync_visual_state(self, *_):
-        selected = self.text != self.placeholder
-        self.color = COLORS["input_text"] if selected else COLORS["text_muted"]
-        self.background_color = (0.11, 0.18, 0.30, 0.98) if selected else COLORS["input_bg"]
 
 
 class RoomTypeChip(AppButton):
@@ -110,12 +70,16 @@ class RoomTypeChip(AppButton):
 
 class RoomChoiceChip(AppButton):
     def __init__(self, text, value, on_select, **kwargs):
+        size_hint = kwargs.pop("size_hint", (None, None))
+        chip_width = kwargs.pop("width", dp(92))
+        chip_height = kwargs.pop("height", dp(42))
         super().__init__(
             text=text,
             compact=True,
             font_size=sp(13),
-            size_hint=(1, None),
-            height=dp(42),
+            size_hint=size_hint,
+            width=chip_width,
+            height=chip_height,
             button_color=(0.10, 0.16, 0.27, 0.92),
             pressed_color=(0.13, 0.22, 0.37, 0.96),
             **kwargs,
@@ -129,17 +93,17 @@ class RoomChoiceChip(AppButton):
     def set_active(self, active):
         self._active = bool(active)
         if self._active:
-            self._rest_button_color = (0.18, 0.48, 0.88, 0.96)
-            self._pressed_button_color = (0.14, 0.39, 0.74, 0.98)
+            self._rest_button_color = (0.18, 0.48, 0.88, 0.98)
+            self._pressed_button_color = (0.15, 0.40, 0.76, 1.0)
             self._border_color.rgba = COLORS["accent"]
             self._border_line.width = 1.8
             self.color = COLORS["text"]
         else:
-            self._rest_button_color = (0.10, 0.16, 0.27, 0.92)
-            self._pressed_button_color = (0.13, 0.22, 0.37, 0.96)
+            self._rest_button_color = (0.10, 0.16, 0.27, 0.96)
+            self._pressed_button_color = (0.13, 0.22, 0.37, 0.98)
             self._border_color.rgba = COLORS["outline_soft"] if "outline_soft" in COLORS else COLORS["outline"]
             self._border_line.width = 1.0
-            self.color = COLORS["text_soft"]
+            self.color = COLORS["text"]
         self._button_color.rgba = self._rest_button_color
 
 
@@ -151,8 +115,16 @@ class CreateRoomScreen(Screen):
         self._autofill_bots_on_next_create = 4
         self.visibility_scope = "public"
         self.private_room_code = ""
+        self.players_value = "6"
+        self.difficulty_value = "Средние"
+        self.timer_value = "60 сек"
         self.rounds_value = "5"
+        self.player_choice_chips = []
+        self.difficulty_choice_chips = []
+        self.timer_choice_chips = []
         self.round_choice_chips = []
+        self._room_access_event = None
+        self.room_access_popup = None
 
         root = ScreenBackground()
         scroll, content = build_scrollable_content(padding=[dp(20), dp(22), dp(20), dp(24)], spacing=12)
@@ -197,7 +169,7 @@ class CreateRoomScreen(Screen):
         form_card = RoundedPanel(
             orientation="vertical",
             padding=[dp(18), dp(16), dp(18), dp(16)],
-            spacing=dp(10),
+            spacing=dp(12),
             size_hint_y=None,
         )
         form_card.bind(minimum_height=form_card.setter("height"))
@@ -208,15 +180,42 @@ class CreateRoomScreen(Screen):
         form_card.add_widget(self.room_name_input)
 
         form_card.add_widget(BodyLabel(text="Сколько человек играет"))
-        self.players_spinner = RoomSpinner("Выбери число игроков", [str(number) for number in range(2, 13)])
-        form_card.add_widget(self.players_spinner)
+        self.players_grid = GridLayout(
+            cols=4,
+            spacing=dp(10),
+            padding=[dp(2), dp(2), dp(2), dp(4)],
+            size_hint_y=None,
+            row_default_height=dp(46),
+            row_force_default=True,
+            col_default_width=dp(86),
+            col_force_default=True,
+        )
+        self.players_grid.bind(minimum_height=self.players_grid.setter("height"))
+        for number in range(2, 13):
+            chip = RoomChoiceChip(str(number), str(number), self._select_players)
+            self.player_choice_chips.append(chip)
+            self.players_grid.add_widget(chip)
+        self.players_grid.bind(width=lambda *_args, grid=self.players_grid: self._sync_choice_grid_width(grid, min_width=dp(84)))
+        form_card.add_widget(self.players_grid)
 
         form_card.add_widget(BodyLabel(text="Сложность слов"))
-        self.difficulty_spinner = RoomSpinner(
-            "Выбери сложность слов",
-            ["Легкие", "Средние", "Сложные", "Микс"],
+        self.difficulty_grid = GridLayout(
+            cols=2,
+            spacing=dp(10),
+            padding=[dp(2), dp(2), dp(2), dp(4)],
+            size_hint_y=None,
+            row_default_height=dp(46),
+            row_force_default=True,
+            col_default_width=dp(144),
+            col_force_default=True,
         )
-        form_card.add_widget(self.difficulty_spinner)
+        self.difficulty_grid.bind(minimum_height=self.difficulty_grid.setter("height"))
+        for value in ["Легкие", "Средние", "Сложные", "Микс"]:
+            chip = RoomChoiceChip(value, value, self._select_difficulty)
+            self.difficulty_choice_chips.append(chip)
+            self.difficulty_grid.add_widget(chip)
+        self.difficulty_grid.bind(width=lambda *_args, grid=self.difficulty_grid: self._sync_choice_grid_width(grid, min_width=dp(128)))
+        form_card.add_widget(self.difficulty_grid)
 
         form_card.add_widget(BodyLabel(text="Тип комнаты"))
         type_row = BoxLayout(orientation="horizontal", spacing=dp(10), size_hint_y=None, height=dp(46))
@@ -235,25 +234,41 @@ class CreateRoomScreen(Screen):
         form_card.add_widget(self.type_hint_label)
 
         form_card.add_widget(BodyLabel(text="Таймер раунда"))
-        self.round_timer_spinner = RoomSpinner(
-            "Выбери таймер",
-            ["30 сек", "45 сек", "60 сек", "75 сек", "90 сек", "120 сек"],
+        self.timer_grid = GridLayout(
+            cols=3,
+            spacing=dp(10),
+            padding=[dp(2), dp(2), dp(2), dp(4)],
+            size_hint_y=None,
+            row_default_height=dp(46),
+            row_force_default=True,
+            col_default_width=dp(108),
+            col_force_default=True,
         )
-        form_card.add_widget(self.round_timer_spinner)
+        self.timer_grid.bind(minimum_height=self.timer_grid.setter("height"))
+        for value in ["30 сек", "45 сек", "60 сек", "75 сек", "90 сек", "120 сек"]:
+            chip = RoomChoiceChip(value, value, self._select_timer, height=dp(44))
+            self.timer_choice_chips.append(chip)
+            self.timer_grid.add_widget(chip)
+        self.timer_grid.bind(width=lambda *_args, grid=self.timer_grid: self._sync_choice_grid_width(grid, min_width=dp(102)))
+        form_card.add_widget(self.timer_grid)
 
         form_card.add_widget(BodyLabel(text="Количество раундов"))
         self.rounds_grid = GridLayout(
             cols=4,
-            spacing=dp(8),
+            spacing=dp(10),
+            padding=[dp(2), dp(4), dp(2), dp(6)],
             size_hint_y=None,
-            row_default_height=dp(42),
+            row_default_height=dp(48),
             row_force_default=True,
+            col_default_width=dp(86),
+            col_force_default=True,
         )
         self.rounds_grid.bind(minimum_height=self.rounds_grid.setter("height"))
         for number in range(3, 11):
-            chip = RoomChoiceChip(str(number), str(number), self._select_rounds)
+            chip = RoomChoiceChip(str(number), str(number), self._select_rounds, height=dp(44))
             self.round_choice_chips.append(chip)
             self.rounds_grid.add_widget(chip)
+        self.rounds_grid.bind(width=lambda *_args, grid=self.rounds_grid: self._sync_choice_grid_width(grid, min_width=dp(84)))
         form_card.add_widget(self.rounds_grid)
         form_card.add_widget(
             BodyLabel(
@@ -333,13 +348,25 @@ class CreateRoomScreen(Screen):
         self.add_widget(root)
 
         self._select_visibility("public")
+        self._select_players(self.players_value)
+        self._select_difficulty(self.difficulty_value)
+        self._select_timer(self.timer_value)
         self._select_rounds(self.rounds_value)
+        Clock.schedule_once(lambda *_: self._sync_choice_grid_width(self.players_grid, min_width=dp(84)), 0)
+        Clock.schedule_once(lambda *_: self._sync_choice_grid_width(self.difficulty_grid, min_width=dp(128)), 0)
+        Clock.schedule_once(lambda *_: self._sync_choice_grid_width(self.timer_grid, min_width=dp(102)), 0)
+        Clock.schedule_once(lambda *_: self._sync_choice_grid_width(self.rounds_grid, min_width=dp(84)), 0)
 
     def _room_access_message(self, remaining_seconds):
+        app = App.get_running_app()
+        if app is not None and hasattr(app, "format_room_access_message"):
+            return app.format_room_access_message("Создание комнаты")
         minutes = max(1, (int(remaining_seconds) + 59) // 60)
-        return f"После выхода из матча доступ к комнатам временно закрыт. Подожди примерно {minutes} мин."
+        return f"Создание комнаты сейчас недоступно. Подожди примерно {minutes} мин."
 
     def on_pre_enter(self, *_):
+        self._start_room_access_watch()
+        self._refresh_room_access_ui()
         app = App.get_running_app()
         player_name = app.resolve_player_name() if app is not None else None
         profile = app.current_profile() if app is not None else None
@@ -349,7 +376,6 @@ class CreateRoomScreen(Screen):
         if room_access_state.get("active"):
             self.balance_note.color = COLORS["warning"]
             self.balance_note.text = self._room_access_message(room_access_state.get("remaining_seconds", 0))
-            self.create_btn.disabled = True
             return
 
         if not player_name:
@@ -370,8 +396,128 @@ class CreateRoomScreen(Screen):
         if self.visibility_scope == "private":
             self._ensure_private_code_preview(force=not bool(self.private_room_code))
 
+    def on_leave(self, *_):
+        self._stop_room_access_watch()
+        self._dismiss_room_access_popup()
+
+    def _start_room_access_watch(self):
+        self._stop_room_access_watch()
+        self._room_access_event = Clock.schedule_interval(lambda _dt: self._tick_room_access_state(), 1.0)
+
+    def _stop_room_access_watch(self):
+        if self._room_access_event is not None:
+            self._room_access_event.cancel()
+            self._room_access_event = None
+
+    def _tick_room_access_state(self):
+        app = App.get_running_app()
+        state = app.room_access_state() if app is not None and hasattr(app, "room_access_state") else {"active": False}
+        locked = bool(state.get("active"))
+        self._set_create_button_locked(locked)
+        if locked:
+            self.balance_note.color = COLORS["warning"]
+            self.balance_note.text = self._room_access_message(state.get("remaining_seconds", 0))
+        else:
+            profile = app.current_profile() if app is not None else None
+            if profile is not None:
+                self.balance_note.color = COLORS["accent"]
+                self.balance_note.text = f"Баланс: {profile.alias_coins} AC. Создание комнаты стоит {ROOM_CREATION_COST} AC."
+                self.coin_badge.set_value(profile.alias_coins)
+
+    def _refresh_room_access_ui(self):
+        app = App.get_running_app()
+        state = app.room_access_state() if app is not None and hasattr(app, "room_access_state") else {"active": False}
+        self._set_create_button_locked(bool(state.get("active")))
+
+    def _set_create_button_locked(self, locked):
+        if locked:
+            self.create_btn._rest_button_color = COLORS["danger_button"]
+            self.create_btn._pressed_button_color = COLORS["danger_button_pressed"]
+            self.create_btn._border_color.rgba = (1, 0.82, 0.82, 0.30)
+            self.create_btn.disabled = False
+        else:
+            self.create_btn._rest_button_color = COLORS["button"]
+            self.create_btn._pressed_button_color = COLORS["button_pressed"]
+            self.create_btn._border_color.rgba = COLORS["outline"]
+        self.create_btn._button_color.rgba = self.create_btn._rest_button_color
+
+    def _open_room_access_popup(self):
+        self._dismiss_room_access_popup()
+
+        body = BoxLayout(
+            orientation="vertical",
+            spacing=dp(12),
+            padding=[dp(16), dp(16), dp(16), dp(16)],
+        )
+        panel = RoundedPanel(
+            orientation="vertical",
+            spacing=dp(12),
+            padding=[dp(18), dp(18), dp(18), dp(18)],
+            size_hint_y=None,
+            height=dp(272),
+        )
+        panel.add_widget(PixelLabel(text="Создание временно закрыто", font_size=sp(18), center=True, size_hint_y=None))
+
+        warning_card = RoundedPanel(
+            orientation="vertical",
+            spacing=dp(6),
+            padding=[dp(14), dp(12), dp(14), dp(12)],
+            size_hint_y=None,
+            height=dp(118),
+            bg_color=(0.29, 0.11, 0.11, 0.92),
+            shadow_alpha=0.14,
+        )
+        warning_card._border_color.rgba = COLORS["error"]
+        warning_card._border_line.width = 1.6
+        warning_card.add_widget(
+            BodyLabel(
+                center=True,
+                color=COLORS["warning"],
+                font_size=sp(11.5),
+                text=self._room_access_message(0),
+                size_hint_y=None,
+            )
+        )
+        panel.add_widget(warning_card)
+
+        close_btn = AppButton(text="Хорошо", compact=True, font_size=sp(15))
+        close_btn.height = dp(46)
+        close_btn.bind(on_release=lambda *_: self._dismiss_room_access_popup())
+        panel.add_widget(close_btn)
+        body.add_widget(panel)
+
+        self.room_access_popup = Popup(
+            title="",
+            separator_height=0,
+            auto_dismiss=True,
+            background="atlas://data/images/defaulttheme/modalview-background",
+            content=body,
+            size_hint=(0.82, None),
+            height=dp(320),
+        )
+        self.room_access_popup.bind(on_dismiss=lambda *_: setattr(self, "room_access_popup", None))
+        self.room_access_popup.open()
+
+    def _dismiss_room_access_popup(self):
+        if self.room_access_popup is not None:
+            popup = self.room_access_popup
+            self.room_access_popup = None
+            popup.dismiss()
+
     def _timer_to_seconds(self, timer_value):
         return int((timer_value or "").split()[0])
+
+    def _sync_choice_grid_width(self, grid, min_width):
+        if grid is None:
+            return
+
+        spacing = grid.spacing[0] if isinstance(grid.spacing, (list, tuple)) else grid.spacing
+        padding = grid.padding if isinstance(grid.padding, (list, tuple)) else [grid.padding] * 4
+        left_padding = padding[0] if len(padding) > 0 else 0
+        right_padding = padding[2] if len(padding) > 2 else left_padding
+        available_width = max(float(min_width), grid.width - left_padding - right_padding - spacing * max(0, grid.cols - 1))
+        column_width = max(float(min_width), available_width / max(1, int(grid.cols or 1)))
+        grid.col_default_width = column_width
 
     def _local_code_fallback(self):
         alphabet = string.ascii_uppercase + string.digits
@@ -392,6 +538,21 @@ class CreateRoomScreen(Screen):
             self._ensure_private_code_preview(force=not bool(self.private_room_code))
         else:
             self.type_hint_label.text = "Публичная комната будет видна в общем списке. Закрытая — только по коду."
+
+    def _select_players(self, value):
+        self.players_value = str(value)
+        for chip in self.player_choice_chips:
+            chip.set_active(chip.value == self.players_value)
+
+    def _select_difficulty(self, value):
+        self.difficulty_value = str(value)
+        for chip in self.difficulty_choice_chips:
+            chip.set_active(chip.value == self.difficulty_value)
+
+    def _select_timer(self, value):
+        self.timer_value = str(value)
+        for chip in self.timer_choice_chips:
+            chip.set_active(chip.value == self.timer_value)
 
     def _select_rounds(self, value):
         self.rounds_value = str(value)
@@ -443,14 +604,15 @@ class CreateRoomScreen(Screen):
         profile = app.current_profile() if app is not None else None
         room_access_state = app.room_access_state() if app is not None and hasattr(app, "room_access_state") else {"active": False}
         room_name = self.room_name_input.text.strip()
-        players = self.players_spinner.selected_value()
-        difficulty = self.difficulty_spinner.selected_value()
-        round_timer = self.round_timer_spinner.selected_value()
+        players = self.players_value
+        difficulty = self.difficulty_value
+        round_timer = self.timer_value
         rounds = self.rounds_value
 
         if room_access_state.get("active"):
             self.status_label.color = COLORS["warning"]
             self.status_label.text = self._room_access_message(room_access_state.get("remaining_seconds", 0))
+            self._open_room_access_popup()
             return
 
         if not player_name:

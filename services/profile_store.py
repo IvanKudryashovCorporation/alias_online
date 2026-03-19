@@ -18,7 +18,7 @@ ROOM_CREATION_COST = 10
 STARTER_ALIAS_COINS = 100
 PROFILE_COLUMNS = (
     "id, name, email, avatar_path, bio, alias_coins, games_played, total_points, rooms_created, "
-    "guessed_words, explained_words, match_penalty_until, "
+    "guessed_words, explained_words, match_penalty_until, match_penalty_reason, "
     "created_at, updated_at"
 )
 
@@ -37,6 +37,7 @@ class Profile:
     guessed_words: int
     explained_words: int
     match_penalty_until: str | None
+    match_penalty_reason: str | None
     created_at: str
     updated_at: str
 
@@ -122,6 +123,7 @@ def _ensure_profile_schema(connection):
         ("guessed_words", "INTEGER NOT NULL DEFAULT 0"),
         ("explained_words", "INTEGER NOT NULL DEFAULT 0"),
         ("match_penalty_until", "TEXT"),
+        ("match_penalty_reason", "TEXT"),
     ):
         if column_name not in columns:
             connection.execute(f"ALTER TABLE profiles ADD COLUMN {column_name} {definition}")
@@ -221,6 +223,7 @@ def _row_to_profile(row):
         guessed_words=int(row["guessed_words"]) if "guessed_words" in keys and row["guessed_words"] is not None else 0,
         explained_words=int(row["explained_words"]) if "explained_words" in keys and row["explained_words"] is not None else 0,
         match_penalty_until=row["match_penalty_until"] if "match_penalty_until" in keys else None,
+        match_penalty_reason=row["match_penalty_reason"] if "match_penalty_reason" in keys else None,
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -708,12 +711,12 @@ def get_matchmaking_penalty(email, db_path=None):
 
     clean_email = (email or "").strip().lower()
     if not clean_email or not EMAIL_PATTERN.match(clean_email):
-        return {"active": False, "remaining_seconds": 0, "blocked_until": None}
+        return {"active": False, "remaining_seconds": 0, "blocked_until": None, "reason": None}
 
     with _connect(db_path) as connection:
         row = connection.execute(
             """
-            SELECT match_penalty_until
+            SELECT match_penalty_until, match_penalty_reason
             FROM profiles
             WHERE email = ?
             """,
@@ -722,17 +725,18 @@ def get_matchmaking_penalty(email, db_path=None):
 
     blocked_until = _parse_timestamp(row["match_penalty_until"]) if row is not None else None
     if blocked_until is None:
-        return {"active": False, "remaining_seconds": 0, "blocked_until": None}
+        return {"active": False, "remaining_seconds": 0, "blocked_until": None, "reason": None}
 
     remaining_seconds = max(0, int((blocked_until - _utc_now()).total_seconds()))
     return {
         "active": remaining_seconds > 0,
         "remaining_seconds": remaining_seconds,
-        "blocked_until": blocked_until.strftime("%Y-%m-%d %H:%M:%S"),
+        "blocked_until": blocked_until.strftime("%Y-%m-%d %H:%M:%S") if remaining_seconds > 0 else None,
+        "reason": (row["match_penalty_reason"] or "").strip() if row is not None and remaining_seconds > 0 else None,
     }
 
 
-def apply_match_exit_penalty(email, coin_penalty=50, cooldown_minutes=5, db_path=None):
+def apply_match_exit_penalty(email, coin_penalty=50, cooldown_minutes=5, reason="Выход из игры", db_path=None):
     initialize_database(db_path)
 
     clean_email = (email or "").strip().lower()
@@ -742,6 +746,7 @@ def apply_match_exit_penalty(email, coin_penalty=50, cooldown_minutes=5, db_path
     penalty_amount = max(0, int(coin_penalty or 0))
     cooldown_value = max(1, int(cooldown_minutes or 0))
     target_until = _utc_now() + timedelta(minutes=cooldown_value)
+    penalty_reason = (reason or "").strip() or "Выход из игры"
 
     with _connect(db_path) as connection:
         row = connection.execute(
@@ -768,10 +773,11 @@ def apply_match_exit_penalty(email, coin_penalty=50, cooldown_minutes=5, db_path
             UPDATE profiles
             SET alias_coins = ?,
                 match_penalty_until = ?,
+                match_penalty_reason = ?,
                 updated_at = CURRENT_TIMESTAMP
             WHERE email = ?
             """,
-            (remaining_coins, final_until.strftime("%Y-%m-%d %H:%M:%S"), clean_email),
+            (remaining_coins, final_until.strftime("%Y-%m-%d %H:%M:%S"), penalty_reason, clean_email),
         )
         updated = _fetch_profile_row(connection, "email = ?", (clean_email,))
 
@@ -784,6 +790,7 @@ def apply_match_exit_penalty(email, coin_penalty=50, cooldown_minutes=5, db_path
         "blocked_until": penalty_info["blocked_until"],
         "remaining_seconds": penalty_info["remaining_seconds"],
         "cooldown_minutes": cooldown_value,
+        "reason": penalty_reason,
     }
 
 

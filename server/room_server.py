@@ -607,7 +607,7 @@ def _delete_room(connection, room_code):
     connection.execute("DELETE FROM rooms WHERE code = ?", (room_code,))
 
 
-def _sync_room_after_player_leave(connection, room_code):
+def _repair_room_integrity(connection, room_code):
     room = connection.execute("SELECT * FROM rooms WHERE code = ?", (room_code,)).fetchone()
     if room is None:
         return {"deleted": True, "players": []}
@@ -622,19 +622,43 @@ def _sync_room_after_player_leave(connection, room_code):
     voice_speaker = room["voice_speaker"] if room["voice_speaker"] in players else None
     voice_until = room["voice_until"] if voice_speaker else None
 
-    connection.execute(
-        """
-        UPDATE rooms
-        SET host_name = ?,
-            current_explainer = ?,
-            voice_speaker = ?,
-            voice_until = ?,
-            updated_at = ?
-        WHERE code = ?
-        """,
-        (host_name, current_explainer, voice_speaker, voice_until, _now(), room_code),
-    )
+    if (
+        host_name != room["host_name"]
+        or current_explainer != room["current_explainer"]
+        or voice_speaker != room["voice_speaker"]
+        or voice_until != room["voice_until"]
+    ):
+        connection.execute(
+            """
+            UPDATE rooms
+            SET host_name = ?,
+                current_explainer = ?,
+                voice_speaker = ?,
+                voice_until = ?,
+                updated_at = ?
+            WHERE code = ?
+            """,
+            (host_name, current_explainer, voice_speaker, voice_until, _now(), room_code),
+        )
     return {"deleted": False, "players": players}
+
+
+def _sync_room_after_player_leave(connection, room_code):
+    return _repair_room_integrity(connection, room_code)
+
+
+def _prune_empty_rooms(connection):
+    empty_rows = connection.execute(
+        """
+        SELECT r.code
+        FROM rooms AS r
+        LEFT JOIN room_players AS p ON p.room_code = r.code
+        GROUP BY r.code
+        HAVING COUNT(p.player_name) = 0
+        """
+    ).fetchall()
+    for row in empty_rows:
+        _delete_room(connection, row["code"])
 
 
 def _prune_voice_chunks(connection, room_code, keep_last=200):
@@ -968,6 +992,7 @@ class RoomHandler(BaseHTTPRequestHandler):
         public_only = params.get("public_only", ["1"])[0] == "1"
 
         with _connect() as connection:
+            _prune_empty_rooms(connection)
             if public_only:
                 rows = connection.execute(
                     """
@@ -999,6 +1024,8 @@ class RoomHandler(BaseHTTPRequestHandler):
 
     def _handle_get_room(self, room_code):
         with _connect() as connection:
+            _prune_empty_rooms(connection)
+            _repair_room_integrity(connection, room_code)
             room = _room_with_count(connection, room_code)
         if room is None:
             self._json_response(404, {"error": "Room not found."})
@@ -1119,7 +1146,9 @@ class RoomHandler(BaseHTTPRequestHandler):
             return
 
         with _connect() as connection:
+            _prune_empty_rooms(connection)
             _refresh_room_phase(connection, room_code)
+            _repair_room_integrity(connection, room_code)
             room = connection.execute("SELECT * FROM rooms WHERE code = ?", (room_code,)).fetchone()
             if room is None:
                 self._json_response(404, {"error": "Room not found."})
@@ -1250,6 +1279,11 @@ class RoomHandler(BaseHTTPRequestHandler):
                 since_id = None
 
         with _connect() as connection:
+            _prune_empty_rooms(connection)
+            repair_state = _repair_room_integrity(connection, room_code)
+            if repair_state["deleted"]:
+                self._json_response(404, {"error": "Room not found."})
+                return
             if player_name and not _is_room_player(connection, room_code, player_name):
                 self._json_response(403, {"error": "Player is not in this room."})
                 return

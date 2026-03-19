@@ -1,8 +1,11 @@
 from kivy.app import App
+from kivy.clock import Clock
 from kivy.metrics import dp, sp
 from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.popup import Popup
 from kivy.uix.screenmanager import Screen
 from kivy.uix.widget import Widget
+from threading import Thread
 
 from services import join_online_room, list_online_rooms
 from ui import (
@@ -29,6 +32,10 @@ class JoinRoomScreen(Screen):
         self.rooms_cache = []
         self.joined_room = None
         self._room_access_locked = False
+        self._room_access_event = None
+        self.room_access_popup = None
+        self._refresh_in_progress = False
+        self._refresh_token = 0
 
         root = ScreenBackground()
         scroll, content = build_scrollable_content(padding=[dp(20), dp(20), dp(20), dp(24)], spacing=12)
@@ -66,25 +73,36 @@ class JoinRoomScreen(Screen):
         self.rooms_card = RoundedPanel(
             orientation="vertical",
             padding=[dp(16), dp(16), dp(16), dp(16)],
-            spacing=dp(12),
+            spacing=dp(10),
             size_hint_y=None,
             bg_color=COLORS["surface_card"],
-            shadow_alpha=0.12,
+            shadow_alpha=0.10,
         )
         self.rooms_card.bind(minimum_height=self.rooms_card.setter("height"))
 
-        rooms_header = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(38), spacing=dp(10))
+        rooms_header = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(34), spacing=dp(8))
         rooms_header.add_widget(PixelLabel(text="Публичные комнаты", font_size=sp(15), size_hint=(1, None), center=False))
-        self.refresh_btn = IconCircleButton(icon="refresh", size=(dp(38), dp(38)))
-        self.refresh_btn.bind(on_release=lambda *_: self.refresh_room_list())
+        self.refresh_btn = IconCircleButton(icon="refresh", size=(dp(34), dp(34)))
+        self.refresh_btn.bind(on_press=self._handle_refresh_press)
         rooms_header.add_widget(self.refresh_btn)
         self.rooms_card.add_widget(rooms_header)
 
-        self.rooms_box = BoxLayout(orientation="vertical", spacing=dp(8), size_hint_y=None)
+        self.rooms_box = BoxLayout(orientation="vertical", spacing=dp(10), size_hint_y=None)
         self.rooms_box.bind(minimum_height=self.rooms_box.setter("height"))
         self.rooms_card.add_widget(self.rooms_box)
         content.add_widget(self.rooms_card)
 
+        self.status_card = RoundedPanel(
+            orientation="vertical",
+            padding=[dp(14), dp(12), dp(14), dp(12)],
+            spacing=dp(6),
+            size_hint_y=None,
+            bg_color=COLORS["surface_soft"],
+            shadow_alpha=0.06,
+        )
+        self.status_card.bind(minimum_height=self.status_card.setter("height"))
+        self.status_card._border_color.rgba = COLORS["outline_soft"]
+        self.status_card._border_line.width = 1.0
         self.status_label = BodyLabel(
             center=True,
             color=COLORS["text_muted"],
@@ -92,7 +110,8 @@ class JoinRoomScreen(Screen):
             text="Введи код комнаты или выбери подходящую комнату из списка ниже.",
             size_hint_y=None,
         )
-        content.add_widget(self.status_label)
+        self.status_card.add_widget(self.status_label)
+        content.add_widget(self.status_card)
 
         root.add_widget(scroll)
         self.coin_badge = CoinBadge(pos_hint={"right": 0.965, "top": 0.96})
@@ -100,8 +119,11 @@ class JoinRoomScreen(Screen):
         self.add_widget(root)
 
     def _room_access_message(self, remaining_seconds):
+        app = App.get_running_app()
+        if app is not None and hasattr(app, "format_room_access_message"):
+            return app.format_room_access_message("Вход в комнату")
         minutes = max(1, (int(remaining_seconds) + 59) // 60)
-        return f"После выхода из матча вход в комнаты временно закрыт. Подожди примерно {minutes} мин."
+        return f"Вход в комнату сейчас недоступен. Подожди примерно {minutes} мин."
 
     def on_pre_enter(self, *_):
         app = App.get_running_app()
@@ -109,24 +131,28 @@ class JoinRoomScreen(Screen):
         room_access_state = app.room_access_state() if app is not None and hasattr(app, "room_access_state") else {"active": False}
         self._room_access_locked = bool(room_access_state.get("active"))
         self.coin_badge.refresh_from_session()
-        self.join_btn.disabled = self._room_access_locked
-        self.room_code_input.disabled = self._room_access_locked
+        self._apply_room_access_ui()
+        self._start_room_access_watch()
 
         if not player_name:
-            self.status_label.color = COLORS["warning"]
-            self.status_label.text = "Сначала войди в аккаунт или начни гостевую сессию."
+            self._set_status("Сначала войди в аккаунт или начни гостевую сессию.", COLORS["warning"], "warning")
             self.rooms_cache = []
             self._render_rooms()
             return
 
         if self._room_access_locked:
-            self.status_label.color = COLORS["warning"]
-            self.status_label.text = self._room_access_message(room_access_state.get("remaining_seconds", 0))
+            self._set_status(self._room_access_message(room_access_state.get("remaining_seconds", 0)), COLORS["warning"], "warning")
         else:
-            self.status_label.color = COLORS["text_muted"]
-            self.status_label.text = "Введи код комнаты или выбери подходящую комнату из списка ниже."
+            self._set_status("Введи код комнаты или выбери подходящую комнату из списка ниже.", COLORS["text_muted"], "neutral")
 
         self.refresh_room_list()
+
+    def on_leave(self, *_):
+        self._stop_room_access_watch()
+        self._refresh_token += 1
+        self._refresh_in_progress = False
+        self.refresh_btn.stop_spinning()
+        self._dismiss_room_access_popup()
 
     def _normalize_code(self, raw_code):
         return "".join(character for character in (raw_code or "").upper() if character.isalnum())
@@ -153,6 +179,120 @@ class JoinRoomScreen(Screen):
             )
         )
         return note_card
+
+    def _start_room_access_watch(self):
+        self._stop_room_access_watch()
+        self._room_access_event = Clock.schedule_interval(lambda _dt: self._tick_room_access_state(), 1.0)
+
+    def _stop_room_access_watch(self):
+        if self._room_access_event is not None:
+            self._room_access_event.cancel()
+            self._room_access_event = None
+
+    def _tick_room_access_state(self):
+        app = App.get_running_app()
+        state = app.room_access_state() if app is not None and hasattr(app, "room_access_state") else {"active": False}
+        locked = bool(state.get("active"))
+        if locked != self._room_access_locked:
+            self._room_access_locked = locked
+            self.refresh_room_list()
+        self._apply_room_access_ui()
+        if locked:
+            self._set_status(self._room_access_message(state.get("remaining_seconds", 0)), COLORS["warning"], "warning")
+
+    def _set_join_button_locked(self, button, locked):
+        if locked:
+            button._rest_button_color = COLORS["danger_button"]
+            button._pressed_button_color = COLORS["danger_button_pressed"]
+            button._border_color.rgba = (1, 0.82, 0.82, 0.30)
+        else:
+            button._rest_button_color = COLORS["button"]
+            button._pressed_button_color = COLORS["button_pressed"]
+            button._border_color.rgba = COLORS["outline"]
+        button._button_color.rgba = button._rest_button_color
+        button.opacity = 1
+
+    def _apply_room_access_ui(self):
+        self._set_join_button_locked(self.join_btn, self._room_access_locked)
+
+    def _set_status(self, text, color=None, tone="neutral"):
+        self.status_label.text = text
+        self.status_label.color = color or COLORS["text_muted"]
+        if tone == "warning":
+            self.status_card._bg_color.rgba = (0.27, 0.13, 0.10, 0.82)
+            self.status_card._border_color.rgba = (1, 0.80, 0.60, 0.22)
+        elif tone == "error":
+            self.status_card._bg_color.rgba = (0.30, 0.10, 0.12, 0.88)
+            self.status_card._border_color.rgba = (1, 0.74, 0.74, 0.30)
+        elif tone == "success":
+            self.status_card._bg_color.rgba = (0.10, 0.23, 0.18, 0.76)
+            self.status_card._border_color.rgba = (0.72, 1, 0.82, 0.24)
+        else:
+            self.status_card._bg_color.rgba = COLORS["surface_soft"]
+            self.status_card._border_color.rgba = COLORS["outline_soft"]
+
+    def _open_room_access_popup(self):
+        self._dismiss_room_access_popup()
+
+        body = BoxLayout(
+            orientation="vertical",
+            spacing=dp(12),
+            padding=[dp(16), dp(16), dp(16), dp(16)],
+        )
+        panel = RoundedPanel(
+            orientation="vertical",
+            spacing=dp(12),
+            padding=[dp(18), dp(18), dp(18), dp(18)],
+            size_hint_y=None,
+            height=dp(272),
+        )
+        panel.add_widget(PixelLabel(text="Вход временно закрыт", font_size=sp(18), center=True, size_hint_y=None))
+
+        warning_card = RoundedPanel(
+            orientation="vertical",
+            spacing=dp(6),
+            padding=[dp(14), dp(12), dp(14), dp(12)],
+            size_hint_y=None,
+            height=dp(118),
+            bg_color=(0.29, 0.11, 0.11, 0.92),
+            shadow_alpha=0.14,
+        )
+        warning_card._border_color.rgba = COLORS["error"]
+        warning_card._border_line.width = 1.6
+        warning_card.add_widget(
+            BodyLabel(
+                center=True,
+                color=COLORS["warning"],
+                font_size=sp(11.5),
+                text=self._room_access_message(0),
+                size_hint_y=None,
+            )
+        )
+        panel.add_widget(warning_card)
+
+        close_btn = AppButton(text="Хорошо", compact=True, font_size=sp(15))
+        close_btn.height = dp(46)
+        close_btn.bind(on_release=lambda *_: self._dismiss_room_access_popup())
+        panel.add_widget(close_btn)
+        body.add_widget(panel)
+
+        self.room_access_popup = Popup(
+            title="",
+            separator_height=0,
+            auto_dismiss=True,
+            background="atlas://data/images/defaulttheme/modalview-background",
+            content=body,
+            size_hint=(0.82, None),
+            height=dp(320),
+        )
+        self.room_access_popup.bind(on_dismiss=lambda *_: setattr(self, "room_access_popup", None))
+        self.room_access_popup.open()
+
+    def _dismiss_room_access_popup(self):
+        if self.room_access_popup is not None:
+            popup = self.room_access_popup
+            self.room_access_popup = None
+            popup.dismiss()
 
     def _render_rooms(self):
         self.rooms_box.clear_widgets()
@@ -206,11 +346,10 @@ class JoinRoomScreen(Screen):
                 compact=True,
                 font_size=sp(13),
                 size_hint=(None, None),
-                size=(dp(92), dp(34)),
+                size=(dp(88), dp(34)),
             )
             join_btn.bind(on_release=lambda *_args, room_code=code_text: self._join_by_code(room_code))
-            join_btn.disabled = self._room_access_locked
-            join_btn.opacity = 0.72 if self._room_access_locked else 1
+            self._set_join_button_locked(join_btn, self._room_access_locked)
             header_row.add_widget(join_btn)
             row.add_widget(header_row)
 
@@ -224,30 +363,61 @@ class JoinRoomScreen(Screen):
 
             self.rooms_box.add_widget(row)
 
-    def refresh_room_list(self):
-        try:
-            self.rooms_cache = list_online_rooms(public_only=True)
-        except ConnectionError as error:
-            self.rooms_cache = []
-            self.status_label.color = COLORS["error"]
-            self.status_label.text = str(error)
-            self._render_rooms()
+    def _handle_refresh_press(self, *_):
+        self.refresh_room_list(from_user=True)
+
+    def refresh_room_list(self, from_user=False):
+        if self._refresh_in_progress:
             return
+
+        self._refresh_in_progress = True
+        self._refresh_token += 1
+        request_token = self._refresh_token
+        self.refresh_btn.start_spinning()
+
+        if from_user and not self._room_access_locked:
+            self._set_status("Обновляем список публичных комнат...", COLORS["text_muted"], "neutral")
+
+        worker = Thread(target=self._load_rooms_worker, args=(request_token,), daemon=True)
+        worker.start()
+
+    def _load_rooms_worker(self, request_token):
+        try:
+            rooms = list_online_rooms(public_only=True)
+            payload = {"status": "success", "rooms": rooms}
+        except ConnectionError as error:
+            payload = {"status": "connection_error", "message": str(error)}
         except ValueError as error:
+            payload = {"status": "value_error", "message": str(error)}
+
+        Clock.schedule_once(lambda _dt, token=request_token, result=payload: self._finish_room_list_refresh(token, result))
+
+    def _finish_room_list_refresh(self, request_token, payload):
+        if request_token != self._refresh_token:
+            return
+
+        self._refresh_in_progress = False
+        self.refresh_btn.stop_spinning()
+
+        status = payload.get("status")
+        if status == "success":
+            self.rooms_cache = list(payload.get("rooms") or [])
+        else:
             self.rooms_cache = []
-            self.status_label.color = COLORS["warning"]
-            self.status_label.text = str(error)
+            message = payload.get("message") or "Не удалось обновить список комнат."
+            if status == "connection_error":
+                self._set_status(message, COLORS["error"], "error")
+            else:
+                self._set_status(message, COLORS["warning"], "warning")
             self._render_rooms()
             return
 
         if self._room_access_locked:
             app = App.get_running_app()
             room_access_state = app.room_access_state() if app is not None and hasattr(app, "room_access_state") else {"remaining_seconds": 0}
-            self.status_label.color = COLORS["warning"]
-            self.status_label.text = self._room_access_message(room_access_state.get("remaining_seconds", 0))
+            self._set_status(self._room_access_message(room_access_state.get("remaining_seconds", 0)), COLORS["warning"], "warning")
         else:
-            self.status_label.color = COLORS["text_muted"]
-            self.status_label.text = f"Найдено публичных комнат: {len(self.rooms_cache)}"
+            self._set_status(f"Найдено публичных комнат: {len(self.rooms_cache)}", COLORS["text_muted"], "neutral")
         self._render_rooms()
 
     def _join_from_input(self, *_):
@@ -261,36 +431,33 @@ class JoinRoomScreen(Screen):
         room_access_state = app.room_access_state() if app is not None and hasattr(app, "room_access_state") else {"active": False, "remaining_seconds": 0}
 
         if room_access_state.get("active"):
-            self.status_label.color = COLORS["warning"]
-            self.status_label.text = self._room_access_message(room_access_state.get("remaining_seconds", 0))
+            self._set_status(self._room_access_message(room_access_state.get("remaining_seconds", 0)), COLORS["warning"], "warning")
+            self._open_room_access_popup()
             return
 
         if not player_name:
-            self.status_label.color = COLORS["error"]
-            self.status_label.text = "Сначала начни сессию через вход, регистрацию или гостевой режим."
+            self._set_status("Сначала начни сессию через вход, регистрацию или гостевой режим.", COLORS["error"], "error")
             return
 
         if len(code) < 4:
-            self.status_label.color = COLORS["warning"]
-            self.status_label.text = "Введи корректный код комнаты."
+            self._set_status("Введи корректный код комнаты.", COLORS["warning"], "warning")
             return
 
         try:
             joined_room = join_online_room(room_code=code, player_name=player_name)
         except ConnectionError as error:
-            self.status_label.color = COLORS["error"]
-            self.status_label.text = str(error)
+            self._set_status(str(error), COLORS["error"], "error")
             return
         except ValueError as error:
-            self.status_label.color = COLORS["warning"]
-            self.status_label.text = str(error)
+            self._set_status(str(error), COLORS["warning"], "warning")
             return
 
         self.joined_room = joined_room
-        self.status_label.color = COLORS["success"]
-        self.status_label.text = (
+        self._set_status(
             f"Ты в комнате «{joined_room.get('room_name', code)}». "
-            f"Игроков: {joined_room.get('players_count', '?')}/{joined_room.get('max_players', '?')}."
+            f"Игроков: {joined_room.get('players_count', '?')}/{joined_room.get('max_players', '?')}.",
+            COLORS["success"],
+            "success",
         )
         if app is not None:
             app.set_active_room(joined_room)

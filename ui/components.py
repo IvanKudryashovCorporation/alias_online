@@ -2,7 +2,8 @@ from pathlib import Path
 
 from kivy.animation import Animation
 from kivy.app import App
-from kivy.graphics import Color, Ellipse, Line, Rectangle, RoundedRectangle, Triangle
+from kivy.clock import Clock
+from kivy.graphics import Color, Ellipse, Line, PopMatrix, PushMatrix, Rectangle, Rotate, RoundedRectangle, Triangle
 from kivy.metrics import dp, sp
 from kivy.uix.behaviors import ButtonBehavior
 from kivy.uix.boxlayout import BoxLayout
@@ -37,6 +38,7 @@ class ScreenBackground(FloatLayout):
         self.variant = (variant or "lobby").strip().lower()
 
         self._background_image = Image(source=str(BACKGROUND_PATH), fit_mode="fill")
+        self._background_image.opacity = 0 if self.variant == "game" else 1
         self.add_widget(self._background_image)
 
         self._scene = Widget()
@@ -847,16 +849,26 @@ class IconMetaChip(RoundedPanel):
             size_hint=(None, 1),
             auto_height=False,
         )
+        self.label.unbind(width=self.label._sync_text)
         self.label.bind(texture_size=self._sync_label_width)
+        self.label.bind(text=self._sync_label_metrics)
         self.add_widget(self.label)
-        self.bind(minimum_width=self.setter("width"))
-        self._sync_label_width()
+        self.bind(minimum_width=self._sync_chip_width)
+        self._sync_label_metrics()
 
     def set_text(self, text):
         self.label.text = text
 
+    def _sync_label_metrics(self, *_):
+        self.label.text_size = (None, None)
+        self.label.texture_update()
+        self._sync_label_width()
+
     def _sync_label_width(self, *_):
         self.label.width = max(dp(18), self.label.texture_size[0] + dp(2))
+
+    def _sync_chip_width(self, *_):
+        self.width = self.minimum_width
 
 
 class IconCircleButton(ButtonBehavior, FloatLayout):
@@ -864,6 +876,7 @@ class IconCircleButton(ButtonBehavior, FloatLayout):
         button_size = kwargs.pop("size", (dp(38), dp(38)))
         super().__init__(size_hint=(None, None), size=button_size, **kwargs)
         self.icon_name = icon
+        self._spin_event = None
 
         with self.canvas.before:
             self._shadow_color = Color(0, 0, 0, 0.14)
@@ -872,9 +885,15 @@ class IconCircleButton(ButtonBehavior, FloatLayout):
             self._bg = Ellipse()
             self._border_color = Color(*COLORS["outline_soft"])
             self._border = Line(width=1.1)
+            self._push_matrix = PushMatrix()
+            self._rotation = Rotate(angle=0, origin=self.center)
 
         self.icon = MiniIcon(icon=icon, color=COLORS["text"])
         self.add_widget(self.icon)
+
+        with self.canvas.after:
+            self._pop_matrix = PopMatrix()
+
         self.bind(pos=self._sync_canvas, size=self._sync_canvas)
         self._sync_canvas()
 
@@ -884,6 +903,7 @@ class IconCircleButton(ButtonBehavior, FloatLayout):
         self._bg.pos = self.pos
         self._bg.size = self.size
         self._border.ellipse = (self.x, self.y, self.width, self.height)
+        self._rotation.origin = self.center
         self.icon.pos = (
             self.center_x - self.icon.width / 2,
             self.center_y - self.icon.height / 2,
@@ -894,8 +914,29 @@ class IconCircleButton(ButtonBehavior, FloatLayout):
         Animation(rgba=COLORS["surface_panel"], duration=0.08).start(self._bg_color)
 
     def on_release(self):
+        if self._spin_event is None:
+            Animation.cancel_all(self._bg_color)
+            Animation(rgba=COLORS["surface_card"], duration=0.12).start(self._bg_color)
+
+    def start_spinning(self):
+        Animation.cancel_all(self._rotation)
+        Animation.cancel_all(self._bg_color)
+        if self._spin_event is None:
+            self._spin_event = Clock.schedule_interval(self._advance_spin, 1 / 60)
+        Animation(rgba=COLORS["surface_panel"], duration=0.10).start(self._bg_color)
+
+    def stop_spinning(self):
+        if self._spin_event is not None:
+            self._spin_event.cancel()
+            self._spin_event = None
+        Animation.cancel_all(self._rotation)
+        settle_angle = 360 if (self._rotation.angle % 360) >= 180 else 0
+        Animation(angle=settle_angle, duration=0.14, t="out_quad").start(self._rotation)
         Animation.cancel_all(self._bg_color)
         Animation(rgba=COLORS["surface_card"], duration=0.12).start(self._bg_color)
+
+    def _advance_spin(self, dt):
+        self._rotation.angle = (self._rotation.angle - dt * 300) % 360
 
 
 def build_scrollable_content(padding=None, spacing=16):
