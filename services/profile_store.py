@@ -546,8 +546,23 @@ def list_friend_profiles(owner_email, db_path=None):
 
     with _connect(db_path) as connection:
         rows = connection.execute(
-            f"""
-            SELECT {PROFILE_COLUMNS}
+            """
+            SELECT
+                p.id AS id,
+                p.name AS name,
+                p.email AS email,
+                p.avatar_path AS avatar_path,
+                p.bio AS bio,
+                p.alias_coins AS alias_coins,
+                p.games_played AS games_played,
+                p.total_points AS total_points,
+                p.rooms_created AS rooms_created,
+                p.guessed_words AS guessed_words,
+                p.explained_words AS explained_words,
+                p.match_penalty_until AS match_penalty_until,
+                p.match_penalty_reason AS match_penalty_reason,
+                p.created_at AS created_at,
+                p.updated_at AS updated_at
             FROM friendships AS f
             JOIN profiles AS p ON p.email = f.friend_email
             WHERE f.owner_email = ?

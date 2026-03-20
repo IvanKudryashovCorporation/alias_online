@@ -3,11 +3,24 @@ from functools import partial
 from kivy.app import App
 from kivy.metrics import dp, sp
 from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.scrollview import ScrollView
 from kivy.uix.screenmanager import Screen
 from kivy.uix.widget import Widget
 
 from services import add_friend, list_friend_profiles, search_profiles
-from ui import AppButton, AppTextInput, BodyLabel, BrandTitle, CoinBadge, COLORS, PixelLabel, RoundedPanel, ScreenBackground, build_scrollable_content, register_game_font
+from ui import (
+    AppButton,
+    AppTextInput,
+    BodyLabel,
+    BrandTitle,
+    CoinBadge,
+    COLORS,
+    PixelLabel,
+    RoundedPanel,
+    ScreenBackground,
+    build_scrollable_content,
+    register_game_font,
+)
 
 
 class FriendsScreen(Screen):
@@ -26,45 +39,66 @@ class FriendsScreen(Screen):
 
         search_card = RoundedPanel(
             orientation="vertical",
-            padding=[dp(16), dp(16), dp(16), dp(16)],
-            spacing=dp(10),
+            padding=[dp(14), dp(12), dp(14), dp(12)],
+            spacing=dp(8),
             size_hint_y=None,
+            height=dp(152),
         )
-        search_card.bind(minimum_height=search_card.setter("height"))
-        search_card.add_widget(PixelLabel(text="Найти друга", font_size=sp(14), center=True))
-        search_card.add_widget(
-            BodyLabel(
-                center=True,
-                color=COLORS["text_muted"],
-                font_size=sp(12),
-                text="Ищи пользователей по их коду или никнейму.",
-            )
+        search_card.add_widget(PixelLabel(text="Найти друга", font_size=sp(13), center=True))
+
+        search_row = BoxLayout(orientation="horizontal", spacing=dp(10), size_hint_y=None, height=dp(46))
+        self.search_input = AppTextInput(hint_text="Код или никнейм", height=dp(44))
+        search_row.add_widget(self.search_input)
+        self.search_btn = AppButton(
+            text="Найти",
+            compact=True,
+            font_size=sp(14),
+            size_hint=(None, None),
+            size=(dp(114), dp(42)),
         )
-
-        self.search_input = AppTextInput(hint_text="Код или никнейм", height=dp(48))
-        search_card.add_widget(self.search_input)
-
-        self.search_btn = AppButton(text="Найти", compact=True, font_size=sp(16))
-        self.search_btn.height = dp(50)
         self.search_btn.bind(on_release=self.perform_search)
-        search_card.add_widget(self.search_btn)
+        search_row.add_widget(self.search_btn)
+        search_card.add_widget(search_row)
 
         self.search_status = BodyLabel(
             center=True,
             color=COLORS["text_muted"],
             font_size=sp(11),
+            auto_height=False,
+            size_hint_y=None,
+            height=dp(34),
             text="",
         )
         search_card.add_widget(self.search_status)
+        content.add_widget(search_card)
 
+        self.search_results_card_height = dp(230)
+        self.search_results_card = RoundedPanel(
+            orientation="vertical",
+            padding=[dp(14), dp(10), dp(14), dp(10)],
+            spacing=dp(8),
+            size_hint_y=None,
+            height=dp(0),
+            opacity=0,
+            disabled=True,
+        )
+        self.search_results_card.add_widget(PixelLabel(text="Результаты поиска", font_size=sp(13), center=True))
+        self.search_results_scroll = ScrollView(
+            do_scroll_x=False,
+            scroll_type=["bars", "content"],
+            bar_width=dp(4),
+            size_hint_y=None,
+            height=dp(170),
+        )
         self.search_results_box = BoxLayout(
             orientation="vertical",
             spacing=dp(10),
             size_hint_y=None,
         )
         self.search_results_box.bind(minimum_height=self.search_results_box.setter("height"))
-        search_card.add_widget(self.search_results_box)
-        content.add_widget(search_card)
+        self.search_results_scroll.add_widget(self.search_results_box)
+        self.search_results_card.add_widget(self.search_results_scroll)
+        content.add_widget(self.search_results_card)
 
         friends_card = RoundedPanel(
             orientation="vertical",
@@ -101,7 +135,13 @@ class FriendsScreen(Screen):
         self.coin_badge.refresh_from_session()
         self.search_input.text = ""
         self._clear_box(self.search_results_box)
+        self._set_search_results_visible(False)
         self._refresh_view()
+
+    def _set_search_results_visible(self, visible):
+        self.search_results_card.disabled = not visible
+        self.search_results_card.opacity = 1 if visible else 0
+        self.search_results_card.height = self.search_results_card_height if visible else dp(0)
 
     def perform_search(self, *_):
         profile = self._current_profile()
@@ -115,10 +155,12 @@ class FriendsScreen(Screen):
             self.search_status.color = COLORS["warning"]
             self.search_status.text = "Введи код друга или никнейм."
             self._clear_box(self.search_results_box)
+            self._set_search_results_visible(False)
             return
 
         matches = search_profiles(query, exclude_email=profile.email)
         self._clear_box(self.search_results_box)
+        self._set_search_results_visible(False)
 
         if not matches:
             self.search_status.color = COLORS["warning"]
@@ -127,6 +169,7 @@ class FriendsScreen(Screen):
 
         self.search_status.color = COLORS["success"]
         self.search_status.text = "Пользователи найдены. Можно добавить в друзья."
+        self._set_search_results_visible(True)
         for found_profile in matches:
             self.search_results_box.add_widget(
                 self._build_profile_card(
@@ -140,6 +183,7 @@ class FriendsScreen(Screen):
         profile = self._current_profile()
         self._clear_box(self.friends_box)
         self._clear_box(self.search_results_box)
+        self._set_search_results_visible(False)
 
         if profile is None:
             self.search_input.disabled = True

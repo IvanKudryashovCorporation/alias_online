@@ -188,6 +188,8 @@ class StartScreen(Screen):
         self.guest_access_popup = None
         self.support_popup = None
         self.room_access_popup = None
+        self.room_access_popup_message_label = None
+        self.room_access_popup_action_label = ""
         self._room_access_event = None
 
         root = ScreenBackground()
@@ -431,12 +433,40 @@ class StartScreen(Screen):
         locked = bool(room_access_state.get("active"))
         self._set_room_button_locked(self.create_room_btn, locked)
         self._set_room_button_locked(self.join_room_btn, locked)
+        self._update_room_access_popup_message(room_access_state)
+
+    def _update_room_access_popup_message(self, room_access_state=None):
+        if self.room_access_popup is None or self.room_access_popup_message_label is None:
+            return
+
+        app = App.get_running_app()
+        if room_access_state is None:
+            room_access_state = app.room_access_state() if app is not None and hasattr(app, "room_access_state") else {"active": False}
+
+        if not bool(room_access_state.get("active")):
+            self._dismiss_room_access_popup()
+            return
+
+        if app is not None and hasattr(app, "format_room_access_message"):
+            self.room_access_popup_message_label.text = app.format_room_access_message(
+                self.room_access_popup_action_label or "Доступ к комнатам"
+            )
+            return
+
+        remaining_seconds = max(0, int(room_access_state.get("remaining_seconds") or 0))
+        minutes, seconds = divmod(remaining_seconds, 60)
+        eta = f"{minutes:02d}:{seconds:02d}" if minutes > 0 else f"{seconds} сек"
+        self.room_access_popup_message_label.text = (
+            "Доступ к комнатам временно закрыт.\n"
+            f"Осталось подождать: {eta}."
+        )
 
     def _open_room_access_popup(self, action_label):
         self._dismiss_room_access_popup()
 
         app = App.get_running_app()
         message = app.format_room_access_message(action_label) if app is not None and hasattr(app, "format_room_access_message") else "Доступ к комнатам временно закрыт."
+        self.room_access_popup_action_label = action_label
 
         body = BoxLayout(
             orientation="vertical",
@@ -463,14 +493,15 @@ class StartScreen(Screen):
         )
         warning_card._border_color.rgba = COLORS["error"]
         warning_card._border_line.width = 1.6
+        self.room_access_popup_message_label = BodyLabel(
+            center=True,
+            color=COLORS["warning"],
+            font_size=sp(11.5),
+            text=message,
+            size_hint_y=None,
+        )
         warning_card.add_widget(
-            BodyLabel(
-                center=True,
-                color=COLORS["warning"],
-                font_size=sp(11.5),
-                text=message,
-                size_hint_y=None,
-            )
+            self.room_access_popup_message_label
         )
         panel.add_widget(warning_card)
 
@@ -489,13 +520,21 @@ class StartScreen(Screen):
             size_hint=(0.82, None),
             height=dp(320),
         )
-        self.room_access_popup.bind(on_dismiss=lambda *_: setattr(self, "room_access_popup", None))
+        self.room_access_popup.bind(on_dismiss=self._on_room_access_popup_dismiss)
         self.room_access_popup.open()
+        self._update_room_access_popup_message()
+
+    def _on_room_access_popup_dismiss(self, *_):
+        self.room_access_popup = None
+        self.room_access_popup_message_label = None
+        self.room_access_popup_action_label = ""
 
     def _dismiss_room_access_popup(self):
         if self.room_access_popup is not None:
             popup = self.room_access_popup
             self.room_access_popup = None
+            self.room_access_popup_message_label = None
+            self.room_access_popup_action_label = ""
             popup.dismiss()
 
     def _handle_create_room_press(self, *_):

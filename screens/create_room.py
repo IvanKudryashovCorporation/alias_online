@@ -130,6 +130,7 @@ class CreateRoomScreen(Screen):
         self.timer_choice_chips = []
         self._room_access_event = None
         self.room_access_popup = None
+        self.room_access_popup_message_label = None
 
         root = ScreenBackground()
         scroll, content = build_scrollable_content(padding=[dp(20), dp(22), dp(20), dp(24)], spacing=12)
@@ -397,6 +398,7 @@ class CreateRoomScreen(Screen):
         state = app.room_access_state() if app is not None and hasattr(app, "room_access_state") else {"active": False}
         locked = bool(state.get("active"))
         self._set_create_button_locked(locked)
+        self._update_room_access_popup_message(state)
         if locked:
             self.balance_note.color = COLORS["warning"]
             self.balance_note.text = self._room_access_message(state.get("remaining_seconds", 0))
@@ -406,6 +408,20 @@ class CreateRoomScreen(Screen):
                 self.balance_note.color = COLORS["accent"]
                 self.balance_note.text = f"Баланс: {profile.alias_coins} AC. Создание комнаты стоит {ROOM_CREATION_COST} AC."
                 self.coin_badge.set_value(profile.alias_coins)
+
+    def _update_room_access_popup_message(self, state=None):
+        if self.room_access_popup is None or self.room_access_popup_message_label is None:
+            return
+
+        app = App.get_running_app()
+        if state is None:
+            state = app.room_access_state() if app is not None and hasattr(app, "room_access_state") else {"active": False}
+
+        if not bool(state.get("active")):
+            self._dismiss_room_access_popup()
+            return
+
+        self.room_access_popup_message_label.text = self._room_access_message(state.get("remaining_seconds", 0))
 
     def _refresh_room_access_ui(self):
         app = App.get_running_app()
@@ -452,14 +468,15 @@ class CreateRoomScreen(Screen):
         )
         warning_card._border_color.rgba = COLORS["error"]
         warning_card._border_line.width = 1.6
+        self.room_access_popup_message_label = BodyLabel(
+            center=True,
+            color=COLORS["warning"],
+            font_size=sp(11.5),
+            text=self._room_access_message(0),
+            size_hint_y=None,
+        )
         warning_card.add_widget(
-            BodyLabel(
-                center=True,
-                color=COLORS["warning"],
-                font_size=sp(11.5),
-                text=self._room_access_message(0),
-                size_hint_y=None,
-            )
+            self.room_access_popup_message_label
         )
         panel.add_widget(warning_card)
 
@@ -478,13 +495,19 @@ class CreateRoomScreen(Screen):
             size_hint=(0.82, None),
             height=dp(320),
         )
-        self.room_access_popup.bind(on_dismiss=lambda *_: setattr(self, "room_access_popup", None))
+        self.room_access_popup.bind(on_dismiss=self._on_room_access_popup_dismiss)
         self.room_access_popup.open()
+        self._update_room_access_popup_message()
+
+    def _on_room_access_popup_dismiss(self, *_):
+        self.room_access_popup = None
+        self.room_access_popup_message_label = None
 
     def _dismiss_room_access_popup(self):
         if self.room_access_popup is not None:
             popup = self.room_access_popup
             self.room_access_popup = None
+            self.room_access_popup_message_label = None
             popup.dismiss()
 
     def _timer_to_seconds(self, timer_value):

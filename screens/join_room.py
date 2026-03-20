@@ -34,6 +34,7 @@ class JoinRoomScreen(Screen):
         self._room_access_locked = False
         self._room_access_event = None
         self.room_access_popup = None
+        self.room_access_popup_message_label = None
         self._refresh_in_progress = False
         self._refresh_token = 0
 
@@ -197,8 +198,23 @@ class JoinRoomScreen(Screen):
             self._room_access_locked = locked
             self.refresh_room_list()
         self._apply_room_access_ui()
+        self._update_room_access_popup_message(state)
         if locked:
             self._set_status(self._room_access_message(state.get("remaining_seconds", 0)), COLORS["warning"], "warning")
+
+    def _update_room_access_popup_message(self, state=None):
+        if self.room_access_popup is None or self.room_access_popup_message_label is None:
+            return
+
+        app = App.get_running_app()
+        if state is None:
+            state = app.room_access_state() if app is not None and hasattr(app, "room_access_state") else {"active": False}
+
+        if not bool(state.get("active")):
+            self._dismiss_room_access_popup()
+            return
+
+        self.room_access_popup_message_label.text = self._room_access_message(state.get("remaining_seconds", 0))
 
     def _set_join_button_locked(self, button, locked):
         if locked:
@@ -259,14 +275,15 @@ class JoinRoomScreen(Screen):
         )
         warning_card._border_color.rgba = COLORS["error"]
         warning_card._border_line.width = 1.6
+        self.room_access_popup_message_label = BodyLabel(
+            center=True,
+            color=COLORS["warning"],
+            font_size=sp(11.5),
+            text=self._room_access_message(0),
+            size_hint_y=None,
+        )
         warning_card.add_widget(
-            BodyLabel(
-                center=True,
-                color=COLORS["warning"],
-                font_size=sp(11.5),
-                text=self._room_access_message(0),
-                size_hint_y=None,
-            )
+            self.room_access_popup_message_label
         )
         panel.add_widget(warning_card)
 
@@ -285,13 +302,19 @@ class JoinRoomScreen(Screen):
             size_hint=(0.82, None),
             height=dp(320),
         )
-        self.room_access_popup.bind(on_dismiss=lambda *_: setattr(self, "room_access_popup", None))
+        self.room_access_popup.bind(on_dismiss=self._on_room_access_popup_dismiss)
         self.room_access_popup.open()
+        self._update_room_access_popup_message()
+
+    def _on_room_access_popup_dismiss(self, *_):
+        self.room_access_popup = None
+        self.room_access_popup_message_label = None
 
     def _dismiss_room_access_popup(self):
         if self.room_access_popup is not None:
             popup = self.room_access_popup
             self.room_access_popup = None
+            self.room_access_popup_message_label = None
             popup.dismiss()
 
     def _render_rooms(self):

@@ -877,6 +877,9 @@ class IconCircleButton(ButtonBehavior, FloatLayout):
         super().__init__(size_hint=(None, None), size=button_size, **kwargs)
         self.icon_name = icon
         self._spin_event = None
+        self._spin_speed = 420.0
+        self._spun_degrees = 0.0
+        self._stop_requested = False
 
         with self.canvas.before:
             self._shadow_color = Color(0, 0, 0, 0.14)
@@ -921,22 +924,47 @@ class IconCircleButton(ButtonBehavior, FloatLayout):
     def start_spinning(self):
         Animation.cancel_all(self._rotation)
         Animation.cancel_all(self._bg_color)
+        self._spun_degrees = 0.0
+        self._stop_requested = False
         if self._spin_event is None:
             self._spin_event = Clock.schedule_interval(self._advance_spin, 1 / 60)
         Animation(rgba=COLORS["surface_panel"], duration=0.10).start(self._bg_color)
 
     def stop_spinning(self):
+        if self._spin_event is None:
+            Animation.cancel_all(self._bg_color)
+            Animation(rgba=COLORS["surface_card"], duration=0.12).start(self._bg_color)
+            return
+
+        # Guarantee at least one full revolution per refresh click.
+        if self._spun_degrees < 360:
+            self._stop_requested = True
+            return
+
+        self._finalize_spin()
+
+    def _finalize_spin(self):
         if self._spin_event is not None:
             self._spin_event.cancel()
             self._spin_event = None
+        self._stop_requested = False
         Animation.cancel_all(self._rotation)
-        settle_angle = 360 if (self._rotation.angle % 360) >= 180 else 0
-        Animation(angle=settle_angle, duration=0.14, t="out_quad").start(self._rotation)
+        current_angle = self._rotation.angle % 360
+        remaining = 360 - current_angle
+        if remaining < 1.0:
+            remaining = 360.0
+        target_angle = self._rotation.angle + remaining
+        settle_duration = max(0.14, remaining / self._spin_speed)
+        Animation(angle=target_angle, duration=settle_duration, t="out_quad").start(self._rotation)
         Animation.cancel_all(self._bg_color)
         Animation(rgba=COLORS["surface_card"], duration=0.12).start(self._bg_color)
 
     def _advance_spin(self, dt):
-        self._rotation.angle = (self._rotation.angle - dt * 300) % 360
+        rotated = dt * self._spin_speed
+        self._rotation.angle = (self._rotation.angle - rotated) % 360
+        self._spun_degrees += rotated
+        if self._stop_requested and self._spun_degrees >= 360:
+            self._finalize_spin()
 
 
 def build_scrollable_content(padding=None, spacing=16):
