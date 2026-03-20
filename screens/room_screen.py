@@ -1,4 +1,5 @@
 import time
+from pathlib import Path
 
 from kivy.app import App
 from kivy.animation import Animation
@@ -10,6 +11,7 @@ from kivy.graphics import (
     Rectangle,
     RoundedRectangle,
 )
+from kivy.core.image import Image as CoreImage
 from kivy.metrics import dp, sp
 from kivy.uix.behaviors import ButtonBehavior
 from kivy.uix.boxlayout import BoxLayout
@@ -48,7 +50,26 @@ from ui import (
     register_game_font,
 )
 
+
+MIC_ICON_PATH = Path(__file__).resolve().parents[1] / "image" / "mic_white.png"
+
+
 class VoiceMicButton(ButtonBehavior, Widget):
+    _mic_texture_cache = None
+    _mic_texture_ready = False
+
+    @classmethod
+    def _mic_texture(cls):
+        if cls._mic_texture_ready:
+            return cls._mic_texture_cache
+
+        cls._mic_texture_ready = True
+        try:
+            cls._mic_texture_cache = CoreImage(str(MIC_ICON_PATH)).texture
+        except Exception:
+            cls._mic_texture_cache = None
+        return cls._mic_texture_cache
+
     def __init__(self, **kwargs):
         button_size = kwargs.pop("size", (dp(84), dp(84)))
         button_size_hint = kwargs.pop("size_hint", (None, None))
@@ -56,8 +77,9 @@ class VoiceMicButton(ButtonBehavior, Widget):
         self._muted = True
         self._enabled = True
         self._level = 0.0
-        self._hit_padding = dp(44)
+        self._hit_padding = dp(48)
         self._pressed_touch = None
+        self._texture = self._mic_texture()
 
         with self.canvas.before:
             self._shadow_color = Color(0, 0, 0, 0.22)
@@ -73,20 +95,9 @@ class VoiceMicButton(ButtonBehavior, Widget):
 
         with self.canvas:
             self._icon_color = Color(0.98, 0.99, 1.0, 1.0)
-            self._mic_capsule = RoundedRectangle()
-            self._yoke_left = RoundedRectangle()
-            self._yoke_right = RoundedRectangle()
-            self._yoke_arc = Line(width=dp(3.2), ellipse=(0, 0, 0, 0, 180, 360))
-            self._stem = RoundedRectangle()
-            self._base = RoundedRectangle()
-
-            self._fill_color = Color(0.22, 0.90, 0.42, 0.0)
-            self._fill_capsule = RoundedRectangle()
-            self._fill_yoke_left = RoundedRectangle()
-            self._fill_yoke_right = RoundedRectangle()
-            self._fill_yoke_arc = Line(width=dp(3.2), ellipse=(0, 0, 0, 0, 180, 360))
-            self._fill_stem = RoundedRectangle()
-            self._fill_base = RoundedRectangle()
+            self._icon_base = Rectangle(pos=self.pos, size=(0, 0), texture=self._texture)
+            self._fill_color = Color(0.22, 0.92, 0.40, 0.0)
+            self._icon_fill = Rectangle(pos=self.pos, size=(0, 0), texture=self._texture)
             self._mute_color = Color(0.96, 0.23, 0.23, 0.0)
             self._mute_line = Line(width=dp(3.2), points=[])
 
@@ -118,6 +129,8 @@ class VoiceMicButton(ButtonBehavior, Widget):
 
     def on_touch_down(self, touch):
         if getattr(touch, "is_mouse_scrolling", False):
+            return super().on_touch_down(touch)
+        if self.disabled:
             return super().on_touch_down(touch)
         if not self.collide_point(*touch.pos):
             return super().on_touch_down(touch)
@@ -166,7 +179,7 @@ class VoiceMicButton(ButtonBehavior, Widget):
                 glow_alpha = 0.16 + level * 0.34
                 self._bg_color.rgba = (0.08, 0.13, 0.21, 0.98)
                 self._icon_color.rgba = (0.98, 0.99, 1.0, 1.0)
-                self._fill_color.rgba = (0.22, 0.92, 0.40, 0.16 + level * 0.82)
+                self._fill_color.rgba = (0.22, 0.92, 0.40, 0.96)
                 self._outline_color.rgba = (0.44, 0.94, 0.58, glow_alpha)
                 self._ring_color.rgba = (0.64, 0.98, 0.74, 0.16 + level * 0.26)
                 self._halo_color.rgba = (0.22, 0.90, 0.42, 0.07 + level * 0.18)
@@ -185,58 +198,28 @@ class VoiceMicButton(ButtonBehavior, Widget):
         self._outline.ellipse = (self.x, self.y, self.width, self.height)
         self._ring.ellipse = (self.x + dp(1.4), self.y + dp(1.4), self.width - dp(2.8), self.height - dp(2.8))
 
-        icon_size = min(self.width, self.height) * 0.62
+        icon_size = min(self.width, self.height) * 0.60
         icon_x = self.center_x - icon_size / 2
-        icon_y = self.center_y - icon_size / 2 + dp(1)
-        center_x = self.center_x
+        icon_y = self.center_y - icon_size / 2 + dp(0.5)
+        self._icon_base.texture = self._texture
+        self._icon_base.pos = (icon_x, icon_y)
+        self._icon_base.size = (icon_size, icon_size)
+        self._icon_base.tex_coords = (0, 0, 1, 0, 1, 1, 0, 1)
 
-        capsule_w = icon_size * 0.34
-        capsule_h = icon_size * 0.48
-        capsule_x = center_x - capsule_w / 2
-        capsule_y = icon_y + icon_size * 0.40
-        capsule_r = capsule_w * 0.48
+        fill_level = 0.0
+        if self._enabled and not self._muted:
+            fill_level = max(0.0, min(1.0, self._level))
+            fill_level = fill_level ** 0.88
 
-        yoke_span = icon_size * 0.74
-        yoke_side_w = max(dp(2.6), icon_size * 0.06)
-        yoke_top = capsule_y + capsule_h * 0.20
-        yoke_bottom = icon_y + icon_size * 0.29
-        yoke_side_h = max(dp(2), yoke_top - yoke_bottom)
-        yoke_left_x = center_x - yoke_span / 2
-        yoke_right_x = center_x + yoke_span / 2 - yoke_side_w
-
-        arc_w = max(dp(10), yoke_span - yoke_side_w)
-        arc_h = icon_size * 0.58
-        arc_x = center_x - arc_w / 2
-        arc_y = yoke_bottom - arc_h / 2
-
-        stem_w = max(dp(2.4), icon_size * 0.07)
-        stem_h = icon_size * 0.17
-        stem_x = center_x - stem_w / 2
-        stem_y = icon_y + icon_size * 0.12
-
-        base_w = icon_size * 0.46
-        base_h = max(dp(2.8), icon_size * 0.07)
-        base_x = center_x - base_w / 2
-        base_y = stem_y - base_h * 0.88
-
-        for rect, x, y, w, h, r in (
-            (self._mic_capsule, capsule_x, capsule_y, capsule_w, capsule_h, capsule_r),
-            (self._fill_capsule, capsule_x, capsule_y, capsule_w, capsule_h, capsule_r),
-            (self._yoke_left, yoke_left_x, yoke_bottom, yoke_side_w, yoke_side_h, yoke_side_w * 0.45),
-            (self._fill_yoke_left, yoke_left_x, yoke_bottom, yoke_side_w, yoke_side_h, yoke_side_w * 0.45),
-            (self._yoke_right, yoke_right_x, yoke_bottom, yoke_side_w, yoke_side_h, yoke_side_w * 0.45),
-            (self._fill_yoke_right, yoke_right_x, yoke_bottom, yoke_side_w, yoke_side_h, yoke_side_w * 0.45),
-            (self._stem, stem_x, stem_y, stem_w, stem_h, stem_w * 0.45),
-            (self._fill_stem, stem_x, stem_y, stem_w, stem_h, stem_w * 0.45),
-            (self._base, base_x, base_y, base_w, base_h, base_h * 0.45),
-            (self._fill_base, base_x, base_y, base_w, base_h, base_h * 0.45),
-        ):
-            rect.pos = (x, y)
-            rect.size = (w, h)
-            rect.radius = [(r, r)] * 4
-
-        self._yoke_arc.ellipse = (arc_x, arc_y, arc_w, arc_h, 180, 360)
-        self._fill_yoke_arc.ellipse = (arc_x, arc_y, arc_w, arc_h, 180, 360)
+        if fill_level <= 0.001 or self._texture is None:
+            self._icon_fill.size = (0, 0)
+        else:
+            fill_h = max(dp(1), icon_size * fill_level)
+            fill_top_v = max(0.0, min(1.0, fill_level))
+            self._icon_fill.texture = self._texture
+            self._icon_fill.pos = (icon_x, icon_y)
+            self._icon_fill.size = (icon_size, fill_h)
+            self._icon_fill.tex_coords = (0, 0, 1, 0, 1, fill_top_v, 0, fill_top_v)
 
         self._mute_line.points = [
             self.x + self.width * 0.26,
@@ -1396,16 +1379,27 @@ class RoomScreen(Screen):
         if is_explainer:
             word_x, word_y = self._widget_screen_pos(self.word_stage)
             _score_panel_x, score_panel_y = self._widget_screen_pos(self.scores_wrap)
-            score_panel_bottom = score_panel_y
             word_top = word_y + self.word_stage.height
-            max_available = max(dp(84), score_panel_bottom - word_top - dp(12))
+            score_panel_bottom = score_panel_y - dp(8)
+
+            phase_limit = score_panel_bottom
+            if self.phase_wrap.opacity > 0 and self.phase_wrap.height > dp(0):
+                _phase_x, phase_y = self._widget_screen_pos(self.phase_wrap)
+                phase_limit = min(phase_limit, phase_y - dp(10))
+
+            base_bottom = word_top + dp(8)
+            max_available = phase_limit - base_bottom
+            max_available = max(dp(36), max_available)
             overlay_height = min(overlay_height, max_available)
-            overlay_height = max(dp(96), overlay_height)
+            overlay_height = max(dp(36), overlay_height)
             overlay_width = min(max(dp(300), self.word_stage.width - dp(18)), dp(430))
             left = word_x + max(0, (self.word_stage.width - overlay_width) / 2)
-            bottom = word_top + dp(6)
-            if bottom + overlay_height > score_panel_bottom - dp(8):
-                bottom = max(word_top + dp(4), score_panel_bottom - dp(8) - overlay_height)
+            bottom = base_bottom
+            if bottom + overlay_height > phase_limit:
+                bottom = phase_limit - overlay_height
+            bottom = max(word_top + dp(2), bottom)
+            if bottom + overlay_height > phase_limit:
+                overlay_height = max(dp(8), phase_limit - bottom)
             self.chat_card.size = (overlay_width, overlay_height)
             self.chat_card.pos = (left, bottom)
             return
