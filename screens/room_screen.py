@@ -1,10 +1,8 @@
 import time
-from pathlib import Path
 
 from kivy.app import App
 from kivy.animation import Animation
 from kivy.clock import Clock
-from kivy.core.image import Image as CoreImage
 from kivy.graphics import (
     Color,
     Ellipse,
@@ -50,25 +48,7 @@ from ui import (
     register_game_font,
 )
 
-
-MIC_ICON_PATH = Path(__file__).resolve().parents[1] / "image" / "mic_white.png"
-
-
 class VoiceMicButton(ButtonBehavior, Widget):
-    _cached_icon_texture = None
-
-    @classmethod
-    def _icon_texture(cls):
-        if cls._cached_icon_texture is None:
-            try:
-                if MIC_ICON_PATH.exists():
-                    cls._cached_icon_texture = CoreImage(str(MIC_ICON_PATH)).texture
-                else:
-                    cls._cached_icon_texture = False
-            except Exception:
-                cls._cached_icon_texture = False
-        return cls._cached_icon_texture if cls._cached_icon_texture is not False else None
-
     def __init__(self, **kwargs):
         button_size = kwargs.pop("size", (dp(84), dp(84)))
         button_size_hint = kwargs.pop("size_hint", (None, None))
@@ -78,7 +58,6 @@ class VoiceMicButton(ButtonBehavior, Widget):
         self._level = 0.0
         self._hit_padding = dp(44)
         self._pressed_touch = None
-        self._mic_texture = self._icon_texture()
 
         with self.canvas.before:
             self._shadow_color = Color(0, 0, 0, 0.22)
@@ -94,9 +73,20 @@ class VoiceMicButton(ButtonBehavior, Widget):
 
         with self.canvas:
             self._icon_color = Color(0.98, 0.99, 1.0, 1.0)
-            self._icon_rect = Rectangle()
+            self._mic_capsule = RoundedRectangle()
+            self._yoke_left = RoundedRectangle()
+            self._yoke_right = RoundedRectangle()
+            self._yoke_arc = Line(width=dp(3.2), ellipse=(0, 0, 0, 0, 180, 360))
+            self._stem = RoundedRectangle()
+            self._base = RoundedRectangle()
+
             self._fill_color = Color(0.22, 0.90, 0.42, 0.0)
-            self._fill_rect = Rectangle()
+            self._fill_capsule = RoundedRectangle()
+            self._fill_yoke_left = RoundedRectangle()
+            self._fill_yoke_right = RoundedRectangle()
+            self._fill_yoke_arc = Line(width=dp(3.2), ellipse=(0, 0, 0, 0, 180, 360))
+            self._fill_stem = RoundedRectangle()
+            self._fill_base = RoundedRectangle()
             self._mute_color = Color(0.96, 0.23, 0.23, 0.0)
             self._mute_line = Line(width=dp(3.2), points=[])
 
@@ -176,7 +166,7 @@ class VoiceMicButton(ButtonBehavior, Widget):
                 glow_alpha = 0.16 + level * 0.34
                 self._bg_color.rgba = (0.08, 0.13, 0.21, 0.98)
                 self._icon_color.rgba = (0.98, 0.99, 1.0, 1.0)
-                self._fill_color.rgba = (0.22, 0.90, 0.42, 0.28 + level * 0.64)
+                self._fill_color.rgba = (0.22, 0.92, 0.40, 0.16 + level * 0.82)
                 self._outline_color.rgba = (0.44, 0.94, 0.58, glow_alpha)
                 self._ring_color.rgba = (0.64, 0.98, 0.74, 0.16 + level * 0.26)
                 self._halo_color.rgba = (0.22, 0.90, 0.42, 0.07 + level * 0.18)
@@ -195,31 +185,58 @@ class VoiceMicButton(ButtonBehavior, Widget):
         self._outline.ellipse = (self.x, self.y, self.width, self.height)
         self._ring.ellipse = (self.x + dp(1.4), self.y + dp(1.4), self.width - dp(2.8), self.height - dp(2.8))
 
-        icon_size = min(self.width, self.height) * 0.58
+        icon_size = min(self.width, self.height) * 0.62
         icon_x = self.center_x - icon_size / 2
         icon_y = self.center_y - icon_size / 2 + dp(1)
-        if self._mic_texture is not None:
-            self._icon_rect.texture = self._mic_texture
-            self._icon_rect.pos = (icon_x, icon_y)
-            self._icon_rect.size = (icon_size, icon_size)
+        center_x = self.center_x
 
-            level_height_ratio = max(0.0, min(1.0, self._level))
-            if self._enabled and not self._muted and level_height_ratio > 0.0:
-                region_height = max(1, int(self._mic_texture.height * level_height_ratio))
-                level_texture = self._mic_texture.get_region(0, 0, self._mic_texture.width, region_height)
-                self._fill_rect.texture = level_texture
-                self._fill_rect.pos = (icon_x, icon_y)
-                self._fill_rect.size = (icon_size, icon_size * (region_height / max(1, self._mic_texture.height)))
-            else:
-                self._fill_rect.texture = None
-                self._fill_rect.pos = (icon_x, icon_y)
-                self._fill_rect.size = (0, 0)
-        else:
-            self._icon_rect.texture = None
-            self._icon_rect.pos = (icon_x, icon_y)
-            self._icon_rect.size = (0, 0)
-            self._fill_rect.texture = None
-            self._fill_rect.size = (0, 0)
+        capsule_w = icon_size * 0.34
+        capsule_h = icon_size * 0.48
+        capsule_x = center_x - capsule_w / 2
+        capsule_y = icon_y + icon_size * 0.40
+        capsule_r = capsule_w * 0.48
+
+        yoke_span = icon_size * 0.74
+        yoke_side_w = max(dp(2.6), icon_size * 0.06)
+        yoke_top = capsule_y + capsule_h * 0.20
+        yoke_bottom = icon_y + icon_size * 0.29
+        yoke_side_h = max(dp(2), yoke_top - yoke_bottom)
+        yoke_left_x = center_x - yoke_span / 2
+        yoke_right_x = center_x + yoke_span / 2 - yoke_side_w
+
+        arc_w = max(dp(10), yoke_span - yoke_side_w)
+        arc_h = icon_size * 0.58
+        arc_x = center_x - arc_w / 2
+        arc_y = yoke_bottom - arc_h / 2
+
+        stem_w = max(dp(2.4), icon_size * 0.07)
+        stem_h = icon_size * 0.17
+        stem_x = center_x - stem_w / 2
+        stem_y = icon_y + icon_size * 0.12
+
+        base_w = icon_size * 0.46
+        base_h = max(dp(2.8), icon_size * 0.07)
+        base_x = center_x - base_w / 2
+        base_y = stem_y - base_h * 0.88
+
+        for rect, x, y, w, h, r in (
+            (self._mic_capsule, capsule_x, capsule_y, capsule_w, capsule_h, capsule_r),
+            (self._fill_capsule, capsule_x, capsule_y, capsule_w, capsule_h, capsule_r),
+            (self._yoke_left, yoke_left_x, yoke_bottom, yoke_side_w, yoke_side_h, yoke_side_w * 0.45),
+            (self._fill_yoke_left, yoke_left_x, yoke_bottom, yoke_side_w, yoke_side_h, yoke_side_w * 0.45),
+            (self._yoke_right, yoke_right_x, yoke_bottom, yoke_side_w, yoke_side_h, yoke_side_w * 0.45),
+            (self._fill_yoke_right, yoke_right_x, yoke_bottom, yoke_side_w, yoke_side_h, yoke_side_w * 0.45),
+            (self._stem, stem_x, stem_y, stem_w, stem_h, stem_w * 0.45),
+            (self._fill_stem, stem_x, stem_y, stem_w, stem_h, stem_w * 0.45),
+            (self._base, base_x, base_y, base_w, base_h, base_h * 0.45),
+            (self._fill_base, base_x, base_y, base_w, base_h, base_h * 0.45),
+        ):
+            rect.pos = (x, y)
+            rect.size = (w, h)
+            rect.radius = [(r, r)] * 4
+
+        self._yoke_arc.ellipse = (arc_x, arc_y, arc_w, arc_h, 180, 360)
+        self._fill_yoke_arc.ellipse = (arc_x, arc_y, arc_w, arc_h, 180, 360)
 
         self._mute_line.points = [
             self.x + self.width * 0.26,
@@ -810,9 +827,18 @@ class RoomScreen(Screen):
         self.lobby_start_row.add_widget(Widget())
         content.add_widget(self.lobby_start_row)
 
-        self.phase_wrap_height = dp(24)
-        self.phase_wrap = BoxLayout(orientation="horizontal", size_hint_y=None, height=self.phase_wrap_height)
-        self.phase_label = BodyLabel(center=True, color=COLORS["warning"], font_size=sp(12), size_hint_y=None, text="")
+        self.phase_wrap_height = dp(54)
+        self.phase_wrap = RoundedPanel(
+            orientation="horizontal",
+            size_hint_y=None,
+            height=self.phase_wrap_height,
+            padding=[dp(12), dp(8), dp(12), dp(8)],
+            bg_color=(0.08, 0.13, 0.21, 0.94),
+            shadow_alpha=0.16,
+        )
+        self.phase_wrap._border_color.rgba = COLORS["accent"]
+        self.phase_wrap._border_line.width = 1.5
+        self.phase_label = PixelLabel(center=True, color=COLORS["warning"], font_size=sp(21), size_hint_y=None, text="")
         self.phase_wrap.add_widget(self.phase_label)
         content.add_widget(self.phase_wrap)
 
@@ -879,14 +905,14 @@ class RoomScreen(Screen):
         self.chat_card = RoundedPanel(
             orientation="vertical",
             size_hint_y=1,
-            spacing=dp(8),
-            padding=[dp(14), dp(12), dp(14), dp(12)],
+            spacing=dp(5),
+            padding=[dp(12), dp(8), dp(12), dp(8)],
         )
-        self.chat_title = PixelLabel(text="Текстовый чат", center=True, font_size=sp(13), size_hint_y=None)
+        self.chat_title = PixelLabel(text="Текстовый чат", center=True, font_size=sp(12), size_hint_y=None)
         self.chat_card.add_widget(self.chat_title)
 
         self.chat_scroll = ScrollView(do_scroll_x=False, bar_width=dp(4), scroll_type=["bars", "content"])
-        self.chat_box = BoxLayout(orientation="vertical", spacing=dp(6), size_hint_y=None)
+        self.chat_box = BoxLayout(orientation="vertical", spacing=dp(3), size_hint_y=None)
         self.chat_box.bind(minimum_height=self.chat_box.setter("height"))
         self.chat_scroll.add_widget(self.chat_box)
         self.chat_card.add_widget(self.chat_scroll)
@@ -904,8 +930,12 @@ class RoomScreen(Screen):
             color=COLORS["text_muted"],
             font_size=sp(11),
             size_hint_y=None,
+            auto_height=False,
             text="Объясняющий запускает игру, затем объясняет слова голосом.",
         )
+        self.status_label.height = dp(0)
+        self.status_label.opacity = 0
+        self.status_label.disabled = True
         self.chat_card.add_widget(self.status_label)
         self.chat_host.add_widget(self.chat_card)
         content.add_widget(self.chat_host)
@@ -1593,36 +1623,17 @@ class RoomScreen(Screen):
         if phase == "lobby":
             self.phase_label.text = ""
             self.countdown_overlay.hide()
-            self.status_label.color = COLORS["text_muted"]
-            if self._is_explainer():
-                if self._is_host():
-                    self.status_label.text = "Ты хост комнаты. Нажми \"Начать игру\", когда все готовы."
-                else:
-                    self.status_label.text = "Нажми \"Начать игру\", когда все готовы."
-            else:
-                if self._is_host():
-                    self.status_label.text = "Ты хост комнаты. Ждите объясняющего: он запустит игру, когда будет готов."
-                else:
-                    self.status_label.text = "Ждите объясняющего. Он запустит игру, когда будет готов."
         elif phase == "countdown":
             self.phase_label.color = COLORS["accent"]
-            self.phase_label.text = f"Игра начнется через {countdown_left} сек"
+            self.phase_label.text = f"СТАРТ ЧЕРЕЗ {countdown_left} СЕК"
             if countdown_left > 0:
                 self.countdown_overlay.show(countdown_left)
             else:
                 self.countdown_overlay.show(1)
-            self.status_label.color = COLORS["accent"]
-            self.status_label.text = "Подготовьтесь, раунд сейчас начнется."
         else:
             self.phase_label.color = COLORS["success"]
-            self.phase_label.text = f"Раунд: осталось {round_left} сек"
+            self.phase_label.text = f"ОСТАЛОСЬ {round_left} СЕК"
             self.countdown_overlay.hide()
-            if is_explainer:
-                self.status_label.color = COLORS["text_muted"]
-                self.status_label.text = "Свайпни карточку в любую сторону, чтобы скипнуть слово."
-            else:
-                self.status_label.color = COLORS["text_muted"]
-                self.status_label.text = "Пиши догадки в чат. За верное слово ты тоже получаешь +1."
 
         self._render_player_cards(players, explainer_name, profile_map, score_map, phase)
         if phase == "round" and is_explainer:
@@ -1710,7 +1721,7 @@ class RoomScreen(Screen):
                 BodyLabel(
                     text=line,
                     color=color,
-                    font_size=sp(11.5 if phase == "round" and is_explainer else 12),
+                    font_size=sp(10.8 if phase == "round" and is_explainer else 12),
                     size_hint_y=None,
                 )
             )
@@ -1949,12 +1960,13 @@ class RoomScreen(Screen):
             return
 
         raw_level = self.voice_engine.level() if self.voice_engine.active() else 0.0
+        raw_level = max(0.0, min(1.0, raw_level * 2.9))
         if self._mic_is_muted():
             raw_level = 0.0
 
-        smoothing = 0.38 if raw_level >= self._smoothed_voice_level else 0.20
+        smoothing = 0.52 if raw_level >= self._smoothed_voice_level else 0.30
         self._smoothed_voice_level += (raw_level - self._smoothed_voice_level) * smoothing
-        if self._smoothed_voice_level < 0.015:
+        if self._smoothed_voice_level < 0.01:
             self._smoothed_voice_level = 0.0
 
         self._set_mic_level(self._smoothed_voice_level)
@@ -1962,7 +1974,7 @@ class RoomScreen(Screen):
         if not self._can_use_voice() or self._mic_is_muted():
             return
 
-        if raw_level < 0.06:
+        if raw_level < 0.04:
             return
 
         now_ts = time.time()
