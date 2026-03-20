@@ -58,7 +58,6 @@ def create_online_room(
     visibility,
     visibility_scope,
     round_timer_sec,
-    rounds,
     requested_code=None,
     base_url=None,
 ):
@@ -70,7 +69,6 @@ def create_online_room(
         "visibility": visibility,
         "visibility_scope": visibility_scope,
         "round_timer_sec": int(round_timer_sec),
-        "rounds": int(rounds),
     }
     if requested_code:
         payload["requested_code"] = str(requested_code).strip().upper()

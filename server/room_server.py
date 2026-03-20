@@ -134,7 +134,6 @@ def _init_db():
                 visibility TEXT NOT NULL,
                 visibility_scope TEXT NOT NULL DEFAULT 'private',
                 round_timer_sec INTEGER NOT NULL,
-                rounds INTEGER NOT NULL,
                 current_explainer TEXT NOT NULL DEFAULT '',
                 current_word TEXT NOT NULL DEFAULT '',
                 game_phase TEXT NOT NULL DEFAULT 'lobby',
@@ -298,7 +297,6 @@ def _normalize_room(row, players_count):
         "visibility": row["visibility"],
         "visibility_scope": row["visibility_scope"],
         "round_timer_sec": row["round_timer_sec"],
-        "rounds": row["rounds"],
         "current_explainer": row["current_explainer"],
         "current_word": row["current_word"],
         "game_phase": row["game_phase"],
@@ -311,6 +309,11 @@ def _normalize_room(row, players_count):
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
     }
+
+
+def _rooms_has_legacy_rounds_column(connection):
+    columns = connection.execute("PRAGMA table_info(rooms)").fetchall()
+    return any((column["name"] or "").strip().lower() == "rounds" for column in columns)
 
 
 def _normalize_message(row):
@@ -1055,7 +1058,6 @@ class RoomHandler(BaseHTTPRequestHandler):
         try:
             max_players = int(payload.get("max_players"))
             round_timer_sec = int(payload.get("round_timer_sec"))
-            rounds = int(payload.get("rounds"))
         except (TypeError, ValueError):
             self._json_response(400, {"error": "Invalid room parameters."})
             return
@@ -1075,50 +1077,83 @@ class RoomHandler(BaseHTTPRequestHandler):
         if round_timer_sec < 20 or round_timer_sec > 300:
             self._json_response(400, {"error": "Round timer must be between 20 and 300 seconds."})
             return
-        if rounds < 1 or rounds > 20:
-            self._json_response(400, {"error": "Rounds count must be between 1 and 20."})
-            return
 
         with _connect() as connection:
             room_code = _resolve_room_code(connection, requested_code if visibility_scope == "private" else None)
             timestamp = _now()
             current_word = _pick_word(difficulty)
-            connection.execute(
-                """
-                INSERT INTO rooms (
-                    code,
-                    room_name,
-                    host_name,
-                    max_players,
-                    difficulty,
-                    visibility,
-                    visibility_scope,
-                    round_timer_sec,
-                    rounds,
-                    current_explainer,
-                    current_word,
-                    voice_speaker,
-                    voice_until,
-                    created_at,
-                    updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)
-                """,
-                (
-                    room_code,
-                    room_name,
-                    host_name,
-                    max_players,
-                    difficulty,
-                    visibility,
-                    visibility_scope,
-                    round_timer_sec,
-                    rounds,
-                    host_name,
-                    current_word,
-                    timestamp,
-                    timestamp,
-                ),
-            )
+            if _rooms_has_legacy_rounds_column(connection):
+                connection.execute(
+                    """
+                    INSERT INTO rooms (
+                        code,
+                        room_name,
+                        host_name,
+                        max_players,
+                        difficulty,
+                        visibility,
+                        visibility_scope,
+                        round_timer_sec,
+                        rounds,
+                        current_explainer,
+                        current_word,
+                        voice_speaker,
+                        voice_until,
+                        created_at,
+                        updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)
+                    """,
+                    (
+                        room_code,
+                        room_name,
+                        host_name,
+                        max_players,
+                        difficulty,
+                        visibility,
+                        visibility_scope,
+                        round_timer_sec,
+                        1,
+                        host_name,
+                        current_word,
+                        timestamp,
+                        timestamp,
+                    ),
+                )
+            else:
+                connection.execute(
+                    """
+                    INSERT INTO rooms (
+                        code,
+                        room_name,
+                        host_name,
+                        max_players,
+                        difficulty,
+                        visibility,
+                        visibility_scope,
+                        round_timer_sec,
+                        current_explainer,
+                        current_word,
+                        voice_speaker,
+                        voice_until,
+                        created_at,
+                        updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)
+                    """,
+                    (
+                        room_code,
+                        room_name,
+                        host_name,
+                        max_players,
+                        difficulty,
+                        visibility,
+                        visibility_scope,
+                        round_timer_sec,
+                        host_name,
+                        current_word,
+                        timestamp,
+                        timestamp,
+                    ),
+                )
             connection.execute(
                 """
                 INSERT INTO room_players (room_code, player_name, joined_at)
