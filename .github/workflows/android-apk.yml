@@ -86,9 +86,12 @@ jobs:
           echo "==== Last 120 lines of buildozer.log ===="
           tail -n 120 buildozer.log || true
           echo "========================================="
-          LAST_LINE="$(grep -E \"ERROR|Exception|Traceback|failed\" buildozer.log | tail -n 1 || true)"
-          if [ -n "$LAST_LINE" ]; then
-            echo "::error::$LAST_LINE"
+          SUMMARY="$(tail -n 35 buildozer.log || true)"
+          SUMMARY="${SUMMARY//'%'/'%25'}"
+          SUMMARY="${SUMMARY//$'\n'/'%0A'}"
+          SUMMARY="${SUMMARY//$'\r'/'%0D'}"
+          if [ -n "$SUMMARY" ]; then
+            echo "::error::$SUMMARY"
           else
             echo "::error::Buildozer failed. See buildozer.log artifact."
           fi
