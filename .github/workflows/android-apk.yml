@@ -85,13 +85,21 @@ jobs:
           echo "==== Last 120 lines of buildozer.log ===="
           tail -n 120 buildozer.log || true
           echo "========================================="
-          echo "==== Filtered context near failure (env lines removed) ===="
-          FILTERED="$(tail -n 900 buildozer.log | sed -E 's/\\x1B\\[[0-9;]*[A-Za-z]//g' | sed -E '/^# +[A-Z0-9_]+ = /d' | sed '/^[[:space:]]*$/d')"
-          printf '%s\n' "$FILTERED" | tail -n 220 || true
-          echo "==========================================================="
-          SUMMARY="$(printf '%s\n' "$FILTERED" | tail -n 60 || true)"
+          MARK_LINE="$(grep -n "Buildozer failed to execute the last command" buildozer.log | tail -n 1 | cut -d: -f1 || true)"
+          if [ -n "$MARK_LINE" ]; then
+            START_LINE=$((MARK_LINE > 2200 ? MARK_LINE - 2200 : 1))
+            CONTEXT="$(sed -n "${START_LINE},$((MARK_LINE-1))p" buildozer.log)"
+          else
+            CONTEXT="$(tail -n 2200 buildozer.log)"
+          fi
+          FILTERED="$(printf '%s\n' "$CONTEXT" | sed -E 's/\x1B\[[0-9;]*[A-Za-z]//g' | sed -E '/^# +[A-Za-z_][A-Za-z0-9_]* = /d' | sed '/^[[:space:]]*$/d')"
+          printf '%s\n' "$FILTERED" > buildozer-error-context.log
+          echo "==== Filtered context before Buildozer failure ===="
+          tail -n 240 buildozer-error-context.log || true
+          echo "==================================================="
+          SUMMARY="$(grep -inE "error|failed|exception|traceback|license|sdkmanager|build-tools|not found|no module named|command failed|aapt|aidl|gradle" buildozer-error-context.log | tail -n 60 || true)"
           if [ -z "$SUMMARY" ]; then
-            SUMMARY="$(tail -n 60 buildozer.log || true)"
+            SUMMARY="$(tail -n 60 buildozer-error-context.log || true)"
           fi
           SUMMARY="${SUMMARY//'%'/'%25'}"
           SUMMARY="${SUMMARY//$'\n'/'%0A'}"
@@ -101,4 +109,11 @@ jobs:
           else
             echo "::error::Buildozer failed. See buildozer.log artifact."
           fi
-          exit 1
+
+      - name: Upload error context
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: buildozer-error-context
+          path: buildozer-error-context.log
+          if-no-files-found: warn
