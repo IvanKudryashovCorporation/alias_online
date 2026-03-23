@@ -22,24 +22,29 @@ from ui import AppButton, AppTextInput, BodyLabel, BrandTitle, CoinBadge, COLORS
 class SubtleActionButton(ButtonBehavior, Label):
     def __init__(self, text="", **kwargs):
         register_game_font()
+        text_color = kwargs.pop("text_color", COLORS["text_muted"])
+        idle_opacity = kwargs.pop("idle_opacity", 0.85)
+        pressed_opacity = kwargs.pop("pressed_opacity", 0.55)
         super().__init__(size_hint_y=None, height=dp(22), **kwargs)
         self.text = text
         self.font_name = "GameFont"
         self.font_size = sp(12)
-        self.color = COLORS["text_muted"]
+        self.color = text_color
         self.halign = "center"
         self.valign = "middle"
-        self.opacity = 0.85
+        self.idle_opacity = idle_opacity
+        self.pressed_opacity = pressed_opacity
+        self.opacity = self.idle_opacity
         self.bind(size=self._sync_text)
 
     def _sync_text(self, *_):
         self.text_size = self.size
 
     def on_press(self):
-        self.opacity = 0.55
+        self.opacity = self.pressed_opacity
 
     def on_release(self):
-        self.opacity = 0.85
+        self.opacity = self.idle_opacity
 
 
 class AvatarPreview(FloatLayout):
@@ -274,8 +279,8 @@ class RegistrationScreen(Screen):
         )
         stats_row_one = BoxLayout(orientation="horizontal", spacing=dp(8), size_hint_y=None, height=dp(52))
         stats_row_one.add_widget(Widget())
-        self.coins_stat = ProfileStatCard(title="Коины")
-        self.games_stat = ProfileStatCard(title="Игр")
+        self.coins_stat = ProfileStatCard(title="Игр")
+        self.games_stat = ProfileStatCard(title="Заработано")
         stats_row_one.add_widget(self.coins_stat)
         stats_row_one.add_widget(self.games_stat)
         stats_row_one.add_widget(Widget())
@@ -283,8 +288,8 @@ class RegistrationScreen(Screen):
 
         stats_row_two = BoxLayout(orientation="horizontal", spacing=dp(8), size_hint_y=None, height=dp(52))
         stats_row_two.add_widget(Widget())
-        self.points_stat = ProfileStatCard(title="Очки")
-        self.rooms_stat = ProfileStatCard(title="Комнат")
+        self.points_stat = ProfileStatCard(title="Угадано")
+        self.rooms_stat = ProfileStatCard(title="Объяснено")
         stats_row_two.add_widget(self.points_stat)
         stats_row_two.add_widget(self.rooms_stat)
         stats_row_two.add_widget(Widget())
@@ -413,9 +418,15 @@ class RegistrationScreen(Screen):
         self.change_password_btn_row.add_widget(Widget())
         self.password_panel.add_widget(self.change_password_btn_row)
 
-        self.profile_forgot_btn_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(20))
+        self.profile_forgot_btn_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(24))
         self.profile_forgot_btn_row.add_widget(Widget())
         self.profile_forgot_btn = SubtleActionButton(text="Забыл пароль?")
+        self.profile_forgot_btn.size_hint = (None, None)
+        self.profile_forgot_btn.size = (dp(176), dp(22))
+        self.profile_forgot_btn.color = COLORS["text_soft"]
+        self.profile_forgot_btn.idle_opacity = 1
+        self.profile_forgot_btn.pressed_opacity = 0.75
+        self.profile_forgot_btn.opacity = 1
         self.profile_forgot_btn.bind(on_release=self.open_password_recovery)
         self.profile_forgot_btn_row.add_widget(self.profile_forgot_btn)
         self.profile_forgot_btn_row.add_widget(Widget())
@@ -456,6 +467,12 @@ class RegistrationScreen(Screen):
         self.forgot_password_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(22))
         self.forgot_password_row.add_widget(Widget())
         self.forgot_password_btn = SubtleActionButton(text="Забыл пароль?")
+        self.forgot_password_btn.size_hint = (None, None)
+        self.forgot_password_btn.size = (dp(176), dp(22))
+        self.forgot_password_btn.color = COLORS["text_soft"]
+        self.forgot_password_btn.idle_opacity = 1
+        self.forgot_password_btn.pressed_opacity = 0.75
+        self.forgot_password_btn.opacity = 1
         self.forgot_password_btn.bind(on_release=self.open_password_recovery)
         self.forgot_password_row.add_widget(self.forgot_password_btn)
         self.forgot_password_row.add_widget(Widget())
@@ -732,11 +749,11 @@ class RegistrationScreen(Screen):
             self.password_panel_title.opacity = 0
             self.change_password_btn_row.height = dp(34)
             self.change_password_btn.size = (dp(170), dp(32))
-            self.profile_forgot_btn_row.height = dp(18)
+            self.profile_forgot_btn_row.height = dp(24)
             self.password_panel_status.height = 0
             self.password_panel_status.opacity = 0
-            self.password_panel_row.height = dp(84)
-            self.password_panel.height = dp(84)
+            self.password_panel_row.height = dp(92)
+            self.password_panel.height = dp(92)
             self.password_panel.opacity = 1
             self.current_password_input.height = 0
             self.new_password_input.height = 0
@@ -831,7 +848,7 @@ class RegistrationScreen(Screen):
         self.password_panel_title.opacity = 1
         self.change_password_btn_row.height = dp(36)
         self.change_password_btn.size = (dp(186), dp(34))
-        self.profile_forgot_btn_row.height = dp(20)
+        self.profile_forgot_btn_row.height = dp(24)
         self.password_panel_status.height = dp(18)
         self.password_panel_status.opacity = 1
         self.current_password_input.text = ""
@@ -894,10 +911,10 @@ class RegistrationScreen(Screen):
         summary = f"\u041a\u043e\u0434 \u0438\u0433\u0440\u043e\u043a\u0430 #{profile.id} | \u0432 \u0438\u0433\u0440\u0435 \u0441 {joined_label}"
         self.profile_summary.text = summary
         self.subtitle_label.text = summary
-        self.coins_stat.set_value(profile.alias_coins)
-        self.games_stat.set_value(profile.games_played)
-        self.points_stat.set_value(profile.total_points)
-        self.rooms_stat.set_value(profile.rooms_created)
+        self.coins_stat.set_value(profile.games_played)
+        self.games_stat.set_value(profile.total_points)
+        self.points_stat.set_value(profile.guessed_words)
+        self.rooms_stat.set_value(profile.explained_words)
 
     def _format_profile_date(self, created_at):
         raw_value = (created_at or "").strip()

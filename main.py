@@ -18,6 +18,7 @@ from screens.friends import FriendsScreen
 from screens.join_room import JoinRoomScreen
 from screens.login_screen import LoginScreen
 from screens.password_recovery_screen import PasswordRecoveryScreen
+from screens.player_profile_screen import PlayerProfileScreen
 from screens.registration_screen import RegistrationScreen
 from screens.room_screen import RoomScreen
 from screens.rules import RulesScreen
@@ -99,6 +100,7 @@ class AliasApp(App):
         screen_manager.add_widget(RegistrationScreen(name="registration"))
         screen_manager.add_widget(PasswordRecoveryScreen(name="password_recovery"))
         screen_manager.add_widget(EmailVerificationScreen(name="email_verification"))
+        screen_manager.add_widget(PlayerProfileScreen(name="player_profile"))
         screen_manager.add_widget(StartScreen(name="start"))
         screen_manager.add_widget(CreateRoomScreen(name="create_room"))
         screen_manager.add_widget(JoinRoomScreen(name="join_room"))

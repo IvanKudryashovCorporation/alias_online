@@ -248,23 +248,54 @@ class FriendsScreen(Screen):
         )
         panel.add_widget(info)
 
+        actions = BoxLayout(
+            orientation="vertical",
+            spacing=dp(6),
+            size_hint=(None, None),
+            size=(dp(132), dp(72)),
+        )
         if button_text and button_handler is not None:
             action_btn = AppButton(
                 text=button_text,
                 compact=True,
-                font_size=sp(14),
+                font_size=sp(12.5),
                 size_hint=(None, None),
-                size=(dp(132), dp(46)),
+                size=(dp(132), dp(34)),
             )
             action_btn.bind(on_release=button_handler)
-            panel.add_widget(action_btn)
-        else:
-            panel.add_widget(Widget(size_hint_x=None, width=dp(8)))
+            actions.add_widget(action_btn)
+
+        open_btn = AppButton(
+            text="Профиль",
+            compact=True,
+            font_size=sp(12.5),
+            size_hint=(None, None),
+            size=(dp(132), dp(34)),
+        )
+        open_btn.bind(on_release=lambda *_: self._open_player_profile(profile))
+        actions.add_widget(open_btn)
+        panel.add_widget(actions)
 
         return panel
 
     def _clear_box(self, box):
         box.clear_widgets()
+
+    def _open_player_profile(self, profile):
+        if profile is None:
+            return
+        try:
+            profile_screen = self.manager.get_screen("player_profile")
+        except Exception:
+            self.search_status.color = COLORS["error"]
+            self.search_status.text = "Экран профиля недоступен."
+            return
+        profile_screen.open_for_player(
+            player_name=profile.name,
+            player_email=profile.email,
+            return_screen="friends",
+        )
+        self.manager.current = "player_profile"
 
     def _current_profile(self):
         app = App.get_running_app()

@@ -278,6 +278,69 @@ def initialize_database(db_path=None):
             )
             """
         )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS blocked_profiles (
+                owner_email TEXT NOT NULL,
+                blocked_email TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (owner_email, blocked_email),
+                FOREIGN KEY(owner_email) REFERENCES profiles(email) ON DELETE CASCADE,
+                FOREIGN KEY(blocked_email) REFERENCES profiles(email) ON DELETE CASCADE
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS profile_reports (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                reporter_email TEXT NOT NULL,
+                reported_email TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                details TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(reporter_email) REFERENCES profiles(email) ON DELETE CASCADE,
+                FOREIGN KEY(reported_email) REFERENCES profiles(email) ON DELETE CASCADE
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS friend_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sender_email TEXT NOT NULL,
+                recipient_email TEXT NOT NULL,
+                message TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(sender_email) REFERENCES profiles(email) ON DELETE CASCADE,
+                FOREIGN KEY(recipient_email) REFERENCES profiles(email) ON DELETE CASCADE
+            )
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_friendships_owner
+            ON friendships(owner_email, friend_email)
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_blocked_profiles_owner
+            ON blocked_profiles(owner_email, blocked_email)
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_profile_reports_target
+            ON profile_reports(reported_email, created_at DESC)
+            """
+        )
+        connection.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_friend_messages_pair
+            ON friend_messages(sender_email, recipient_email, created_at DESC)
+            """
+        )
         try:
             connection.execute(
                 """
@@ -304,6 +367,129 @@ def get_profile_by_email(email, db_path=None):
         row = _fetch_profile_row(connection, "email = ?", (clean_email,))
 
     return _row_to_profile(row)
+
+
+def get_profile_by_name(name, db_path=None):
+    initialize_database(db_path)
+
+    clean_name = (name or "").strip()
+    if not clean_name:
+        return None
+
+    with _connect(db_path) as connection:
+        row = _fetch_profile_row(connection, "name = ? COLLATE NOCASE", (clean_name,))
+
+    return _row_to_profile(row)
+
+
+def are_friends(owner_email, friend_email, db_path=None):
+    initialize_database(db_path)
+
+    clean_owner = (owner_email or "").strip().lower()
+    clean_friend = (friend_email or "").strip().lower()
+    if not clean_owner or not clean_friend or clean_owner == clean_friend:
+        return False
+
+    with _connect(db_path) as connection:
+        row = connection.execute(
+            """
+            SELECT 1
+            FROM friendships
+            WHERE owner_email = ? AND friend_email = ?
+            """,
+            (clean_owner, clean_friend),
+        ).fetchone()
+    return row is not None
+
+
+def is_blocked(owner_email, blocked_email, db_path=None):
+    initialize_database(db_path)
+
+    clean_owner = (owner_email or "").strip().lower()
+    clean_blocked = (blocked_email or "").strip().lower()
+    if not clean_owner or not clean_blocked or clean_owner == clean_blocked:
+        return False
+
+    with _connect(db_path) as connection:
+        row = connection.execute(
+            """
+            SELECT 1
+            FROM blocked_profiles
+            WHERE owner_email = ? AND blocked_email = ?
+            """,
+            (clean_owner, clean_blocked),
+        ).fetchone()
+    return row is not None
+
+
+def get_relationship_state(viewer_email, target_email, db_path=None):
+    initialize_database(db_path)
+
+    viewer = (viewer_email or "").strip().lower()
+    target = (target_email or "").strip().lower()
+    if not viewer or not target:
+        return {
+            "viewer_email": viewer or None,
+            "target_email": target or None,
+            "is_self": False,
+            "is_friend": False,
+            "blocked_by_viewer": False,
+            "blocked_viewer": False,
+            "can_message": False,
+            "can_add_friend": False,
+        }
+
+    is_self = viewer == target
+    if is_self:
+        return {
+            "viewer_email": viewer,
+            "target_email": target,
+            "is_self": True,
+            "is_friend": False,
+            "blocked_by_viewer": False,
+            "blocked_viewer": False,
+            "can_message": False,
+            "can_add_friend": False,
+        }
+
+    with _connect(db_path) as connection:
+        friendship = connection.execute(
+            """
+            SELECT 1
+            FROM friendships
+            WHERE owner_email = ? AND friend_email = ?
+            """,
+            (viewer, target),
+        ).fetchone()
+        blocked_by_viewer = connection.execute(
+            """
+            SELECT 1
+            FROM blocked_profiles
+            WHERE owner_email = ? AND blocked_email = ?
+            """,
+            (viewer, target),
+        ).fetchone()
+        blocked_viewer = connection.execute(
+            """
+            SELECT 1
+            FROM blocked_profiles
+            WHERE owner_email = ? AND blocked_email = ?
+            """,
+            (target, viewer),
+        ).fetchone()
+
+    is_friend = friendship is not None
+    blocked_from_any_side = blocked_by_viewer is not None or blocked_viewer is not None
+    return {
+        "viewer_email": viewer,
+        "target_email": target,
+        "is_self": False,
+        "is_friend": is_friend,
+        "blocked_by_viewer": blocked_by_viewer is not None,
+        "blocked_viewer": blocked_viewer is not None,
+        "can_message": bool(is_friend and not blocked_from_any_side),
+        "can_add_friend": bool(not is_friend and not blocked_from_any_side),
+    }
 
 
 def get_active_profile(db_path=None):
@@ -464,6 +650,28 @@ def update_profile(email, name=None, avatar_path=None, bio=None, db_path=None):
         raise ValueError("Укажи корректный e-mail.")
 
     with _connect(db_path) as connection:
+        blocked_by_owner = connection.execute(
+            """
+            SELECT 1
+            FROM blocked_profiles
+            WHERE owner_email = ? AND blocked_email = ?
+            """,
+            (clean_owner, clean_friend),
+        ).fetchone()
+        if blocked_by_owner is not None:
+            raise ValueError("Сначала сними блокировку этого игрока.")
+
+        blocked_owner = connection.execute(
+            """
+            SELECT 1
+            FROM blocked_profiles
+            WHERE owner_email = ? AND blocked_email = ?
+            """,
+            (clean_friend, clean_owner),
+        ).fetchone()
+        if blocked_owner is not None:
+            raise ValueError("Этот игрок ограничил взаимодействие.")
+
         existing = connection.execute(
             """
             SELECT id
@@ -678,6 +886,220 @@ def add_friend(owner_email, friend_email, db_path=None):
         )
 
     return get_profile_by_email(clean_friend, db_path=db_path)
+
+
+def remove_friend(owner_email, friend_email, db_path=None):
+    initialize_database(db_path)
+
+    clean_owner = (owner_email or "").strip().lower()
+    clean_friend = (friend_email or "").strip().lower()
+    if not clean_owner or not clean_friend or clean_owner == clean_friend:
+        return False
+
+    with _connect(db_path) as connection:
+        deleted = connection.execute(
+            """
+            DELETE FROM friendships
+            WHERE (owner_email = ? AND friend_email = ?)
+               OR (owner_email = ? AND friend_email = ?)
+            """,
+            (clean_owner, clean_friend, clean_friend, clean_owner),
+        ).rowcount
+    return bool(deleted)
+
+
+def block_profile(owner_email, blocked_email, db_path=None):
+    initialize_database(db_path)
+
+    clean_owner = (owner_email or "").strip().lower()
+    clean_blocked = (blocked_email or "").strip().lower()
+    if not clean_owner or not clean_blocked:
+        raise ValueError("Не удалось определить пользователя.")
+    if clean_owner == clean_blocked:
+        raise ValueError("Нельзя заблокировать самого себя.")
+
+    with _connect(db_path) as connection:
+        owner = connection.execute("SELECT email FROM profiles WHERE email = ?", (clean_owner,)).fetchone()
+        blocked = connection.execute("SELECT email FROM profiles WHERE email = ?", (clean_blocked,)).fetchone()
+        if owner is None or blocked is None:
+            raise ValueError("Пользователь не найден.")
+
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO blocked_profiles (owner_email, blocked_email)
+            VALUES (?, ?)
+            """,
+            (clean_owner, clean_blocked),
+        )
+        connection.execute(
+            """
+            DELETE FROM friendships
+            WHERE (owner_email = ? AND friend_email = ?)
+               OR (owner_email = ? AND friend_email = ?)
+            """,
+            (clean_owner, clean_blocked, clean_blocked, clean_owner),
+        )
+    return get_relationship_state(clean_owner, clean_blocked, db_path=db_path)
+
+
+def unblock_profile(owner_email, blocked_email, db_path=None):
+    initialize_database(db_path)
+
+    clean_owner = (owner_email or "").strip().lower()
+    clean_blocked = (blocked_email or "").strip().lower()
+    if not clean_owner or not clean_blocked or clean_owner == clean_blocked:
+        return False
+
+    with _connect(db_path) as connection:
+        deleted = connection.execute(
+            """
+            DELETE FROM blocked_profiles
+            WHERE owner_email = ? AND blocked_email = ?
+            """,
+            (clean_owner, clean_blocked),
+        ).rowcount
+    return bool(deleted)
+
+
+def report_profile(reporter_email, reported_email, reason, details=None, db_path=None):
+    initialize_database(db_path)
+
+    clean_reporter = (reporter_email or "").strip().lower()
+    clean_reported = (reported_email or "").strip().lower()
+    clean_reason = (reason or "").strip()
+    clean_details = (details or "").strip() or None
+
+    if not clean_reporter or not clean_reported:
+        raise ValueError("Не удалось определить пользователей для жалобы.")
+    if clean_reporter == clean_reported:
+        raise ValueError("Нельзя пожаловаться на самого себя.")
+    if not clean_reason:
+        raise ValueError("Укажи причину жалобы.")
+    if len(clean_reason) > 120:
+        clean_reason = clean_reason[:120]
+    if clean_details and len(clean_details) > 800:
+        clean_details = clean_details[:800]
+
+    with _connect(db_path) as connection:
+        reporter = connection.execute("SELECT email FROM profiles WHERE email = ?", (clean_reporter,)).fetchone()
+        reported = connection.execute("SELECT email FROM profiles WHERE email = ?", (clean_reported,)).fetchone()
+        if reporter is None or reported is None:
+            raise ValueError("Пользователь не найден.")
+
+        connection.execute(
+            """
+            INSERT INTO profile_reports (reporter_email, reported_email, reason, details)
+            VALUES (?, ?, ?, ?)
+            """,
+            (clean_reporter, clean_reported, clean_reason, clean_details),
+        )
+        report_id_row = connection.execute(
+            """
+            SELECT id, created_at
+            FROM profile_reports
+            WHERE id = last_insert_rowid()
+            """
+        ).fetchone()
+    return {
+        "id": int(report_id_row["id"]) if report_id_row is not None else None,
+        "created_at": report_id_row["created_at"] if report_id_row is not None else None,
+    }
+
+
+def send_friend_message(sender_email, recipient_email, message, db_path=None):
+    initialize_database(db_path)
+
+    sender = (sender_email or "").strip().lower()
+    recipient = (recipient_email or "").strip().lower()
+    text = (message or "").strip()
+
+    if not sender or not recipient:
+        raise ValueError("Не удалось определить участников переписки.")
+    if sender == recipient:
+        raise ValueError("Нельзя отправить сообщение самому себе.")
+    if not text:
+        raise ValueError("Сообщение не может быть пустым.")
+    if len(text) > 500:
+        raise ValueError("Сообщение слишком длинное.")
+
+    relation = get_relationship_state(sender, recipient, db_path=db_path)
+    if not relation["is_friend"]:
+        raise ValueError("Писать можно только друзьям.")
+    if relation["blocked_by_viewer"] or relation["blocked_viewer"]:
+        raise ValueError("Переписка недоступна из-за блокировки.")
+
+    with _connect(db_path) as connection:
+        sender_row = connection.execute("SELECT email FROM profiles WHERE email = ?", (sender,)).fetchone()
+        recipient_row = connection.execute("SELECT email FROM profiles WHERE email = ?", (recipient,)).fetchone()
+        if sender_row is None or recipient_row is None:
+            raise ValueError("Пользователь не найден.")
+
+        connection.execute(
+            """
+            INSERT INTO friend_messages (sender_email, recipient_email, message)
+            VALUES (?, ?, ?)
+            """,
+            (sender, recipient, text),
+        )
+        row = connection.execute(
+            """
+            SELECT id, sender_email, recipient_email, message, created_at
+            FROM friend_messages
+            WHERE id = last_insert_rowid()
+            """
+        ).fetchone()
+    return {
+        "id": int(row["id"]),
+        "sender_email": row["sender_email"],
+        "recipient_email": row["recipient_email"],
+        "message": row["message"],
+        "created_at": row["created_at"],
+    }
+
+
+def list_friend_messages(owner_email, friend_email, db_path=None, limit=60):
+    initialize_database(db_path)
+
+    owner = (owner_email or "").strip().lower()
+    friend = (friend_email or "").strip().lower()
+    if not owner or not friend or owner == friend:
+        return []
+
+    relation = get_relationship_state(owner, friend, db_path=db_path)
+    if not relation["is_friend"] or relation["blocked_by_viewer"] or relation["blocked_viewer"]:
+        return []
+
+    safe_limit = max(1, min(int(limit or 60), 200))
+    with _connect(db_path) as connection:
+        rows = connection.execute(
+            """
+            SELECT id, sender_email, recipient_email, message, created_at
+            FROM (
+                SELECT id, sender_email, recipient_email, message, created_at
+                FROM friend_messages
+                WHERE (sender_email = ? AND recipient_email = ?)
+                   OR (sender_email = ? AND recipient_email = ?)
+                ORDER BY id DESC
+                LIMIT ?
+            )
+            ORDER BY id ASC
+            """,
+            (owner, friend, friend, owner, safe_limit),
+        ).fetchall()
+
+    result = []
+    for row in rows:
+        result.append(
+            {
+                "id": int(row["id"]),
+                "sender_email": row["sender_email"],
+                "recipient_email": row["recipient_email"],
+                "message": row["message"],
+                "created_at": row["created_at"],
+                "is_outgoing": row["sender_email"] == owner,
+            }
+        )
+    return result
 
 
 def change_profile_password(email, current_password, new_password, db_path=None):

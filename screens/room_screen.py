@@ -567,6 +567,22 @@ class RoundPlayerRow(RoundedPanel):
             self.score_label.color = COLORS["text_soft"]
 
 
+class ClickableLobbyPlayerCard(ButtonBehavior, LobbyPlayerCard):
+    def on_press(self):
+        self.opacity = 0.88
+
+    def on_release(self):
+        self.opacity = 1
+
+
+class ClickableRoundPlayerRow(ButtonBehavior, RoundPlayerRow):
+    def on_press(self):
+        self.opacity = 0.88
+
+    def on_release(self):
+        self.opacity = 1
+
+
 class MiniStatChip(RoundedPanel):
     def __init__(self, title, **kwargs):
         super().__init__(
@@ -990,6 +1006,38 @@ class RoomScreen(Screen):
             return
         self._leave_room()
         self.manager.current = "start"
+
+    def _open_player_profile(self, player_name):
+        clean_name = (player_name or "").strip()
+        if not clean_name:
+            return
+
+        app = App.get_running_app()
+        viewer_profile = app.current_profile() if app is not None and getattr(app, "authenticated", False) else None
+        if viewer_profile is None:
+            self.status_label.color = COLORS["warning"]
+            self.status_label.text = "Просмотр профилей игроков доступен только из аккаунта."
+            return
+
+        target_profile = self._profile_map().get(clean_name.lower())
+        if target_profile is None:
+            self.status_label.color = COLORS["warning"]
+            self.status_label.text = "У этого игрока нет зарегистрированного профиля."
+            return
+
+        try:
+            profile_screen = self.manager.get_screen("player_profile")
+        except Exception:
+            self.status_label.color = COLORS["error"]
+            self.status_label.text = "Экран профиля недоступен."
+            return
+
+        profile_screen.open_for_player(
+            player_name=target_profile.name,
+            player_email=target_profile.email,
+            return_screen="room",
+        )
+        self.manager.current = "player_profile"
 
     def _set_room_exit_button(self, match_active):
         if match_active:
@@ -1433,7 +1481,7 @@ class RoomScreen(Screen):
         current_player_name = self._player_name()
 
         for listed_player in players:
-            card = RoundPlayerRow() if is_round else LobbyPlayerCard()
+            card = ClickableRoundPlayerRow() if is_round else ClickableLobbyPlayerCard()
             card.width = self.players_box.col_default_width
             profile = profile_map.get((listed_player or "").strip().lower())
             card.set_player(
@@ -1444,6 +1492,7 @@ class RoomScreen(Screen):
                 room_score=score_map.get((listed_player or "").strip().lower(), 0),
                 phase=phase,
             )
+            card.bind(on_release=lambda *_args, player=listed_player: self._open_player_profile(player))
             self.players_box.add_widget(card)
 
     def _poll_state(self):
