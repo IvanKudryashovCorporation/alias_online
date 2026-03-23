@@ -85,12 +85,13 @@ jobs:
           echo "==== Last 120 lines of buildozer.log ===="
           tail -n 120 buildozer.log || true
           echo "========================================="
-          echo "==== Error-focused lines from buildozer.log ===="
-          grep -inE "error|exception|traceback|license|build-tools|sdkmanager|failed|not found|no module named" buildozer.log | tail -n 120 || true
-          echo "==============================================="
-          SUMMARY="$(grep -inE \"error|exception|traceback|license|build-tools|sdkmanager|failed|not found|no module named\" buildozer.log | tail -n 35 || true)"
+          echo "==== Filtered context near failure (env lines removed) ===="
+          FILTERED="$(tail -n 900 buildozer.log | sed -E 's/\\x1B\\[[0-9;]*[A-Za-z]//g' | sed -E '/^# +[A-Z0-9_]+ = /d' | sed '/^[[:space:]]*$/d')"
+          printf '%s\n' "$FILTERED" | tail -n 220 || true
+          echo "==========================================================="
+          SUMMARY="$(printf '%s\n' "$FILTERED" | tail -n 60 || true)"
           if [ -z "$SUMMARY" ]; then
-            SUMMARY="$(tail -n 35 buildozer.log || true)"
+            SUMMARY="$(tail -n 60 buildozer.log || true)"
           fi
           SUMMARY="${SUMMARY//'%'/'%25'}"
           SUMMARY="${SUMMARY//$'\n'/'%0A'}"
