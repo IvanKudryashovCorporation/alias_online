@@ -15,7 +15,10 @@ fullscreen = 1
 
 android.api = 34
 android.minapi = 24
+android.sdk = 20
 android.ndk = 25b
+android.ndk_api = 24
+android.accept_sdk_license = True
 android.enable_androidx = True
 android.permissions = INTERNET,ACCESS_NETWORK_STATE,VIBRATE,READ_MEDIA_IMAGES
 android.archs = arm64-v8a

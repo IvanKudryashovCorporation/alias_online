@@ -44,10 +44,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            ~/.buildozer
             ~/.gradle/caches
             ~/.gradle/wrapper
-          key: ${{ runner.os }}-buildozer-${{ hashFiles('buildozer.spec') }}
+          key: ${{ runner.os }}-buildozer-${{ hashFiles('buildozer.spec', '.github/workflows/android-apk.yml') }}
           restore-keys: |
             ${{ runner.os }}-buildozer-
 
