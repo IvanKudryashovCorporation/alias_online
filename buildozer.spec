@@ -4,21 +4,27 @@ package.name = aliasonline
 package.domain = com.aliasonline
 
 source.dir = .
-source.include_exts = py,png,jpg,jpeg,ttf,kv,atlas
-source.exclude_dirs = venv,.git,__pycache__,bin,dist,build,.buildozer
-source.exclude_patterns = *.pyc,*.pyo
+source.include_exts = py,png,jpg,jpeg,webp,bmp,ttf,kv,atlas,txt,csv,json,md
+source.exclude_dirs = venv,.git,__pycache__,bin,dist,build,.buildozer,server
+source.exclude_patterns = *.pyc,*.pyo,data/*.db,data/_*.db
 
-version = 0.1.0
+version = 1.1.0
 requirements = python3,kivy==2.3.1
 orientation = portrait
 fullscreen = 1
 
-android.permissions = INTERNET,ACCESS_NETWORK_STATE,VIBRATE,READ_EXTERNAL_STORAGE,READ_MEDIA_IMAGES
-android.archs = arm64-v8a, armeabi-v7a
+android.api = 34
+android.minapi = 24
+android.ndk = 25b
+android.enable_androidx = True
+android.permissions = INTERNET,ACCESS_NETWORK_STATE,VIBRATE,READ_MEDIA_IMAGES
+android.archs = arm64-v8a
 android.debug_artifact = apk
-android.release_artifact = aab
+android.release_artifact = apk
+android.allow_backup = False
 
 presplash.filename = image/lobby.png
+presplash.color = #4fa4d6
 
 [buildozer]
 log_level = 2
