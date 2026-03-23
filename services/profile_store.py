@@ -14,7 +14,7 @@ from kivy.utils import platform
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 GUEST_NAME_PATTERN = re.compile(r"^гость\s*\d+$", re.IGNORECASE)
 DEFAULT_DB_PATH = Path(__file__).resolve().parents[1] / "data" / "alias_online.db"
-ROOM_CREATION_COST = 10
+ROOM_CREATION_COST = 25
 STARTER_ALIAS_COINS = 100
 PROFILE_COLUMNS = (
     "id, name, email, avatar_path, bio, alias_coins, games_played, total_points, rooms_created, "
@@ -355,13 +355,12 @@ def set_active_profile(email=None, db_path=None):
         )
 
 
-def save_profile(name, email, password, avatar_path=None, bio=None, db_path=None):
+def validate_registration_payload(name, email, password, db_path=None, allow_existing_email=False):
     initialize_database(db_path)
 
     clean_name = (name or "").strip()
     clean_email = (email or "").strip().lower()
-    clean_avatar = _normalize_text(avatar_path)
-    clean_bio = _normalize_text(bio)
+    clean_password = (password or "").strip()
 
     if not clean_name:
         raise ValueError("Укажи имя пользователя.")
@@ -372,10 +371,8 @@ def save_profile(name, email, password, avatar_path=None, bio=None, db_path=None
     if not clean_email or not EMAIL_PATTERN.match(clean_email):
         raise ValueError("Укажи корректный e-mail.")
 
-    if len((password or "").strip()) < 6:
+    if len(clean_password) < 6:
         raise ValueError("Пароль должен быть не короче 6 символов.")
-
-    salt, password_hash = _hash_password(password.strip())
 
     with _connect(db_path) as connection:
         existing = connection.execute("SELECT id FROM profiles WHERE email = ?", (clean_email,)).fetchone()
@@ -384,9 +381,36 @@ def save_profile(name, email, password, avatar_path=None, bio=None, db_path=None
             (clean_name,),
         ).fetchone()
 
+        if existing is not None and not allow_existing_email:
+            raise ValueError("Аккаунт с таким e-mail уже существует. Войди через экран входа.")
+
         if name_owner is not None and (existing is None or name_owner["id"] != existing["id"]):
             raise ValueError("Этот ник уже занят. Выбери другой.")
 
+    return {
+        "name": clean_name,
+        "email": clean_email,
+        "password": clean_password,
+    }
+
+
+def save_profile(name, email, password, avatar_path=None, bio=None, db_path=None):
+    payload = validate_registration_payload(
+        name=name,
+        email=email,
+        password=password,
+        db_path=db_path,
+        allow_existing_email=True,
+    )
+    clean_name = payload["name"]
+    clean_email = payload["email"]
+    clean_password = payload["password"]
+    clean_avatar = _normalize_text(avatar_path)
+    clean_bio = _normalize_text(bio)
+    salt, password_hash = _hash_password(clean_password)
+
+    with _connect(db_path) as connection:
+        existing = connection.execute("SELECT id FROM profiles WHERE email = ?", (clean_email,)).fetchone()
         if existing:
             connection.execute(
                 """
@@ -422,12 +446,19 @@ def save_profile(name, email, password, avatar_path=None, bio=None, db_path=None
     return _row_to_profile(row)
 
 
-def update_profile(email, avatar_path=None, bio=None, db_path=None):
+def update_profile(email, name=None, avatar_path=None, bio=None, db_path=None):
     initialize_database(db_path)
 
     clean_email = (email or "").strip().lower()
+    clean_name = _normalize_text(name)
     clean_avatar = _normalize_text(avatar_path)
     clean_bio = _normalize_text(bio)
+
+    if name is not None:
+        if not clean_name:
+            raise ValueError("Укажи имя пользователя.")
+        if GUEST_NAME_PATTERN.match(clean_name):
+            raise ValueError("Ник в формате 'Гость1' зарезервирован для гостевого входа.")
 
     if not clean_email or not EMAIL_PATTERN.match(clean_email):
         raise ValueError("Укажи корректный e-mail.")
@@ -445,16 +476,42 @@ def update_profile(email, avatar_path=None, bio=None, db_path=None):
         if existing is None:
             raise ValueError("Профиль не найден.")
 
-        connection.execute(
-            """
-            UPDATE profiles
-            SET avatar_path = ?,
-                bio = ?,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE email = ?
-            """,
-            (clean_avatar, clean_bio, clean_email),
-        )
+        if clean_name is not None:
+            name_owner = connection.execute(
+                """
+                SELECT id
+                FROM profiles
+                WHERE name = ? COLLATE NOCASE
+                  AND email <> ?
+                LIMIT 1
+                """,
+                (clean_name, clean_email),
+            ).fetchone()
+            if name_owner is not None:
+                raise ValueError("Этот ник уже занят. Выбери другой.")
+
+            connection.execute(
+                """
+                UPDATE profiles
+                SET name = ?,
+                    avatar_path = ?,
+                    bio = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE email = ?
+                """,
+                (clean_name, clean_avatar, clean_bio, clean_email),
+            )
+        else:
+            connection.execute(
+                """
+                UPDATE profiles
+                SET avatar_path = ?,
+                    bio = ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE email = ?
+                """,
+                (clean_avatar, clean_bio, clean_email),
+            )
 
         row = _fetch_profile_row(connection, "email = ?", (clean_email,))
 
@@ -621,6 +678,92 @@ def add_friend(owner_email, friend_email, db_path=None):
         )
 
     return get_profile_by_email(clean_friend, db_path=db_path)
+
+
+def change_profile_password(email, current_password, new_password, db_path=None):
+    initialize_database(db_path)
+
+    clean_email = (email or "").strip().lower()
+    clean_current_password = (current_password or "").strip()
+    clean_new_password = (new_password or "").strip()
+
+    if not clean_email or not EMAIL_PATTERN.match(clean_email):
+        raise ValueError("Укажи корректный e-mail.")
+    if not clean_current_password:
+        raise ValueError("Введи текущий пароль.")
+    if len(clean_new_password) < 6:
+        raise ValueError("Новый пароль должен быть не короче 6 символов.")
+    if clean_current_password == clean_new_password:
+        raise ValueError("Новый пароль должен отличаться от текущего.")
+
+    with _connect(db_path) as connection:
+        row = connection.execute(
+            """
+            SELECT id, password_hash, password_salt
+            FROM profiles
+            WHERE email = ?
+            """,
+            (clean_email,),
+        ).fetchone()
+
+        if row is None:
+            raise ValueError("Профиль не найден.")
+        if not _verify_password(clean_current_password, row["password_salt"], row["password_hash"]):
+            raise ValueError("Текущий пароль введен неверно.")
+
+        salt, password_hash = _hash_password(clean_new_password)
+        connection.execute(
+            """
+            UPDATE profiles
+            SET password_hash = ?,
+                password_salt = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE email = ?
+            """,
+            (password_hash, salt, clean_email),
+        )
+        fresh_row = _fetch_profile_row(connection, "email = ?", (clean_email,))
+
+    return _row_to_profile(fresh_row)
+
+
+def reset_profile_password(email, new_password, db_path=None):
+    initialize_database(db_path)
+
+    clean_email = (email or "").strip().lower()
+    clean_new_password = (new_password or "").strip()
+
+    if not clean_email or not EMAIL_PATTERN.match(clean_email):
+        raise ValueError("Укажи корректный e-mail.")
+    if len(clean_new_password) < 6:
+        raise ValueError("Новый пароль должен быть не короче 6 символов.")
+
+    with _connect(db_path) as connection:
+        row = connection.execute(
+            """
+            SELECT id
+            FROM profiles
+            WHERE email = ?
+            """,
+            (clean_email,),
+        ).fetchone()
+        if row is None:
+            raise ValueError("Аккаунт с таким e-mail не найден.")
+
+        salt, password_hash = _hash_password(clean_new_password)
+        connection.execute(
+            """
+            UPDATE profiles
+            SET password_hash = ?,
+                password_salt = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE email = ?
+            """,
+            (password_hash, salt, clean_email),
+        )
+        fresh_row = _fetch_profile_row(connection, "email = ?", (clean_email,))
+
+    return _row_to_profile(fresh_row)
 
 
 def login_profile(email, password, db_path=None):

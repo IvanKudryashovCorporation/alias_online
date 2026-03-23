@@ -3,13 +3,28 @@ from pathlib import Path
 from kivy.animation import Animation
 from kivy.app import App
 from kivy.clock import Clock
-from kivy.graphics import Color, Ellipse, Line, PopMatrix, PushMatrix, Rectangle, Rotate, RoundedRectangle, Triangle
+from kivy.graphics import (
+    Color,
+    Ellipse,
+    Line,
+    PopMatrix,
+    PushMatrix,
+    Rectangle,
+    Rotate,
+    RoundedRectangle,
+    StencilPop,
+    StencilPush,
+    StencilUnUse,
+    StencilUse,
+    Triangle,
+)
 from kivy.metrics import dp, sp
 from kivy.uix.behaviors import ButtonBehavior
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.floatlayout import FloatLayout
 from kivy.uix.image import Image
 from kivy.uix.label import Label
+from kivy.uix.popup import Popup
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.textinput import TextInput
 from kivy.uix.widget import Widget
@@ -344,7 +359,7 @@ class AppTextInput(TextInput):
     def __init__(self, **kwargs):
         register_game_font()
         multiline = kwargs.pop("multiline", False)
-        height = kwargs.pop("height", dp(60 if not multiline else 144))
+        height = kwargs.pop("height", dp(58 if not multiline else 144))
         self._rendering_hint_label = False
         super().__init__(
             multiline=multiline,
@@ -352,10 +367,11 @@ class AppTextInput(TextInput):
             font_size=sp(16),
             size_hint_y=None,
             height=height,
-            padding=[dp(16), dp(18), dp(16), dp(12)],
+            padding=[dp(16), dp(14), dp(16), dp(14)],
             background_normal="",
             background_active="",
-            background_color=COLORS["input_bg"],
+            # Hide default rectangular Kivy background: rounded surface is drawn in canvas.before.
+            background_color=(0, 0, 0, 0),
             foreground_color=COLORS["input_text"],
             disabled_foreground_color=COLORS["input_text"],
             hint_text_color=(0.29, 0.32, 0.38, 1),
@@ -367,24 +383,29 @@ class AppTextInput(TextInput):
             **kwargs,
         )
 
-        self._corner_radius = dp(18)
+        self._corner_radius = dp(22)
+        self._base_hint_color = (0.29, 0.32, 0.38, 1)
+        self._muted_hint_color = (0.35, 0.40, 0.48, 1)
 
         with self.canvas.before:
+            self._stencil_push = StencilPush()
+            self._stencil_mask = RoundedRectangle(radius=radius(22))
+            self._stencil_use = StencilUse()
             self._bg_color = Color(*COLORS["input_bg"])
-            self._bg_rect = RoundedRectangle(radius=radius(18))
+            self._bg_rect = RoundedRectangle(radius=radius(22))
             self._border_color = Color(*COLORS["outline"])
             self._border_line = Line(width=1.1)
+        with self.canvas.after:
+            self._stencil_unuse = StencilUnUse()
+            self._stencil_unmask = RoundedRectangle(radius=radius(22))
+            self._stencil_pop = StencilPop()
 
         self.bind(pos=self._sync_canvas, size=self._sync_canvas)
-        self.bind(
-            background_color=self._apply_surface_palette,
-            foreground_color=self._refresh_text_colors,
-            disabled_foreground_color=self._refresh_text_colors,
-            hint_text_color=self._refresh_text_colors,
-            disabled=self._refresh_text_colors,
-        )
         self.bind(readonly=self._apply_surface_palette)
+        self.bind(disabled=self._apply_surface_palette)
+        self.bind(focus=self._apply_surface_palette)
         self.bind(readonly=self._refresh_text_colors)
+        self.bind(disabled=self._refresh_text_colors)
         self._apply_surface_palette()
         self._refresh_text_colors()
 
@@ -393,12 +414,15 @@ class AppTextInput(TextInput):
             bg_color = COLORS["input_readonly_bg"]
             border_color = COLORS["input_readonly_outline"]
             cursor_color = (0, 0, 0, 0)
+        elif self.disabled:
+            bg_color = COLORS["input_readonly_bg"]
+            border_color = COLORS["outline_soft"]
+            cursor_color = (0, 0, 0, 0)
         else:
             bg_color = COLORS["input_bg"]
-            border_color = COLORS["outline"]
+            border_color = COLORS["outline"] if not self.focus else (0.38, 0.63, 0.96, 0.74)
             cursor_color = COLORS["input_text"]
 
-        self.background_color = bg_color
         self.cursor_color = cursor_color
         self._bg_color.rgba = bg_color
         self._border_color.rgba = border_color
@@ -423,14 +447,18 @@ class AppTextInput(TextInput):
             self._rendering_hint_label = False
 
     def _refresh_text_colors(self, *_):
-        text_color = COLORS["input_readonly_text"] if self.readonly else COLORS["input_text"]
+        text_color = COLORS["input_readonly_text"] if self.readonly or self.disabled else COLORS["input_text"]
+        hint_color = self._muted_hint_color if self.readonly or self.disabled else self._base_hint_color
         self.foreground_color = text_color
         self.disabled_foreground_color = text_color
-        self.cursor_color = (0, 0, 0, 0) if self.readonly else COLORS["input_text"]
-        self._trigger_refresh_text()
-        self._refresh_hint_text()
+        self.cursor_color = (0, 0, 0, 0) if self.readonly or self.disabled else COLORS["input_text"]
+        self.hint_text_color = hint_color
 
     def _sync_canvas(self, *_):
+        self._stencil_mask.pos = self.pos
+        self._stencil_mask.size = self.size
+        self._stencil_unmask.pos = self.pos
+        self._stencil_unmask.size = self.size
         self._bg_rect.pos = self.pos
         self._bg_rect.size = self.size
         self._border_line.rounded_rectangle = (self.x, self.y, self.width, self.height, self._corner_radius)
@@ -669,7 +697,7 @@ class AliasCoinIcon(Widget):
         self._glyph.text_size = self.size
 
 
-class CoinBadge(RoundedPanel):
+class CoinBadge(ButtonBehavior, RoundedPanel):
     def __init__(self, **kwargs):
         size = kwargs.pop("size", (dp(122), dp(52)))
         size_hint = kwargs.pop("size_hint", (None, None))
@@ -683,19 +711,88 @@ class CoinBadge(RoundedPanel):
             shadow_alpha=0.22,
             **kwargs,
         )
+        self._help_popup = None
+
         self.coin_icon = AliasCoinIcon()
         self.add_widget(self.coin_icon)
 
         self.coin_value = PixelLabel(text="0", font_size=sp(18), center=False, size_hint_y=None)
         self.add_widget(self.coin_value)
+        self.bind(on_release=self._open_help_popup)
+        self.bind(on_press=self._animate_press)
+        self.bind(on_release=self._animate_release)
 
     def set_value(self, value):
         self.coin_value.text = str(int(value))
 
     def refresh_from_session(self):
         app = App.get_running_app()
-        profile = app.current_profile() if app is not None and hasattr(app, "current_profile") else None
-        self.set_value(getattr(profile, "alias_coins", 0) if profile is not None else 0)
+        is_authenticated = bool(app is not None and getattr(app, "authenticated", False))
+        profile = app.current_profile() if is_authenticated and hasattr(app, "current_profile") else None
+        if profile is None:
+            self.opacity = 0
+            self.disabled = True
+            self.set_value(0)
+            return
+
+        self.opacity = 1
+        self.disabled = False
+        self.set_value(getattr(profile, "alias_coins", 0))
+
+    def _animate_press(self, *_):
+        Animation.cancel_all(self._bg_color)
+        Animation(rgba=COLORS["surface_panel"], duration=0.08).start(self._bg_color)
+
+    def _animate_release(self, *_):
+        Animation.cancel_all(self._bg_color)
+        Animation(rgba=COLORS["surface"], duration=0.12).start(self._bg_color)
+
+    def _open_help_popup(self, *_):
+        if self.disabled or self.opacity <= 0.01:
+            return
+
+        if self._help_popup is not None:
+            self._help_popup.dismiss()
+            self._help_popup = None
+            return
+
+        body = BoxLayout(orientation="vertical", spacing=dp(10), padding=[dp(14), dp(14), dp(14), dp(14)])
+        body.add_widget(
+            BodyLabel(
+                center=False,
+                color=COLORS["text_soft"],
+                font_size=sp(13),
+                text=(
+                    "Как зарабатывать Alias Coin (AC):\n"
+                    "• 1 очко в игре = 1 AC\n"
+                    "• За правильные ответы и объяснённые слова начисляются очки\n"
+                    "• Играй чаще, чтобы накапливать AC\n\n"
+                    "Важно:\n"
+                    "• Создание комнаты стоит 25 AC\n"
+                    "• Выход из матча раньше времени: -50 AC и блокировка на 5 минут"
+                ),
+            )
+        )
+
+        close_btn = AppButton(text="Понятно", compact=True, size_hint_y=None, height=dp(42))
+        body.add_widget(close_btn)
+
+        popup = Popup(
+            title="Памятка Alias Coin",
+            title_font="GameFont",
+            title_size=sp(18),
+            content=body,
+            size_hint=(0.9, 0.5),
+            auto_dismiss=True,
+        )
+        self._help_popup = popup
+
+        def _close(*_):
+            popup.dismiss()
+
+        close_btn.bind(on_release=_close)
+        popup.bind(on_dismiss=lambda *_: setattr(self, "_help_popup", None))
+        popup.open()
 
 
 class MiniIcon(Widget):

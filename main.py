@@ -12,10 +12,12 @@ from kivy.uix.screenmanager import FadeTransition, ScreenManager
 from kivy.utils import platform
 
 from screens.create_room import CreateRoomScreen
+from screens.email_verification_screen import EmailVerificationScreen
 from screens.entry_screen import EntryScreen
 from screens.friends import FriendsScreen
 from screens.join_room import JoinRoomScreen
 from screens.login_screen import LoginScreen
+from screens.password_recovery_screen import PasswordRecoveryScreen
 from screens.registration_screen import RegistrationScreen
 from screens.room_screen import RoomScreen
 from screens.rules import RulesScreen
@@ -76,6 +78,7 @@ class AliasApp(App):
         self.authenticated = False
         self.guest_mode = False
         self.guest_counter = 0
+        self.pending_registration_session_id = None
         self.active_room = {}
         self._room_server_process = None
         self.guest_room_lock_until = 0.0
@@ -94,6 +97,8 @@ class AliasApp(App):
         screen_manager.add_widget(EntryScreen(name="entry"))
         screen_manager.add_widget(LoginScreen(name="login"))
         screen_manager.add_widget(RegistrationScreen(name="registration"))
+        screen_manager.add_widget(PasswordRecoveryScreen(name="password_recovery"))
+        screen_manager.add_widget(EmailVerificationScreen(name="email_verification"))
         screen_manager.add_widget(StartScreen(name="start"))
         screen_manager.add_widget(CreateRoomScreen(name="create_room"))
         screen_manager.add_widget(JoinRoomScreen(name="join_room"))
@@ -168,6 +173,7 @@ class AliasApp(App):
     def sign_in(self, profile=None):
         self.authenticated = profile is not None
         self.guest_mode = False
+        self.clear_pending_registration_session()
         self.clear_active_room()
 
         if profile is not None:
@@ -180,11 +186,13 @@ class AliasApp(App):
         self.guest_mode = True
         self.guest_counter += 1
         self.guest_name = f"Гость{self.guest_counter}"
+        self.clear_pending_registration_session()
         self.clear_active_room()
 
     def start_registration_flow(self):
         self.authenticated = False
         self.guest_mode = False
+        self.clear_pending_registration_session()
         set_active_profile(None)
         self.clear_active_room()
 
@@ -192,8 +200,16 @@ class AliasApp(App):
         self._leave_active_room()
         self.authenticated = False
         self.guest_mode = False
+        self.clear_pending_registration_session()
         set_active_profile(None)
         self.clear_active_room()
+
+    def set_pending_registration_session(self, session_id):
+        clean_session_id = (session_id or "").strip()
+        self.pending_registration_session_id = clean_session_id or None
+
+    def clear_pending_registration_session(self):
+        self.pending_registration_session_id = None
 
     def set_active_room(self, room):
         self.active_room = dict(room or {})
@@ -270,7 +286,7 @@ class AliasApp(App):
             pass
 
     def _guard_session(self, manager, current_screen_name):
-        if current_screen_name in {"entry", "login", "registration"}:
+        if current_screen_name in {"entry", "login", "registration", "email_verification", "password_recovery"}:
             return
 
         if not self.has_session_access():

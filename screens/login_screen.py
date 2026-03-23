@@ -66,6 +66,10 @@ class LoginScreen(Screen):
         )
         card.add_widget(self.status_label)
 
+        forgot_password_btn = AppButton(text="Забыл пароль?", compact=True, font_size=sp(15), size_hint_y=None, height=dp(38))
+        forgot_password_btn.bind(on_release=self.open_password_recovery)
+        card.add_widget(forgot_password_btn)
+
         content.add_widget(Widget())
         content.add_widget(card)
         content.add_widget(Widget())
@@ -100,3 +104,8 @@ class LoginScreen(Screen):
         self.status_label.color = COLORS["success"]
         self.status_label.text = f"Вход выполнен. Привет, {profile.name}."
         self.manager.current = "start"
+
+    def open_password_recovery(self, *_):
+        recovery_screen = self.manager.get_screen("password_recovery")
+        recovery_screen.start_flow(default_email=self.email_input.text, return_screen="login")
+        self.manager.current = "password_recovery"

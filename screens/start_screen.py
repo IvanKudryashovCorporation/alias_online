@@ -11,7 +11,7 @@ from kivy.uix.widget import Widget
 
 from ui import AvatarButton, AppButton, BodyLabel, BrandTitle, CoinBadge, COLORS, PixelLabel, RoundedPanel, ScreenBackground, register_game_font
 
-APP_VERSION = "0.1.0"
+APP_VERSION = "1.1.0"
 
 
 class ProfileNameButton(ButtonBehavior, BodyLabel):
@@ -248,8 +248,8 @@ class StartScreen(Screen):
         self.version_label = BodyLabel(
             center=True,
             size_hint=(None, None),
-            size=(dp(160), dp(18)),
-            pos_hint={"center_x": 0.5, "y": 0.016},
+            size=(dp(168), dp(18)),
+            pos_hint={"center_x": 0.5, "y": 0.003},
             font_size=sp(11),
             color=COLORS["text_muted"],
             text=f"Версия {APP_VERSION}",

@@ -14,3 +14,5 @@ __pycache__/
 server/rooms.db
 server/*.log
 server/__pycache__/
+.env
+.env.local

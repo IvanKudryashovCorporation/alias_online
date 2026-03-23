@@ -2,6 +2,7 @@ from datetime import datetime
 from pathlib import Path
 
 from kivy.app import App
+from kivy.clock import Clock
 from kivy.metrics import dp, sp
 from kivy.uix.behaviors import ButtonBehavior
 from kivy.uix.boxlayout import BoxLayout
@@ -14,7 +15,7 @@ from kivy.uix.scrollview import ScrollView
 from kivy.uix.screenmanager import Screen
 from kivy.uix.widget import Widget
 
-from services import save_profile, update_profile
+from services import begin_registration_verification, change_profile_password, update_profile
 from ui import AppButton, AppTextInput, BodyLabel, BrandTitle, CoinBadge, COLORS, PixelLabel, RoundedPanel, ScreenBackground, register_game_font, resolve_image_source
 
 
@@ -124,18 +125,19 @@ class RegistrationScreen(Screen):
         register_game_font()
         self.selected_avatar_path = None
         self.avatar_picker_popup = None
+        self.change_password_popup = None
         self.profile_mode = False
-        self.default_content_spacing = dp(8)
-        self.compact_content_spacing = dp(4)
+        self.default_content_spacing = dp(10)
+        self.compact_content_spacing = dp(6)
         self.default_content_padding = [dp(18), dp(16), dp(18), dp(18)]
         self.compact_content_padding = [dp(12), dp(12), dp(12), dp(8)]
         self.default_card_padding = [dp(16), dp(14), dp(16), dp(14)]
         self.compact_card_padding = [dp(18), dp(16), dp(18), dp(12)]
-        self.default_card_spacing = dp(8)
-        self.compact_card_spacing = dp(4)
-        self.default_input_padding = [dp(16), dp(18), dp(16), dp(12)]
-        self.profile_input_padding = [dp(12), dp(10), dp(12), dp(8)]
-        self.field_width = dp(292)
+        self.default_card_spacing = dp(10)
+        self.compact_card_spacing = dp(6)
+        self.default_input_padding = [dp(16), dp(14), dp(16), dp(14)]
+        self.profile_input_padding = [dp(14), dp(11), dp(14), dp(11)]
+        self.field_width = dp(276)
         self.button_width = dp(274)
         self.avatar_panel_width = dp(214)
 
@@ -365,6 +367,71 @@ class RegistrationScreen(Screen):
         self.bio_row = self._centered_row(self.bio_input, height=dp(72), width=self.field_width)
         self.card.add_widget(self.bio_row)
 
+        self.password_panel = RoundedPanel(
+            bg_color=COLORS["surface_panel"],
+            shadow_alpha=0.14,
+            orientation="vertical",
+            spacing=dp(6),
+            padding=[dp(12), dp(10), dp(12), dp(10)],
+            size_hint=(None, None),
+            width=self.field_width,
+            height=0,
+            opacity=0,
+        )
+        self.password_panel_row = self._centered_row(self.password_panel, height=0, width=self.field_width)
+        self.password_panel_title = BodyLabel(
+            center=True,
+            color=COLORS["text_muted"],
+            font_size=sp(11.5),
+            size_hint_y=None,
+            height=dp(20),
+            text="Изменить пароль",
+        )
+        self.password_panel.add_widget(self.password_panel_title)
+        self.current_password_input = AppTextInput(hint_text="Текущий пароль", password=True, height=dp(42))
+        self.new_password_input = AppTextInput(hint_text="Новый пароль", password=True, height=dp(42))
+        self.current_password_input.height = 0
+        self.current_password_input.opacity = 0
+        self.current_password_input.disabled = True
+        self.new_password_input.height = 0
+        self.new_password_input.opacity = 0
+        self.new_password_input.disabled = True
+        self.password_panel.add_widget(self.current_password_input)
+        self.password_panel.add_widget(self.new_password_input)
+
+        self.change_password_btn_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(36))
+        self.change_password_btn_row.add_widget(Widget())
+        self.change_password_btn = AppButton(
+            text="Изменить пароль",
+            compact=True,
+            font_size=sp(13),
+            size_hint=(None, None),
+            size=(dp(186), dp(34)),
+        )
+        self.change_password_btn.bind(on_release=self.open_change_password_dialog)
+        self.change_password_btn_row.add_widget(self.change_password_btn)
+        self.change_password_btn_row.add_widget(Widget())
+        self.password_panel.add_widget(self.change_password_btn_row)
+
+        self.profile_forgot_btn_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(20))
+        self.profile_forgot_btn_row.add_widget(Widget())
+        self.profile_forgot_btn = SubtleActionButton(text="Забыл пароль?")
+        self.profile_forgot_btn.bind(on_release=self.open_password_recovery)
+        self.profile_forgot_btn_row.add_widget(self.profile_forgot_btn)
+        self.profile_forgot_btn_row.add_widget(Widget())
+        self.password_panel.add_widget(self.profile_forgot_btn_row)
+
+        self.password_panel_status = BodyLabel(
+            center=True,
+            color=COLORS["text_muted"],
+            font_size=sp(10.5),
+            size_hint_y=None,
+            height=dp(18),
+            text="",
+        )
+        self.password_panel.add_widget(self.password_panel_status)
+        self.card.add_widget(self.password_panel_row)
+
         self.save_btn = AppButton(text="\u0421\u043e\u0437\u0434\u0430\u0442\u044c \u043f\u0440\u043e\u0444\u0438\u043b\u044c", font_size=sp(18))
         self.save_btn.height = dp(64)
         self.save_btn.bind(on_release=self.submit_profile)
@@ -376,7 +443,7 @@ class RegistrationScreen(Screen):
             center=True,
             color=COLORS["text_muted"],
             font_size=sp(11),
-            text="\u041f\u043e\u0441\u043b\u0435 \u0440\u0435\u0433\u0438\u0441\u0442\u0440\u0430\u0446\u0438\u0438 \u043e\u0442\u043a\u0440\u043e\u0435\u0442\u0441\u044f \u0433\u043b\u0430\u0432\u043d\u043e\u0435 \u043c\u0435\u043d\u044e.",
+            text="После регистрации введи код из письма для подтверждения e-mail.",
         )
         self.status_label.size_hint_x = None
         self.status_label.width = self.field_width
@@ -385,6 +452,14 @@ class RegistrationScreen(Screen):
         self.status_row.add_widget(self.status_label)
         self.status_row.add_widget(Widget())
         self.card.add_widget(self.status_row)
+
+        self.forgot_password_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(22))
+        self.forgot_password_row.add_widget(Widget())
+        self.forgot_password_btn = SubtleActionButton(text="Забыл пароль?")
+        self.forgot_password_btn.bind(on_release=self.open_password_recovery)
+        self.forgot_password_row.add_widget(self.forgot_password_btn)
+        self.forgot_password_row.add_widget(Widget())
+        self.card.add_widget(self.forgot_password_row)
 
         self.logout_btn = AppButton(
             text="\u0412\u044b\u0445\u043e\u0434 \u0438\u0437 \u0430\u043a\u043a\u0430\u0443\u043d\u0442\u0430",
@@ -410,6 +485,8 @@ class RegistrationScreen(Screen):
         self.coin_badge = CoinBadge(pos_hint={"right": 0.965, "top": 0.96})
         root.add_widget(self.coin_badge)
         self.add_widget(root)
+        self.card.bind(size=self._update_form_widths, pos=self._update_form_widths)
+        Clock.schedule_once(self._update_form_widths, 0)
         self._sync_avatar_actions()
 
     def _centered_row(self, widget, height, width=None):
@@ -449,7 +526,7 @@ class RegistrationScreen(Screen):
             self.points_stat.set_value(0)
             self.rooms_stat.set_value(0)
             self.status_label.color = COLORS["text_muted"]
-            self.status_label.text = "\u0421\u043e\u0437\u0434\u0430\u0439 \u0430\u043a\u043a\u0430\u0443\u043d\u0442, \u0430 \u0444\u043e\u0442\u043e \u0434\u043e\u0431\u0430\u0432\u0438\u0448\u044c \u043f\u043e\u0437\u0436\u0435 \u0432 \u043f\u0440\u043e\u0444\u0438\u043b\u0435."
+            self.status_label.text = "Создай аккаунт. После этого придет 6-значный код на e-mail."
             return
 
         latest_profile = self._ensure_profile_avatar_ready(latest_profile)
@@ -463,28 +540,28 @@ class RegistrationScreen(Screen):
         self.avatar_status_label.color = COLORS["text_muted"]
         self.avatar_status_label.text = Path(latest_profile.avatar_path).name if latest_profile.avatar_path else "\u0424\u043e\u0442\u043e \u043d\u0435 \u0432\u044b\u0431\u0440\u0430\u043d\u043e."
         self.status_label.color = COLORS["text_muted"]
-        self.status_label.text = "\u041c\u043e\u0436\u043d\u043e \u0438\u0437\u043c\u0435\u043d\u0438\u0442\u044c \u0444\u043e\u0442\u043e \u0438 \u043e\u043f\u0438\u0441\u0430\u043d\u0438\u0435 \u0442\u0435\u043a\u0443\u0449\u0435\u0433\u043e \u043f\u0440\u043e\u0444\u0438\u043b\u044f."
+        self.status_label.text = "\u041c\u043e\u0436\u043d\u043e \u0438\u0437\u043c\u0435\u043d\u0438\u0442\u044c \u043d\u0438\u043a, \u0444\u043e\u0442\u043e \u0438 \u043e\u043f\u0438\u0441\u0430\u043d\u0438\u0435 \u0442\u0435\u043a\u0443\u0449\u0435\u0433\u043e \u043f\u0440\u043e\u0444\u0438\u043b\u044f."
         self._sync_avatar_actions()
 
     def submit_profile(self, *_):
+        app = App.get_running_app()
         try:
             if self.profile_mode:
-                app = App.get_running_app()
                 current_profile = app.current_profile() if app is not None and getattr(app, "authenticated", False) else None
                 if current_profile is None:
                     raise ValueError("\u0421\u043d\u0430\u0447\u0430\u043b\u0430 \u0432\u043e\u0439\u0434\u0438 \u0432 \u0430\u043a\u043a\u0430\u0443\u043d\u0442.")
 
                 profile = update_profile(
                     email=current_profile.email,
+                    name=self.name_input.text,
                     avatar_path=self.selected_avatar_path,
                     bio=self.bio_input.text,
                 )
             else:
-                profile = save_profile(
+                verification = begin_registration_verification(
                     name=self.name_input.text,
                     email=self.email_input.text,
                     password=self.password_input.text,
-                    avatar_path=None,
                     bio=self.bio_input.text,
                 )
         except ValueError as error:
@@ -492,23 +569,26 @@ class RegistrationScreen(Screen):
             self.status_label.text = str(error)
             return
 
-        app = App.get_running_app()
-        if app is not None:
-            app.sign_in(profile)
-
         self.password_input.text = ""
-        self.status_label.color = COLORS["success"]
         if self.profile_mode:
+            if app is not None:
+                app.sign_in(profile)
+            self.status_label.color = COLORS["success"]
             self.status_label.text = (
                 f"\u041f\u0440\u043e\u0444\u0438\u043b\u044c {profile.name} \u043e\u0431\u043d\u043e\u0432\u043b\u0451\u043d. "
                 "\u041f\u0435\u0440\u0435\u0445\u043e\u0434\u0438\u043c \u0432 \u043c\u0435\u043d\u044e."
             )
-        else:
-            self.status_label.text = (
-                f"\u041f\u0440\u043e\u0444\u0438\u043b\u044c {profile.name} \u0441\u043e\u0445\u0440\u0430\u043d\u0435\u043d. "
-                "\u041f\u0435\u0440\u0435\u0445\u043e\u0434\u0438\u043c \u0432 \u043c\u0435\u043d\u044e."
-            )
-        self.manager.current = "start"
+            self.manager.current = "start"
+            return
+
+        if app is not None:
+            app.set_pending_registration_session(verification["session_id"])
+
+        verification_screen = self.manager.get_screen("email_verification")
+        verification_screen.start_verification(verification)
+        self.status_label.color = COLORS["success"]
+        self.status_label.text = "Код отправлен на e-mail. Подтверди регистрацию."
+        self.manager.current = "email_verification"
 
     def open_avatar_picker(self, *_):
         if not self.profile_mode:
@@ -581,10 +661,10 @@ class RegistrationScreen(Screen):
         self.profile_mode = enabled
 
         if enabled:
-            self.profile_header.height = dp(38)
+            self.profile_header.height = dp(34)
             self.profile_header.opacity = 1
-            self.profile_title.font_size = sp(16)
-            self.profile_summary.font_size = sp(10)
+            self.profile_title.font_size = sp(14)
+            self.profile_summary.font_size = sp(9)
             self.title_label.text = "\u041f\u0440\u043e\u0444\u0438\u043b\u044c"
             self.title_label.font_size = sp(16)
             self.title_label.height = 0
@@ -593,33 +673,33 @@ class RegistrationScreen(Screen):
             self.subtitle_label.font_size = sp(9.5)
             self.avatar_mode_note.text = "\u0424\u043e\u0442\u043e \u043f\u0440\u043e\u0444\u0438\u043b\u044f"
             self.scroll.do_scroll_y = False
-            self.content.spacing = dp(3)
-            self.content.padding = [dp(8), dp(10), dp(8), dp(8)]
-            self.card.spacing = dp(1)
-            self.card.padding = [dp(18), dp(14), dp(18), dp(14)]
-            self.brand_title.height = dp(60)
-            self.brand_title.set_style(font_size=sp(30), shadow_step=dp(2))
-            self.profile_header.height = dp(30)
-            self.top_spacer.height = dp(18)
-            self.bottom_spacer.height = dp(6)
+            self.content.spacing = dp(4)
+            self.content.padding = [dp(8), dp(8), dp(8), dp(6)]
+            self.card.spacing = dp(4)
+            self.card.padding = [dp(16), dp(12), dp(16), dp(12)]
+            self.brand_title.height = dp(44)
+            self.brand_title.set_style(font_size=sp(26), shadow_step=dp(2))
+            self.profile_header.height = dp(34)
+            self.top_spacer.height = dp(4)
+            self.bottom_spacer.height = dp(4)
             self.subtitle_row.height = 0
             self.subtitle_row.opacity = 0
             self.name_caption_row.height = dp(14)
             self.name_caption_row.opacity = 1
-            self.name_caption.font_size = sp(10.5)
+            self.name_caption.font_size = sp(10)
             self.email_caption.text = "E-mail"
             self.email_caption_row.height = dp(14)
             self.email_caption_row.opacity = 1
-            self.email_caption.font_size = sp(10.5)
-            self.name_row.height = dp(36)
-            self.email_row.height = dp(36)
-            self.name_input.height = dp(36)
-            self.email_input.height = dp(36)
+            self.email_caption.font_size = sp(10)
+            self.name_row.height = dp(40)
+            self.email_row.height = dp(40)
+            self.name_input.height = dp(40)
+            self.email_input.height = dp(40)
             self.name_input.font_size = sp(14)
             self.email_input.font_size = sp(14)
             self.name_input.padding = self.profile_input_padding[:]
             self.email_input.padding = self.profile_input_padding[:]
-            self.name_input.readonly = True
+            self.name_input.readonly = False
             self.email_input.readonly = True
             self.name_input.disabled = False
             self.email_input.disabled = False
@@ -630,32 +710,50 @@ class RegistrationScreen(Screen):
             self.stats_wrap.opacity = 1
             self.avatar_mode_note_row.height = 0
             self.avatar_mode_note_row.opacity = 0
-            self.avatar_section.spacing = dp(4)
-            self.avatar_section.padding = [dp(12), dp(10), dp(12), dp(10)]
-            self.avatar_section_row.height = dp(184)
-            self.avatar_preview.size = (dp(68), dp(68))
-            self.preview_row.height = dp(70)
-            self.avatar_button_gap.height = dp(4)
-            self.add_photo_row.height = dp(32)
+            self.avatar_section.spacing = dp(8)
+            self.avatar_section.padding = [dp(12), dp(12), dp(12), dp(12)]
+            self.avatar_section_row.height = dp(166)
+            self.avatar_preview.size = (dp(60), dp(60))
+            self.preview_row.height = dp(64)
+            self.avatar_button_gap.height = dp(6)
+            self.add_photo_row.height = dp(34)
             self.pick_avatar_btn.size = (dp(170), dp(32))
-            self.avatar_section.height = dp(184)
+            self.avatar_section.height = dp(166)
             self.avatar_section.opacity = 1
-            self.avatar_status_row.height = dp(16)
+            self.avatar_status_row.height = dp(18)
             self.avatar_status_row.opacity = 1
-            self.bio_row.height = dp(42)
-            self.bio_input.height = dp(42)
+            self.bio_row.height = dp(46)
+            self.bio_input.height = dp(46)
             self.bio_input.font_size = sp(14)
             self.bio_input.hint_text = "\u0420\u0430\u0441\u0441\u043a\u0430\u0436\u0438 \u043f\u0430\u0440\u0443 \u0441\u043b\u043e\u0432 \u043e \u0441\u0435\u0431\u0435"
+            self.password_panel.spacing = dp(4)
+            self.password_panel.padding = [dp(10), dp(8), dp(10), dp(8)]
+            self.password_panel_title.height = 0
+            self.password_panel_title.opacity = 0
+            self.change_password_btn_row.height = dp(34)
+            self.change_password_btn.size = (dp(170), dp(32))
+            self.profile_forgot_btn_row.height = dp(18)
+            self.password_panel_status.height = 0
+            self.password_panel_status.opacity = 0
+            self.password_panel_row.height = dp(84)
+            self.password_panel.height = dp(84)
+            self.password_panel.opacity = 1
+            self.current_password_input.height = 0
+            self.new_password_input.height = 0
+            self.password_panel_status.text = ""
             self.pick_avatar_btn.disabled = False
-            self.save_row.height = dp(40)
-            self.save_btn.height = dp(40)
+            self.save_row.height = dp(44)
+            self.save_btn.height = dp(44)
             self.status_row.height = 0
             self.status_row.opacity = 0
-            self.card.height = dp(566)
+            self.forgot_password_row.height = 0
+            self.forgot_password_row.opacity = 0
+            self.card.height = dp(680)
             self.logout_btn.disabled = False
             self.logout_btn.opacity = 1
-            self.logout_row.height = dp(40)
-            self.logout_btn.height = dp(40)
+            self.logout_row.height = dp(44)
+            self.logout_btn.height = dp(44)
+            self._update_form_widths()
             self._sync_avatar_actions()
             self.save_btn.text = "\u0421\u043e\u0445\u0440\u0430\u043d\u0438\u0442\u044c \u0438\u0437\u043c\u0435\u043d\u0435\u043d\u0438\u044f"
             return
@@ -724,6 +822,23 @@ class RegistrationScreen(Screen):
         self.bio_input.height = dp(72)
         self.bio_input.font_size = sp(16)
         self.bio_input.hint_text = "\u041e\u043f\u0438\u0441\u0430\u043d\u0438\u0435 \u043f\u0440\u043e\u0444\u0438\u043b\u044f (\u043d\u0435\u043e\u0431\u044f\u0437\u0430\u0442\u0435\u043b\u044c\u043d\u043e)"
+        self.password_panel_row.height = 0
+        self.password_panel.height = 0
+        self.password_panel.opacity = 0
+        self.password_panel.spacing = dp(6)
+        self.password_panel.padding = [dp(12), dp(10), dp(12), dp(10)]
+        self.password_panel_title.height = dp(20)
+        self.password_panel_title.opacity = 1
+        self.change_password_btn_row.height = dp(36)
+        self.change_password_btn.size = (dp(186), dp(34))
+        self.profile_forgot_btn_row.height = dp(20)
+        self.password_panel_status.height = dp(18)
+        self.password_panel_status.opacity = 1
+        self.current_password_input.text = ""
+        self.new_password_input.text = ""
+        self.current_password_input.height = 0
+        self.new_password_input.height = 0
+        self.password_panel_status.text = ""
         self.pick_avatar_btn.disabled = True
         self.clear_avatar_btn.disabled = True
         self.clear_avatar_btn.opacity = 0
@@ -733,12 +848,46 @@ class RegistrationScreen(Screen):
         self.save_btn.height = dp(64)
         self.status_row.height = dp(36)
         self.status_row.opacity = 1
+        self.forgot_password_row.height = dp(22)
+        self.forgot_password_row.opacity = 0.85
         self.card.height = dp(560)
         self.logout_btn.disabled = True
         self.logout_btn.opacity = 0
         self.logout_row.height = 0
         self.logout_btn.height = 0
         self.save_btn.text = "\u0421\u043e\u0437\u0434\u0430\u0442\u044c \u043f\u0440\u043e\u0444\u0438\u043b\u044c"
+        self._update_form_widths()
+
+    def _update_form_widths(self, *_):
+        if not getattr(self, "card", None):
+            return
+
+        horizontal_padding = 0
+        if isinstance(self.card.padding, (list, tuple)) and len(self.card.padding) >= 2:
+            horizontal_padding = self.card.padding[0] + self.card.padding[2]
+
+        inner_width = max(dp(220), self.card.width - horizontal_padding)
+        field_width = min(self.field_width, inner_width - dp(6))
+        button_width = min(self.button_width, inner_width - dp(6))
+        avatar_width = min(self.avatar_panel_width, inner_width - dp(6))
+
+        for widget in (self.name_input, self.email_input, self.password_input, self.bio_input):
+            widget.size_hint_x = None
+            widget.width = field_width
+
+        self.password_panel.size_hint_x = None
+        self.password_panel.width = field_width
+        self.name_caption.width = field_width
+        self.email_caption.width = field_width
+        self.status_label.width = field_width
+
+        self.save_btn.size_hint_x = None
+        self.save_btn.width = button_width
+        self.logout_btn.size_hint_x = None
+        self.logout_btn.width = button_width
+
+        self.avatar_section.size_hint_x = None
+        self.avatar_section.width = avatar_width
 
     def _apply_profile_summary(self, profile):
         joined_label = self._format_profile_date(profile.created_at)
@@ -832,6 +981,88 @@ class RegistrationScreen(Screen):
             raise ValueError("\u041d\u0435 \u0443\u0434\u0430\u043b\u043e\u0441\u044c \u043e\u0442\u043a\u0440\u044b\u0442\u044c \u044d\u0442\u043e \u0444\u043e\u0442\u043e. \u0412\u044b\u0431\u0435\u0440\u0438 \u0434\u0440\u0443\u0433\u043e\u0439 \u0444\u0430\u0439\u043b.") from error
 
         return str(target_path.resolve())
+
+    def open_password_recovery(self, *_):
+        recovery_screen = self.manager.get_screen("password_recovery")
+        default_email = self.email_input.text
+        recovery_screen.start_flow(default_email=default_email, return_screen=self.name)
+        self.manager.current = "password_recovery"
+
+    def open_change_password_dialog(self, *_):
+        if not self.profile_mode:
+            self.status_label.color = COLORS["warning"]
+            self.status_label.text = "Смена пароля доступна после входа в аккаунт."
+            return
+
+        app = App.get_running_app()
+        profile = app.current_profile() if app is not None and getattr(app, "authenticated", False) else None
+        if profile is None:
+            self.status_label.color = COLORS["warning"]
+            self.status_label.text = "Сначала войди в аккаунт."
+            return
+
+        current_password_input = AppTextInput(hint_text="Текущий пароль", password=True, height=dp(48))
+        new_password_input = AppTextInput(hint_text="Новый пароль", password=True, height=dp(48))
+        dialog_status = BodyLabel(center=True, color=COLORS["text_muted"], font_size=sp(11), text="")
+
+        body = BoxLayout(orientation="vertical", spacing=dp(8), padding=[dp(12), dp(12), dp(12), dp(12)])
+        body.add_widget(current_password_input)
+        body.add_widget(new_password_input)
+        body.add_widget(dialog_status)
+
+        forgot_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(20))
+        forgot_row.add_widget(Widget())
+        forgot_btn = SubtleActionButton(text="Забыл пароль?")
+        forgot_row.add_widget(forgot_btn)
+        forgot_row.add_widget(Widget())
+        body.add_widget(forgot_row)
+
+        actions = BoxLayout(orientation="horizontal", spacing=dp(8), size_hint_y=None, height=dp(42))
+        save_btn = AppButton(text="Сменить", compact=True)
+        cancel_btn = AppButton(text="Отмена", compact=True)
+        actions.add_widget(save_btn)
+        actions.add_widget(cancel_btn)
+        body.add_widget(actions)
+
+        popup = Popup(
+            title="Изменить пароль",
+            title_font="GameFont",
+            title_size=sp(18),
+            content=body,
+            size_hint=(0.9, 0.54),
+            auto_dismiss=True,
+        )
+        self.change_password_popup = popup
+        popup.bind(on_dismiss=lambda *_: setattr(self, "change_password_popup", None))
+
+        def apply_change(*_):
+            try:
+                change_profile_password(
+                    email=profile.email,
+                    current_password=current_password_input.text,
+                    new_password=new_password_input.text,
+                )
+            except ValueError as error:
+                dialog_status.color = COLORS["error"]
+                dialog_status.text = str(error)
+                return
+
+            self.password_panel_status.color = COLORS["success"]
+            self.password_panel_status.text = "Пароль успешно изменён."
+            self.status_label.color = COLORS["success"]
+            self.status_label.text = "Пароль изменён."
+            popup.dismiss()
+            self.change_password_popup = None
+
+        def open_recovery(*_):
+            popup.dismiss()
+            self.change_password_popup = None
+            self.open_password_recovery()
+
+        save_btn.bind(on_release=apply_change)
+        cancel_btn.bind(on_release=lambda *_: popup.dismiss())
+        forgot_btn.bind(on_release=open_recovery)
+        popup.open()
 
     def _go_back(self, *_):
         app = App.get_running_app()

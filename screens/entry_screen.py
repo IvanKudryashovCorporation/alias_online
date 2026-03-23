@@ -55,6 +55,9 @@ class EntryScreen(Screen):
         guest_btn.bind(on_release=self._play_as_guest)
 
         content.add_widget(card)
+        forgot_password_btn = AppButton(text="Забыл пароль?", compact=True, font_size=sp(15), size_hint_y=None, height=dp(38))
+        forgot_password_btn.bind(on_release=self._open_password_recovery)
+        content.add_widget(forgot_password_btn)
         content.add_widget(Widget())
 
         root.add_widget(content)
@@ -76,3 +79,8 @@ class EntryScreen(Screen):
         if app is not None:
             app.enter_guest_mode()
         self.manager.current = "start"
+
+    def _open_password_recovery(self, *_):
+        recovery_screen = self.manager.get_screen("password_recovery")
+        recovery_screen.start_flow(default_email="", return_screen="entry")
+        self.manager.current = "password_recovery"

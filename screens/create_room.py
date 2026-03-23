@@ -316,9 +316,28 @@ class CreateRoomScreen(Screen):
             size_hint_y=None,
         )
         actions_card.bind(minimum_height=actions_card.setter("height"))
+        create_row = BoxLayout(orientation="horizontal", spacing=dp(10), size_hint_y=None, height=dp(72))
         self.create_btn = AppButton(text="Создать комнату", font_size=sp(18))
         self.create_btn.bind(on_release=self.prepare_room)
-        actions_card.add_widget(self.create_btn)
+        create_row.add_widget(self.create_btn)
+        cost_chip = RoundedPanel(
+            orientation="vertical",
+            size_hint=(None, None),
+            size=(dp(98), dp(56)),
+            padding=[dp(8), dp(8), dp(8), dp(8)],
+            bg_color=COLORS["surface_panel"],
+            shadow_alpha=0.18,
+        )
+        cost_chip.add_widget(
+            PixelLabel(
+                text=f"(-{ROOM_CREATION_COST} AC)",
+                font_size=sp(12.5),
+                center=True,
+                size_hint_y=None,
+            )
+        )
+        create_row.add_widget(cost_chip)
+        actions_card.add_widget(create_row)
         self.status_label = BodyLabel(
             center=True,
             color=COLORS["text_muted"],
