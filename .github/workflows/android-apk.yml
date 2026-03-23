@@ -19,6 +19,8 @@ jobs:
   build-apk:
     runs-on: ubuntu-22.04
     timeout-minutes: 150
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
 
     steps:
       - name: Checkout
@@ -55,12 +57,39 @@ jobs:
           python -m pip install "cython==0.29.36" buildozer
 
       - name: Build debug APK
+        id: build_step
+        shell: bash
         run: |
-          buildozer android debug
+          set -o pipefail
+          buildozer -v android debug 2>&1 | tee buildozer.log
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: buildozer-log
+          path: buildozer.log
+          if-no-files-found: warn
 
       - name: Upload APK artifact
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: alias-online-apk
           path: bin/*.apk
           if-no-files-found: error
+
+      - name: Emit readable failure summary
+        if: failure()
+        shell: bash
+        run: |
+          echo "==== Last 120 lines of buildozer.log ===="
+          tail -n 120 buildozer.log || true
+          echo "========================================="
+          LAST_LINE="$(grep -E \"ERROR|Exception|Traceback|failed\" buildozer.log | tail -n 1 || true)"
+          if [ -n "$LAST_LINE" ]; then
+            echo "::error::$LAST_LINE"
+          else
+            echo "::error::Buildozer failed. See buildozer.log artifact."
+          fi
+          exit 1
