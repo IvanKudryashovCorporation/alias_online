@@ -11,6 +11,7 @@ from pathlib import Path
 from kivy.app import App
 from kivy.clock import Clock
 from kivy.config import Config
+from kivy.metrics import dp
 from kivy.utils import platform
 
 if platform in ("android", "ios"):
@@ -18,20 +19,9 @@ if platform in ("android", "ios"):
     Config.set("graphics", "borderless", "1")
 
 from kivy.core.window import Window
-from kivy.uix.screenmanager import FadeTransition, ScreenManager
-
-from screens.create_room import CreateRoomScreen
-from screens.email_verification_screen import EmailVerificationScreen
-from screens.entry_screen import EntryScreen
-from screens.friends import FriendsScreen
-from screens.join_room import JoinRoomScreen
-from screens.login_screen import LoginScreen
-from screens.password_recovery_screen import PasswordRecoveryScreen
-from screens.player_profile_screen import PlayerProfileScreen
-from screens.registration_screen import RegistrationScreen
-from screens.room_screen import RoomScreen
-from screens.rules import RulesScreen
-from screens.start_screen import StartScreen
+from kivy.uix.boxlayout import BoxLayout
+from kivy.uix.label import Label
+from kivy.uix.screenmanager import FadeTransition, Screen, ScreenManager
 from services import (
     apply_match_exit_penalty,
     get_active_profile,
@@ -132,31 +122,77 @@ class AliasApp(App):
         self.guest_room_lock_reason = None
 
     def build(self):
-        register_game_font()
-        initialize_database()
-        self._ensure_local_room_server()
-        Clock.schedule_once(lambda *_: self._refresh_mobile_window_mode(), 0)
+        try:
+            register_game_font()
+            initialize_database()
+            self._ensure_local_room_server()
+            Clock.schedule_once(lambda *_: self._refresh_mobile_window_mode(), 0)
 
-        active_profile = get_active_profile()
-        self.authenticated = active_profile is not None
-        self.guest_mode = False
+            from screens.create_room import CreateRoomScreen
+            from screens.email_verification_screen import EmailVerificationScreen
+            from screens.entry_screen import EntryScreen
+            from screens.friends import FriendsScreen
+            from screens.join_room import JoinRoomScreen
+            from screens.login_screen import LoginScreen
+            from screens.password_recovery_screen import PasswordRecoveryScreen
+            from screens.player_profile_screen import PlayerProfileScreen
+            from screens.registration_screen import RegistrationScreen
+            from screens.room_screen import RoomScreen
+            from screens.rules import RulesScreen
+            from screens.start_screen import StartScreen
 
-        screen_manager = ScreenManager(transition=FadeTransition(duration=0.18))
-        screen_manager.add_widget(EntryScreen(name="entry"))
-        screen_manager.add_widget(LoginScreen(name="login"))
-        screen_manager.add_widget(RegistrationScreen(name="registration"))
-        screen_manager.add_widget(PasswordRecoveryScreen(name="password_recovery"))
-        screen_manager.add_widget(EmailVerificationScreen(name="email_verification"))
-        screen_manager.add_widget(PlayerProfileScreen(name="player_profile"))
-        screen_manager.add_widget(StartScreen(name="start"))
-        screen_manager.add_widget(CreateRoomScreen(name="create_room"))
-        screen_manager.add_widget(JoinRoomScreen(name="join_room"))
-        screen_manager.add_widget(FriendsScreen(name="friends"))
-        screen_manager.add_widget(RulesScreen(name="rules"))
-        screen_manager.add_widget(RoomScreen(name="room"))
-        screen_manager.bind(current=self._guard_session)
-        screen_manager.current = "start" if self.authenticated else "entry"
-        return screen_manager
+            active_profile = get_active_profile()
+            self.authenticated = active_profile is not None
+            self.guest_mode = False
+
+            screen_manager = ScreenManager(transition=FadeTransition(duration=0.18))
+            screen_manager.add_widget(EntryScreen(name="entry"))
+            screen_manager.add_widget(LoginScreen(name="login"))
+            screen_manager.add_widget(RegistrationScreen(name="registration"))
+            screen_manager.add_widget(PasswordRecoveryScreen(name="password_recovery"))
+            screen_manager.add_widget(EmailVerificationScreen(name="email_verification"))
+            screen_manager.add_widget(PlayerProfileScreen(name="player_profile"))
+            screen_manager.add_widget(StartScreen(name="start"))
+            screen_manager.add_widget(CreateRoomScreen(name="create_room"))
+            screen_manager.add_widget(JoinRoomScreen(name="join_room"))
+            screen_manager.add_widget(FriendsScreen(name="friends"))
+            screen_manager.add_widget(RulesScreen(name="rules"))
+            screen_manager.add_widget(RoomScreen(name="room"))
+            screen_manager.bind(current=self._guard_session)
+            screen_manager.current = "start" if self.authenticated else "entry"
+            return screen_manager
+        except Exception as error:
+            _log_unhandled_exception(type(error), error, error.__traceback__)
+            return self._build_startup_error_screen(error)
+
+    def _build_startup_error_screen(self, error):
+        manager = ScreenManager(transition=FadeTransition(duration=0))
+        screen = Screen(name="startup_error")
+        content = BoxLayout(
+            orientation="vertical",
+            padding=[dp(18), dp(24), dp(18), dp(24)],
+            spacing=dp(12),
+        )
+        content.add_widget(Label(text="ALIAS ONLINE", bold=True, font_size="24sp"))
+        content.add_widget(
+            Label(
+                text="Ошибка запуска приложения.\nОткрой файл alias_runtime_error.log и пришли его.",
+                halign="center",
+                valign="middle",
+            )
+        )
+        content.add_widget(
+            Label(
+                text=str(error),
+                color=(1, 0.5, 0.5, 1),
+                halign="center",
+                valign="middle",
+            )
+        )
+        screen.add_widget(content)
+        manager.add_widget(screen)
+        manager.current = "startup_error"
+        return manager
 
     def _room_server_is_healthy(self, base_url=None):
         target_url = (base_url or room_server_url()).strip().rstrip("/")
