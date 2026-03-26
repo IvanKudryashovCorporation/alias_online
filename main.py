@@ -127,7 +127,7 @@ class AliasApp(App):
         try:
             register_game_font()
             initialize_database()
-            self._ensure_local_room_server()
+            Clock.schedule_once(lambda *_: self._safe_start_room_server(), 0)
             Clock.schedule_once(lambda *_: self._refresh_mobile_window_mode(), 0)
 
             from screens.create_room import CreateRoomScreen
@@ -167,6 +167,12 @@ class AliasApp(App):
             _log_unhandled_exception(type(error), error, error.__traceback__)
             return self._build_startup_error_screen(error)
 
+    def _safe_start_room_server(self):
+        try:
+            self._ensure_local_room_server()
+        except Exception as error:
+            _log_unhandled_exception(type(error), error, error.__traceback__)
+
     def _build_startup_error_screen(self, error):
         manager = ScreenManager(transition=FadeTransition(duration=0))
         screen = Screen(name="startup_error")
@@ -202,7 +208,7 @@ class AliasApp(App):
             return False
         health_url = f"{target_url}/health"
         try:
-            with urllib.request.urlopen(health_url, timeout=1.2) as response:
+            with urllib.request.urlopen(health_url, timeout=0.35) as response:
                 return response.status == 200
         except (urllib.error.URLError, TimeoutError):
             return False
@@ -237,11 +243,6 @@ class AliasApp(App):
                 daemon=True,
             )
             self._room_server_thread.start()
-
-            for _ in range(20):
-                if self._room_server_is_healthy(configured_url):
-                    return
-                time.sleep(0.25)
             return
 
         if platform == "ios":
@@ -264,10 +265,7 @@ class AliasApp(App):
             self._room_server_process = None
             return
 
-        for _ in range(18):
-            if self._room_server_is_healthy(configured_url):
-                return
-            time.sleep(0.2)
+        return
 
     def on_stop(self):
         self._leave_active_room()
