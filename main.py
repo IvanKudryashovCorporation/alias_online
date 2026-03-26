@@ -18,7 +18,10 @@ if platform in ("android", "ios"):
     Config.set("graphics", "fullscreen", "auto")
     Config.set("graphics", "borderless", "1")
 
-from kivy.core.window import Window
+try:
+    from kivy.core.window import Window
+except Exception:  # pragma: no cover - keep Android startup resilient
+    Window = None
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.label import Label
 from kivy.uix.screenmanager import FadeTransition, Screen, ScreenManager
@@ -37,11 +40,14 @@ from services.room_hub import (
 )
 from ui.theme import register_game_font
 
-Window.title = "Alias Online"
-Window.softinput_mode = "below_target"
+if Window is not None:
+    with suppress(Exception):
+        Window.title = "Alias Online"
+        Window.softinput_mode = "below_target"
 
-if platform not in ("android", "ios"):
-    Window.size = (430, 820)
+if Window is not None and platform not in ("android", "ios"):
+    with suppress(Exception):
+        Window.size = (430, 820)
 
 try:
     if platform == "android":
