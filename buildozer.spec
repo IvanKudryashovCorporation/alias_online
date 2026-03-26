@@ -25,7 +25,6 @@ android.archs = arm64-v8a
 android.debug_artifact = apk
 android.release_artifact = apk
 android.allow_backup = False
-android.apptheme = "@android:style/Theme.NoTitleBar.Fullscreen"
 
 presplash.filename = image/lobby_minimal.png
 presplash.color = #4fa4d6
