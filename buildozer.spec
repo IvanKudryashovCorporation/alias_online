@@ -9,7 +9,7 @@ source.exclude_dirs = venv,.git,__pycache__,bin,dist,build,.buildozer
 source.exclude_patterns = *.pyc,*.pyo,data/*.db,data/_*.db
 
 version = 1.1.0
-requirements = python3,kivy==2.3.1,pyjnius
+requirements = python3,kivy==2.3.1,pyjnius,filetype
 orientation = portrait
 fullscreen = 1
 

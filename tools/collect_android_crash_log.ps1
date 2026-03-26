@@ -107,7 +107,7 @@ Write-Host "Collecting logcat..." -ForegroundColor Green
 $rawLog = Invoke-Adb -Args @("-s", $deviceSerial, "logcat", "-d")
 $rawLog | Out-File -FilePath $rawLogPath -Encoding utf8
 
-$regex = "(?i)(FATAL EXCEPTION|AndroidRuntime|Traceback|python|kivy|alias)"
+$regex = "(?i)(FATAL EXCEPTION|AndroidRuntime|Traceback|python|kivy|alias|ModuleNotFoundError|ImportError|No module named)"
 $filteredLines = $rawLog | Where-Object { $_ -match $regex }
 
 if ($filteredLines.Count -gt 0) {
