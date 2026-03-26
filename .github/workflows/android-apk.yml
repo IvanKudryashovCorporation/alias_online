@@ -68,11 +68,16 @@ jobs:
           python -m pip install "cython==0.29.36" buildozer
 
       - name: Inject global room server URL
-        if: ${{ secrets.ALIAS_ROOM_SERVER_URL != '' }}
+        env:
+          ALIAS_ROOM_SERVER_URL: ${{ secrets.ALIAS_ROOM_SERVER_URL }}
         run: |
-          mkdir -p data
-          printf "%s\n" "${{ secrets.ALIAS_ROOM_SERVER_URL }}" > data/room_server_url.txt
-          echo "Using global room server URL from repository secret."
+          if [ -n "$ALIAS_ROOM_SERVER_URL" ]; then
+            mkdir -p data
+            printf "%s\n" "$ALIAS_ROOM_SERVER_URL" > data/room_server_url.txt
+            echo "Using global room server URL from repository secret."
+          else
+            echo "ALIAS_ROOM_SERVER_URL is not set, fallback URL config will be used."
+          fi
 
       - name: Build debug APK
         id: build_step
