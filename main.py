@@ -1,15 +1,24 @@
 import subprocess
 import sys
+import threading
 import time
+import traceback
 import urllib.error
 import urllib.request
 from contextlib import suppress
 from pathlib import Path
 
 from kivy.app import App
+from kivy.clock import Clock
+from kivy.config import Config
+from kivy.utils import platform
+
+if platform in ("android", "ios"):
+    Config.set("graphics", "fullscreen", "auto")
+    Config.set("graphics", "borderless", "1")
+
 from kivy.core.window import Window
 from kivy.uix.screenmanager import FadeTransition, ScreenManager
-from kivy.utils import platform
 
 from screens.create_room import CreateRoomScreen
 from screens.email_verification_screen import EmailVerificationScreen
@@ -38,6 +47,16 @@ Window.softinput_mode = "below_target"
 
 if platform not in ("android", "ios"):
     Window.size = (430, 820)
+
+try:
+    if platform == "android":
+        from android.runnable import run_on_ui_thread
+    else:
+        def run_on_ui_thread(func):
+            return func
+except Exception:  # pragma: no cover
+    def run_on_ui_thread(func):
+        return func
 
 
 class _SingleInstanceGuard:
@@ -71,6 +90,28 @@ class _SingleInstanceGuard:
         self._handle = None
 
 
+def _runtime_log_path():
+    app = App.get_running_app()
+    user_data_dir = getattr(app, "user_data_dir", None) if app is not None else None
+    if user_data_dir:
+        return Path(user_data_dir) / "alias_runtime_error.log"
+    return Path.home() / "alias_runtime_error.log"
+
+
+def _log_unhandled_exception(exc_type, exc_value, exc_traceback):
+    log_path = _runtime_log_path()
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    error_dump = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
+    try:
+        log_path.write_text(error_dump, encoding="utf-8")
+    except OSError:
+        pass
+    sys.__excepthook__(exc_type, exc_value, exc_traceback)
+
+
+sys.excepthook = _log_unhandled_exception
+
+
 class AliasApp(App):
     guest_name = "Гость"
 
@@ -82,6 +123,8 @@ class AliasApp(App):
         self.pending_registration_session_id = None
         self.active_room = {}
         self._room_server_process = None
+        self._room_server_thread = None
+        self._embedded_room_server = None
         self.guest_room_lock_until = 0.0
         self.guest_room_lock_reason = None
 
@@ -89,6 +132,7 @@ class AliasApp(App):
         register_game_font()
         initialize_database()
         self._ensure_local_room_server()
+        Clock.schedule_once(lambda *_: self._refresh_mobile_window_mode(), 0)
 
         active_profile = get_active_profile()
         self.authenticated = active_profile is not None
@@ -119,12 +163,40 @@ class AliasApp(App):
             return False
 
     def _ensure_local_room_server(self):
-        if platform in ("android", "ios"):
-            return
         if self._room_server_is_healthy():
             return
 
         root_dir = Path(__file__).resolve().parent
+        if platform == "android":
+            try:
+                from server.room_server import create_server
+            except Exception:
+                self._embedded_room_server = None
+                return
+
+            db_path = Path(getattr(self, "user_data_dir", "") or (root_dir / "data")) / "room_server" / "rooms.db"
+            try:
+                self._embedded_room_server = create_server(host="127.0.0.1", port=8765, db_path=db_path)
+            except OSError:
+                self._embedded_room_server = None
+                return
+
+            self._room_server_thread = threading.Thread(
+                target=self._embedded_room_server.serve_forever,
+                name="alias-room-server",
+                daemon=True,
+            )
+            self._room_server_thread.start()
+
+            for _ in range(20):
+                if self._room_server_is_healthy():
+                    return
+                time.sleep(0.25)
+            return
+
+        if platform == "ios":
+            return
+
         server_script = root_dir / "server" / "room_server.py"
         if not server_script.exists():
             return
@@ -156,6 +228,15 @@ class AliasApp(App):
                 process.wait(timeout=1.2)
             except subprocess.TimeoutExpired:
                 process.kill()
+
+        embedded_server = self._embedded_room_server
+        if embedded_server is not None:
+            with suppress(Exception):
+                embedded_server.shutdown()
+            with suppress(Exception):
+                embedded_server.server_close()
+            self._embedded_room_server = None
+            self._room_server_thread = None
 
     def has_session_access(self):
         return self.authenticated or self.guest_mode
@@ -293,6 +374,46 @@ class AliasApp(App):
 
         if not self.has_session_access():
             manager.current = "entry"
+
+    def on_start(self):
+        self._refresh_mobile_window_mode()
+
+    def on_resume(self):
+        self._refresh_mobile_window_mode()
+        return True
+
+    def _refresh_mobile_window_mode(self):
+        if platform != "android":
+            return
+        self._apply_android_fullscreen()
+
+    @run_on_ui_thread
+    def _apply_android_fullscreen(self):
+        if platform != "android":
+            return
+
+        try:
+            from jnius import autoclass
+
+            PythonActivity = autoclass("org.kivy.android.PythonActivity")
+            View = autoclass("android.view.View")
+            LayoutParams = autoclass("android.view.WindowManager$LayoutParams")
+            activity = PythonActivity.mActivity
+            window = activity.getWindow()
+            decor_view = window.getDecorView()
+
+            ui_flags = (
+                View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                | View.SYSTEM_UI_FLAG_FULLSCREEN
+                | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+            )
+            window.addFlags(LayoutParams.FLAG_FULLSCREEN)
+            decor_view.setSystemUiVisibility(ui_flags)
+        except Exception:
+            return
 
 
 if __name__ == "__main__":

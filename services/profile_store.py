@@ -4,6 +4,7 @@ import os
 import re
 import shutil
 import sqlite3
+from contextlib import suppress
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -66,15 +67,28 @@ class Profile:
         return None
 
 
+def _mobile_data_root():
+    app = App.get_running_app()
+    user_data_dir = getattr(app, "user_data_dir", None) if app is not None else None
+    if user_data_dir:
+        return Path(user_data_dir)
+
+    if platform == "android":
+        with suppress(Exception):
+            from android.storage import app_storage_path
+
+            storage_path = app_storage_path()
+            if storage_path:
+                return Path(storage_path)
+
+    return Path.home() / ".alias_online"
+
+
 def _resolve_db_path(db_path=None):
     if db_path:
         path = Path(db_path)
     elif platform in ("android", "ios"):
-        app = App.get_running_app()
-        if app is not None and getattr(app, "user_data_dir", None):
-            path = Path(app.user_data_dir) / "alias_online.db"
-        else:
-            path = DEFAULT_DB_PATH
+        path = _mobile_data_root() / "alias_online.db"
     else:
         path = DEFAULT_DB_PATH
 

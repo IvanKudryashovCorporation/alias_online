@@ -10,6 +10,7 @@ on:
       - "main.py"
       - "screens/**"
       - "services/**"
+      - "server/**"
       - "ui/**"
       - "image/**"
       - "fonts/**"

@@ -3,6 +3,7 @@ import json
 import random
 import sqlite3
 import string
+from contextlib import suppress
 from datetime import datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -51,8 +52,45 @@ WORDS = {
 }
 
 
+def configure_db_path(path):
+    global DB_PATH
+    DB_PATH = Path(path).expanduser()
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    return DB_PATH
+
+
+def _resolve_mobile_storage_dir():
+    with suppress(Exception):
+        from kivy.app import App
+        from kivy.utils import platform
+
+        if platform not in ("android", "ios"):
+            return None
+
+        app = App.get_running_app()
+        user_data_dir = getattr(app, "user_data_dir", None) if app is not None else None
+        if user_data_dir:
+            return Path(user_data_dir)
+
+        if platform == "android":
+            with suppress(Exception):
+                from android.storage import app_storage_path
+
+                storage_path = app_storage_path()
+                if storage_path:
+                    return Path(storage_path)
+    return None
+
+
+def resolve_db_path():
+    mobile_root = _resolve_mobile_storage_dir()
+    if mobile_root is not None:
+        return configure_db_path(mobile_root / "room_server" / "rooms.db")
+    return DB_PATH
+
+
 def _connect():
-    connection = sqlite3.connect(DB_PATH)
+    connection = sqlite3.connect(resolve_db_path())
     connection.row_factory = sqlite3.Row
     return connection
 
@@ -1711,6 +1749,15 @@ def main():
     server = ThreadingHTTPServer((args.host, args.port), RoomHandler)
     print(f"Room server started on http://{args.host}:{args.port}")
     server.serve_forever()
+
+
+def create_server(host="127.0.0.1", port=8765, db_path=None):
+    if db_path:
+        configure_db_path(db_path)
+    else:
+        resolve_db_path()
+    _init_db()
+    return ThreadingHTTPServer((host, int(port)), RoomHandler)
 
 
 if __name__ == "__main__":

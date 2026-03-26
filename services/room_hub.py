@@ -4,6 +4,8 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+from kivy.utils import platform
+
 DEFAULT_ROOM_SERVER_URL = os.environ.get("ALIAS_ROOM_SERVER_URL", "http://127.0.0.1:8765").rstrip("/")
 
 
@@ -39,6 +41,11 @@ def _request_json(method, path, payload=None, timeout=7, base_url=None):
         message = parsed.get("error") if isinstance(parsed, dict) else f"HTTP {error.code}"
         raise ValueError(message) from error
     except urllib.error.URLError as error:
+        if platform in ("android", "ios"):
+            raise ConnectionError(
+                "Не удалось подключиться к комнатам. Проверь интернет. "
+                "Если это тестовая APK, локальный сервер комнат мог не успеть запуститься."
+            ) from error
         raise ConnectionError(
             "Не удалось подключиться к серверу комнат. Проверь интернет и запусти server/room_server.py."
         ) from error
@@ -165,7 +172,6 @@ def skip_room_word(*, room_code, player_name, base_url=None):
 
 
 def next_room_word(*, room_code, player_name, base_url=None):
-    # Legacy alias: old callers use next_room_word, but backend now treats it as skip.
     return skip_room_word(room_code=room_code, player_name=player_name, base_url=base_url)
 
 
