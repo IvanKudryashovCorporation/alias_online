@@ -22,16 +22,18 @@ from kivy.core.window import Window
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.label import Label
 from kivy.uix.screenmanager import FadeTransition, Screen, ScreenManager
-from services import (
+from services.profile_store import (
     apply_match_exit_penalty,
     get_active_profile,
     get_matchmaking_penalty,
     initialize_database,
+    set_active_profile,
+)
+from services.room_hub import (
     is_local_room_server_url,
     leave_online_room,
     room_server_bind_params,
     room_server_url,
-    set_active_profile,
 )
 from ui.theme import register_game_font
 
