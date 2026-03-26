@@ -16,3 +16,6 @@ server/*.log
 server/__pycache__/
 .env
 .env.local
+logs/
+tools/platform-tools/
+tools/platform-tools.zip
