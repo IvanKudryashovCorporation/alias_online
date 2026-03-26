@@ -67,6 +67,13 @@ jobs:
           python -m pip install --upgrade pip setuptools wheel
           python -m pip install "cython==0.29.36" buildozer
 
+      - name: Inject global room server URL
+        if: ${{ secrets.ALIAS_ROOM_SERVER_URL != '' }}
+        run: |
+          mkdir -p data
+          printf "%s\n" "${{ secrets.ALIAS_ROOM_SERVER_URL }}" > data/room_server_url.txt
+          echo "Using global room server URL from repository secret."
+
       - name: Build debug APK
         id: build_step
         shell: bash

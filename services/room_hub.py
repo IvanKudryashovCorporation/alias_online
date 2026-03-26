@@ -3,14 +3,116 @@ import os
 import urllib.error
 import urllib.parse
 import urllib.request
+from pathlib import Path
 
+from kivy.app import App
 from kivy.utils import platform
 
-DEFAULT_ROOM_SERVER_URL = os.environ.get("ALIAS_ROOM_SERVER_URL", "http://127.0.0.1:8765").rstrip("/")
+DEFAULT_LOCAL_ROOM_SERVER_URL = "http://127.0.0.1:8765"
+ROOM_SERVER_URL_ENV = "ALIAS_ROOM_SERVER_URL"
+ROOM_SERVER_URL_FILE_ENV = "ALIAS_ROOM_SERVER_URL_FILE"
+
+_cached_room_server_url = None
 
 
-def room_server_url():
-    return DEFAULT_ROOM_SERVER_URL
+def _project_root():
+    return Path(__file__).resolve().parent.parent
+
+
+def _normalize_room_server_url(raw_url):
+    clean_url = (raw_url or "").strip().rstrip("/")
+    if not clean_url:
+        return ""
+
+    candidate = clean_url if "://" in clean_url else f"http://{clean_url}"
+    parsed = urllib.parse.urlparse(candidate)
+    if not parsed.scheme or not parsed.netloc:
+        return ""
+
+    scheme = parsed.scheme.lower()
+    if scheme not in {"http", "https"}:
+        return ""
+
+    return f"{scheme}://{parsed.netloc}"
+
+
+def _candidate_url_files():
+    custom_file = (os.environ.get(ROOM_SERVER_URL_FILE_ENV) or "").strip()
+    if custom_file:
+        yield Path(custom_file).expanduser()
+
+    app = App.get_running_app()
+    user_data_dir = getattr(app, "user_data_dir", None) if app is not None else None
+    if user_data_dir:
+        yield Path(user_data_dir) / "room_server_url.txt"
+
+    yield _project_root() / "data" / "room_server_url.txt"
+
+
+def _load_url_from_file():
+    for config_path in _candidate_url_files():
+        if not config_path.exists():
+            continue
+        try:
+            text = config_path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+
+        for raw_line in text.splitlines():
+            line = raw_line.strip()
+            if not line or line.startswith("#"):
+                continue
+            normalized = _normalize_room_server_url(line)
+            if normalized:
+                return normalized
+    return ""
+
+
+def _resolve_room_server_url():
+    from_env = _normalize_room_server_url(os.environ.get(ROOM_SERVER_URL_ENV, ""))
+    if from_env:
+        return from_env
+
+    from_file = _load_url_from_file()
+    if from_file:
+        return from_file
+
+    return DEFAULT_LOCAL_ROOM_SERVER_URL
+
+
+def room_server_url(refresh=False):
+    global _cached_room_server_url
+    if refresh or not _cached_room_server_url:
+        _cached_room_server_url = _resolve_room_server_url()
+    return _cached_room_server_url
+
+
+def set_room_server_url(new_url):
+    global _cached_room_server_url
+    normalized = _normalize_room_server_url(new_url)
+    if not normalized:
+        raise ValueError("Некорректный URL сервера комнат.")
+    _cached_room_server_url = normalized
+    return _cached_room_server_url
+
+
+def is_local_room_server_url(url=None):
+    target_url = _normalize_room_server_url(url or room_server_url())
+    parsed = urllib.parse.urlparse(target_url)
+    host = (parsed.hostname or "").strip().lower()
+    return host in {"127.0.0.1", "localhost", "::1"}
+
+
+def room_server_bind_params(url=None):
+    target_url = _normalize_room_server_url(url or room_server_url())
+    parsed = urllib.parse.urlparse(target_url)
+    host = (parsed.hostname or "127.0.0.1").strip().lower()
+    if host in {"localhost", "::1"}:
+        host = "127.0.0.1"
+    port = parsed.port
+    if port is None:
+        port = 443 if parsed.scheme == "https" else 80
+    return host, int(port)
 
 
 def generate_room_code_preview(*, base_url=None):
@@ -19,7 +121,10 @@ def generate_room_code_preview(*, base_url=None):
 
 
 def _request_json(method, path, payload=None, timeout=7, base_url=None):
-    server_url = (base_url or DEFAULT_ROOM_SERVER_URL).rstrip("/")
+    server_url = _normalize_room_server_url(base_url or room_server_url())
+    if not server_url:
+        raise ConnectionError("URL сервера комнат не настроен.")
+
     url = f"{server_url}{path}"
 
     data = None
@@ -42,9 +147,12 @@ def _request_json(method, path, payload=None, timeout=7, base_url=None):
         raise ValueError(message) from error
     except urllib.error.URLError as error:
         if platform in ("android", "ios"):
+            if is_local_room_server_url(server_url):
+                raise ConnectionError(
+                    "Не удалось подключиться к комнатам. Проверь интернет и перезапусти приложение."
+                ) from error
             raise ConnectionError(
-                "Не удалось подключиться к комнатам. Проверь интернет. "
-                "Если это тестовая APK, локальный сервер комнат мог не успеть запуститься."
+                "Не удалось подключиться к серверу комнат. Проверь интернет и адрес сервера."
             ) from error
         raise ConnectionError(
             "Не удалось подключиться к серверу комнат. Проверь интернет и запусти server/room_server.py."

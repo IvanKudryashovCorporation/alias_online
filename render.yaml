@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: alias-online-room-server
+    env: python
+    plan: free
+    autoDeploy: true
+    buildCommand: pip install -r requirements-server.txt
+    startCommand: python server/room_server.py --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.11
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: ALIAS_ROOMS_DB_PATH
+        value: /var/data/rooms.db
+    disks:
+      - name: alias-room-data
+        mountPath: /var/data
+        sizeGB: 1

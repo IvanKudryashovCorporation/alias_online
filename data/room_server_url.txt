@@ -1,0 +1,4 @@
+# Room server URL for global online.
+# You can override this file using env var ALIAS_ROOM_SERVER_URL.
+# Example:
+# https://alias-online-room-server.onrender.com

@@ -37,7 +37,10 @@ from services import (
     get_active_profile,
     get_matchmaking_penalty,
     initialize_database,
+    is_local_room_server_url,
     leave_online_room,
+    room_server_bind_params,
+    room_server_url,
     set_active_profile,
 )
 from ui.theme import register_game_font
@@ -155,15 +158,24 @@ class AliasApp(App):
         screen_manager.current = "start" if self.authenticated else "entry"
         return screen_manager
 
-    def _room_server_is_healthy(self):
+    def _room_server_is_healthy(self, base_url=None):
+        target_url = (base_url or room_server_url()).strip().rstrip("/")
+        if not target_url:
+            return False
+        health_url = f"{target_url}/health"
         try:
-            with urllib.request.urlopen("http://127.0.0.1:8765/health", timeout=1.2) as response:
+            with urllib.request.urlopen(health_url, timeout=1.2) as response:
                 return response.status == 200
         except (urllib.error.URLError, TimeoutError):
             return False
 
     def _ensure_local_room_server(self):
-        if self._room_server_is_healthy():
+        configured_url = room_server_url(refresh=True)
+        if not is_local_room_server_url(configured_url):
+            return
+
+        bind_host, bind_port = room_server_bind_params(configured_url)
+        if self._room_server_is_healthy(configured_url):
             return
 
         root_dir = Path(__file__).resolve().parent
@@ -176,7 +188,7 @@ class AliasApp(App):
 
             db_path = Path(getattr(self, "user_data_dir", "") or (root_dir / "data")) / "room_server" / "rooms.db"
             try:
-                self._embedded_room_server = create_server(host="127.0.0.1", port=8765, db_path=db_path)
+                self._embedded_room_server = create_server(host=bind_host, port=bind_port, db_path=db_path)
             except OSError:
                 self._embedded_room_server = None
                 return
@@ -189,7 +201,7 @@ class AliasApp(App):
             self._room_server_thread.start()
 
             for _ in range(20):
-                if self._room_server_is_healthy():
+                if self._room_server_is_healthy(configured_url):
                     return
                 time.sleep(0.25)
             return
@@ -204,7 +216,7 @@ class AliasApp(App):
         creation_flags = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
         try:
             self._room_server_process = subprocess.Popen(
-                [sys.executable, str(server_script), "--host", "127.0.0.1", "--port", "8765"],
+                [sys.executable, str(server_script), "--host", bind_host, "--port", str(bind_port)],
                 cwd=str(root_dir),
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
@@ -215,7 +227,7 @@ class AliasApp(App):
             return
 
         for _ in range(18):
-            if self._room_server_is_healthy():
+            if self._room_server_is_healthy(configured_url):
                 return
             time.sleep(0.2)
 

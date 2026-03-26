@@ -1,5 +1,6 @@
 import argparse
 import json
+import os
 import random
 import sqlite3
 import string
@@ -1740,11 +1741,25 @@ class RoomHandler(BaseHTTPRequestHandler):
 
 
 def main():
+    default_host = os.environ.get("ALIAS_ROOM_SERVER_HOST", "0.0.0.0")
+    default_port_raw = os.environ.get("PORT") or os.environ.get("ALIAS_ROOM_SERVER_PORT") or "8765"
+    try:
+        default_port = int(default_port_raw)
+    except ValueError:
+        default_port = 8765
+
+    env_db_path = (os.environ.get("ALIAS_ROOMS_DB_PATH") or "").strip()
+
     parser = argparse.ArgumentParser(description="Alias Online room server")
-    parser.add_argument("--host", default="0.0.0.0")
-    parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--host", default=default_host)
+    parser.add_argument("--port", type=int, default=default_port)
+    parser.add_argument("--db-path", default=env_db_path or None)
     args = parser.parse_args()
 
+    if args.db_path:
+        configure_db_path(args.db_path)
+    else:
+        resolve_db_path()
     _init_db()
     server = ThreadingHTTPServer((args.host, args.port), RoomHandler)
     print(f"Room server started on http://{args.host}:{args.port}")
