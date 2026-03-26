@@ -1,3 +1,6 @@
+import importlib
+import importlib.util
+import os
 import subprocess
 import sys
 import threading
@@ -17,6 +20,71 @@ from kivy.utils import platform
 if platform in ("android", "ios"):
     Config.set("graphics", "fullscreen", "auto")
     Config.set("graphics", "borderless", "1")
+
+
+def _ensure_android_site_packages_path():
+    if platform != "android":
+        return
+
+    android_argument = os.environ.get("ANDROID_ARGUMENT")
+    if not android_argument:
+        return
+
+    site_packages_dir = Path(android_argument) / "_python_bundle" / "site-packages"
+    if site_packages_dir.exists():
+        site_packages_str = str(site_packages_dir)
+        if site_packages_str not in sys.path:
+            sys.path.append(site_packages_str)
+
+
+def _preload_kivy_input_package():
+    """
+    BlueStacks can intermittently fail importing `kivy.input` during SDL2 window init.
+    We proactively load the package from the bundled .py/.pyc path so Window provider
+    initialization does not abort with ModuleNotFoundError.
+    """
+
+    try:
+        import kivy  # local import to keep startup ordering explicit
+    except Exception:
+        return
+
+    try:
+        importlib.import_module("kivy.input")
+        return
+    except ModuleNotFoundError as exc:
+        if getattr(exc, "name", "") != "kivy.input":
+            return
+    except Exception:
+        return
+
+    try:
+        input_dir = Path(kivy.__file__).resolve().parent / "input"
+        init_candidates = (input_dir / "__init__.py", input_dir / "__init__.pyc")
+        init_path = next((candidate for candidate in init_candidates if candidate.exists()), None)
+        if init_path is None:
+            return
+
+        spec = importlib.util.spec_from_file_location(
+            "kivy.input",
+            str(init_path),
+            submodule_search_locations=[str(input_dir)],
+        )
+        if spec is None or spec.loader is None:
+            return
+
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["kivy.input"] = module
+        spec.loader.exec_module(module)
+
+        with suppress(Exception):
+            importlib.import_module("kivy.input.provider")
+    except Exception:
+        sys.modules.pop("kivy.input", None)
+
+
+_ensure_android_site_packages_path()
+_preload_kivy_input_package()
 
 try:
     from kivy.core.window import Window
