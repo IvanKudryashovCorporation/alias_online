@@ -87,7 +87,7 @@ except Exception:  # pragma: no cover - keep Android startup resilient
     Window = None
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.label import Label
-from kivy.uix.screenmanager import FadeTransition, Screen, ScreenManager
+from kivy.uix.screenmanager import FadeTransition, NoTransition, Screen, ScreenManager
 from services.profile_store import (
     apply_match_exit_penalty,
     get_active_profile,
@@ -209,7 +209,8 @@ class AliasApp(App):
             self.authenticated = active_profile is not None
             self.guest_mode = False
 
-            screen_manager = ScreenManager(transition=FadeTransition(duration=0.18))
+            transition = NoTransition() if platform == "android" else FadeTransition(duration=0.18)
+            screen_manager = ScreenManager(transition=transition)
             screen_manager.add_widget(EntryScreen(name="entry"))
             screen_manager.add_widget(LoginScreen(name="login"))
             screen_manager.add_widget(RegistrationScreen(name="registration"))
