@@ -482,10 +482,40 @@ class AliasApp(App):
             manager.current = "entry"
 
     def on_start(self):
+        if platform == "android":
+            Clock.schedule_once(lambda *_: self._debug_dump_ui("start+1s"), 1.0)
+            Clock.schedule_once(lambda *_: self._debug_dump_ui("start+5s"), 5.0)
+            Clock.schedule_once(lambda *_: self._debug_dump_ui("start+12s"), 12.0)
         return
 
     def on_resume(self):
+        if platform == "android":
+            Clock.schedule_once(lambda *_: self._debug_dump_ui("resume+0.5s"), 0.5)
         return True
+
+    def _debug_dump_ui(self, tag):
+        try:
+            root = self.root
+            current = getattr(root, "current", "<no-manager>")
+            screen_names = getattr(root, "screen_names", [])
+            print(f"[ALIAS_UI] {tag} current={current} screens={list(screen_names)}")
+            if root is None:
+                return
+
+            screen = root.get_screen(current) if current in screen_names else None
+            if screen is None:
+                print(f"[ALIAS_UI] {tag} no-active-screen")
+                return
+
+            child_count = len(screen.children)
+            print(f"[ALIAS_UI] {tag} screen={screen.name} size={tuple(screen.size)} children={child_count}")
+            for index, child in enumerate(screen.children[:4]):
+                print(
+                    f"[ALIAS_UI] {tag} child[{index}]={child.__class__.__name__} "
+                    f"size={tuple(child.size)} pos={tuple(child.pos)} opacity={getattr(child, 'opacity', 1)}"
+                )
+        except Exception as error:
+            print(f"[ALIAS_UI] {tag} dump-error={error}")
 
 
 if __name__ == "__main__":
