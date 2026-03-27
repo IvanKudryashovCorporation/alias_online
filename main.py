@@ -106,7 +106,9 @@ from ui.theme import register_game_font
 if Window is not None:
     with suppress(Exception):
         Window.title = "Alias Online"
-        if platform != "android":
+        if platform == "android":
+            Window.softinput_mode = "pan"
+        else:
             Window.softinput_mode = "below_target"
 
 if Window is not None and platform not in ("android", "ios"):
@@ -181,6 +183,8 @@ class AliasApp(App):
         self._embedded_room_server = None
         self.guest_room_lock_until = 0.0
         self.guest_room_lock_reason = None
+        self._force_draw_event = None
+        self._force_draw_until = 0.0
 
     def build(self):
         try:
@@ -483,6 +487,7 @@ class AliasApp(App):
 
     def on_start(self):
         if platform == "android":
+            self._prime_startup_redraw(16.0)
             Clock.schedule_once(lambda *_: self._debug_dump_ui("start+1s"), 1.0)
             Clock.schedule_once(lambda *_: self._debug_dump_ui("start+5s"), 5.0)
             Clock.schedule_once(lambda *_: self._debug_dump_ui("start+12s"), 12.0)
@@ -490,8 +495,63 @@ class AliasApp(App):
 
     def on_resume(self):
         if platform == "android":
+            self._prime_startup_redraw(6.0)
             Clock.schedule_once(lambda *_: self._debug_dump_ui("resume+0.5s"), 0.5)
         return True
+
+    def _prime_startup_redraw(self, duration_seconds):
+        self._stop_force_draw()
+        self._force_draw_until = time.time() + max(2.0, float(duration_seconds))
+        self._force_draw_event = Clock.schedule_interval(self._force_redraw_tick, 1 / 20.0)
+
+    def _stop_force_draw(self):
+        if self._force_draw_event is not None:
+            self._force_draw_event.cancel()
+            self._force_draw_event = None
+
+    def _force_redraw_tick(self, _dt):
+        if time.time() >= self._force_draw_until:
+            self._stop_force_draw()
+            return False
+
+        root = self.root
+        if root is not None:
+            with suppress(Exception):
+                root.canvas.ask_update()
+
+            active_screen = getattr(root, "current_screen", None)
+            if active_screen is not None:
+                with suppress(Exception):
+                    active_screen.canvas.ask_update()
+                self._stabilize_active_screen(active_screen)
+                for child in active_screen.children[:4]:
+                    with suppress(Exception):
+                        child.canvas.ask_update()
+
+        if Window is not None:
+            with suppress(Exception):
+                Window.canvas.ask_update()
+        return True
+
+    @staticmethod
+    def _stabilize_active_screen(screen):
+        screen_size = tuple(screen.size)
+        if screen_size[0] <= 0 or screen_size[1] <= 0:
+            return
+
+        for child in screen.children:
+            size_hint = getattr(child, "size_hint", None)
+            if size_hint is None:
+                continue
+            if tuple(size_hint) != (1, 1):
+                continue
+
+            child_size = tuple(child.size)
+            if child_size[0] >= screen_size[0] * 0.92 and child_size[1] >= screen_size[1] * 0.92:
+                continue
+
+            child.pos = screen.pos
+            child.size = screen.size
 
     def _debug_dump_ui(self, tag):
         try:

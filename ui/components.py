@@ -49,8 +49,10 @@ def resolve_image_source(source):
 
 class ScreenBackground(FloatLayout):
     def __init__(self, variant="lobby", **kwargs):
+        kwargs.setdefault("size_hint", (1, 1))
         super().__init__(**kwargs)
         self.variant = (variant or "lobby").strip().lower()
+        self._bound_parent = None
 
         self._background_image = Image(source=str(BACKGROUND_PATH), fit_mode="fill")
         self._background_image.opacity = 0 if self.variant == "game" else 1
@@ -126,6 +128,36 @@ class ScreenBackground(FloatLayout):
             self._overlay_rect = Rectangle(pos=self._overlay.pos, size=self._overlay.size)
         self._overlay.bind(pos=self._sync_overlay, size=self._sync_overlay)
         self.add_widget(self._overlay)
+
+        self.bind(parent=self._bind_parent_geometry)
+        Clock.schedule_once(self._sync_parent_geometry, 0)
+
+    def _bind_parent_geometry(self, *_):
+        parent = self.parent
+        if self._bound_parent is parent:
+            return
+
+        if self._bound_parent is not None:
+            self._bound_parent.unbind(pos=self._sync_parent_geometry, size=self._sync_parent_geometry)
+
+        self._bound_parent = parent
+        if parent is None:
+            return
+
+        parent.bind(pos=self._sync_parent_geometry, size=self._sync_parent_geometry)
+        self._sync_parent_geometry()
+
+    def _sync_parent_geometry(self, *_):
+        parent = self.parent
+        if parent is None:
+            return
+
+        parent_size = tuple(parent.size)
+        parent_pos = tuple(parent.pos)
+        if tuple(self.size) != parent_size:
+            self.size = parent_size
+        if tuple(self.pos) != parent_pos:
+            self.pos = parent_pos
 
     def _sync_overlay(self, *_):
         self._overlay_rect.pos = self._overlay.pos
@@ -623,10 +655,14 @@ class BodyLabel(Label):
         self._sync_text()
 
     def _sync_text(self, *_):
-        self.text_size = (max(0, self.width), None)
+        next_text_size = (max(0, self.width), None)
+        if self.text_size != next_text_size:
+            self.text_size = next_text_size
 
     def _sync_height(self, *_):
-        self.height = max(dp(22), self.texture_size[1] + dp(4))
+        next_height = max(dp(22), self.texture_size[1] + dp(4))
+        if abs(self.height - next_height) > 0.5:
+            self.height = next_height
 
 
 class PixelLabel(Label):
@@ -651,10 +687,14 @@ class PixelLabel(Label):
         self._sync_text()
 
     def _sync_text(self, *_):
-        self.text_size = (max(0, self.width), None)
+        next_text_size = (max(0, self.width), None)
+        if self.text_size != next_text_size:
+            self.text_size = next_text_size
 
     def _sync_height(self, *_):
-        self.height = max(dp(22), self.texture_size[1] + dp(4))
+        next_height = max(dp(22), self.texture_size[1] + dp(4))
+        if abs(self.height - next_height) > 0.5:
+            self.height = next_height
 
 
 class AliasCoinIcon(Widget):
@@ -949,9 +989,11 @@ class IconMetaChip(RoundedPanel):
         self.label.unbind(width=self.label._sync_text)
         self.label.bind(texture_size=self._sync_label_width)
         self.label.bind(text=self._sync_label_metrics)
+        self.label.bind(width=self._sync_chip_width)
+        self.icon.bind(size=self._sync_chip_width)
         self.add_widget(self.label)
-        self.bind(minimum_width=self._sync_chip_width)
         self._sync_label_metrics()
+        Clock.schedule_once(lambda *_: self._sync_chip_width(), 0)
 
     def set_text(self, text):
         self.label.text = text
@@ -962,10 +1004,15 @@ class IconMetaChip(RoundedPanel):
         self._sync_label_width()
 
     def _sync_label_width(self, *_):
-        self.label.width = max(dp(18), self.label.texture_size[0] + dp(2))
+        next_width = max(dp(18), self.label.texture_size[0] + dp(2))
+        if abs(self.label.width - next_width) > 0.5:
+            self.label.width = next_width
 
     def _sync_chip_width(self, *_):
-        self.width = self.minimum_width
+        horizontal_padding = self.padding[0] + self.padding[2]
+        next_width = horizontal_padding + self.spacing + self.icon.width + self.label.width
+        if abs(self.width - next_width) > 0.5:
+            self.width = next_width
 
 
 class IconCircleButton(ButtonBehavior, FloatLayout):
