@@ -111,7 +111,9 @@ from ui.theme import register_game_font
 if Window is not None:
     with suppress(Exception):
         Window.title = "Alias Online"
-        Window.softinput_mode = "below_target"
+        # `below_target` can resize SurfaceView on Android and trigger
+        # intermittent black-screen frames due to rejected buffer sizes.
+        Window.softinput_mode = "pan" if platform == "android" else "below_target"
 
 if Window is not None and platform not in ("android", "ios"):
     with suppress(Exception):
@@ -527,12 +529,15 @@ class AliasApp(App):
             ui_flags = (
                 View.SYSTEM_UI_FLAG_LAYOUT_STABLE
                 | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
                 | View.SYSTEM_UI_FLAG_FULLSCREEN
-                | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
                 | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
             )
+            window.clearFlags(LayoutParams.FLAG_FORCE_NOT_FULLSCREEN)
             window.addFlags(LayoutParams.FLAG_FULLSCREEN)
+            # Keep content stable when soft keyboard appears on Android:
+            # avoid surface height oscillation (e.g. 1564 <-> 1600) that can
+            # lead to black output on some emulators/devices.
+            window.setSoftInputMode(LayoutParams.SOFT_INPUT_ADJUST_PAN)
             decor_view.setSystemUiVisibility(ui_flags)
         except Exception:
             return
