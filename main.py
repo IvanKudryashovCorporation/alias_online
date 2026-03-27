@@ -13,13 +13,8 @@ from pathlib import Path
 
 from kivy.app import App
 from kivy.clock import Clock
-from kivy.config import Config
 from kivy.metrics import dp
 from kivy.utils import platform
-
-if platform in ("android", "ios"):
-    Config.set("graphics", "fullscreen", "auto")
-    Config.set("graphics", "borderless", "1")
 
 
 def _ensure_android_site_packages_path():
@@ -111,24 +106,12 @@ from ui.theme import register_game_font
 if Window is not None:
     with suppress(Exception):
         Window.title = "Alias Online"
-        # `below_target` can resize SurfaceView on Android and trigger
-        # intermittent black-screen frames due to rejected buffer sizes.
-        Window.softinput_mode = "pan" if platform == "android" else "below_target"
+        if platform != "android":
+            Window.softinput_mode = "below_target"
 
 if Window is not None and platform not in ("android", "ios"):
     with suppress(Exception):
         Window.size = (430, 820)
-
-try:
-    if platform == "android":
-        from android.runnable import run_on_ui_thread
-    else:
-        def run_on_ui_thread(func):
-            return func
-except Exception:  # pragma: no cover
-    def run_on_ui_thread(func):
-        return func
-
 
 class _SingleInstanceGuard:
     def __init__(self, name):
@@ -204,7 +187,6 @@ class AliasApp(App):
             register_game_font()
             initialize_database()
             Clock.schedule_once(lambda *_: self._safe_start_room_server(), 0)
-            Clock.schedule_once(lambda *_: self._refresh_mobile_window_mode(), 0)
 
             from screens.create_room import CreateRoomScreen
             from screens.email_verification_screen import EmailVerificationScreen
@@ -500,47 +482,10 @@ class AliasApp(App):
             manager.current = "entry"
 
     def on_start(self):
-        self._refresh_mobile_window_mode()
+        return
 
     def on_resume(self):
-        self._refresh_mobile_window_mode()
         return True
-
-    def _refresh_mobile_window_mode(self):
-        if platform != "android":
-            return
-        self._apply_android_fullscreen()
-
-    @run_on_ui_thread
-    def _apply_android_fullscreen(self):
-        if platform != "android":
-            return
-
-        try:
-            from jnius import autoclass
-
-            PythonActivity = autoclass("org.kivy.android.PythonActivity")
-            View = autoclass("android.view.View")
-            LayoutParams = autoclass("android.view.WindowManager$LayoutParams")
-            activity = PythonActivity.mActivity
-            window = activity.getWindow()
-            decor_view = window.getDecorView()
-
-            ui_flags = (
-                View.SYSTEM_UI_FLAG_LAYOUT_STABLE
-                | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
-                | View.SYSTEM_UI_FLAG_FULLSCREEN
-                | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
-            )
-            window.clearFlags(LayoutParams.FLAG_FORCE_NOT_FULLSCREEN)
-            window.addFlags(LayoutParams.FLAG_FULLSCREEN)
-            # Keep content stable when soft keyboard appears on Android:
-            # avoid surface height oscillation (e.g. 1564 <-> 1600) that can
-            # lead to black output on some emulators/devices.
-            window.setSoftInputMode(LayoutParams.SOFT_INPUT_ADJUST_PAN)
-            decor_view.setSystemUiVisibility(ui_flags)
-        except Exception:
-            return
 
 
 if __name__ == "__main__":
