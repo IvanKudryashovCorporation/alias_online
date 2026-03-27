@@ -181,6 +181,7 @@ class AliasApp(App):
         self._room_server_process = None
         self._room_server_thread = None
         self._embedded_room_server = None
+        self._room_server_bootstrap_thread = None
         self.guest_room_lock_until = 0.0
         self.guest_room_lock_reason = None
         self._force_draw_event = None
@@ -190,7 +191,7 @@ class AliasApp(App):
         try:
             register_game_font()
             initialize_database()
-            Clock.schedule_once(lambda *_: self._safe_start_room_server(), 0)
+            Clock.schedule_once(lambda *_: self._start_room_server_in_background(), 0)
 
             from screens.create_room import CreateRoomScreen
             from screens.email_verification_screen import EmailVerificationScreen
@@ -235,6 +236,19 @@ class AliasApp(App):
             self._ensure_local_room_server()
         except Exception as error:
             _log_unhandled_exception(type(error), error, error.__traceback__)
+
+    def _start_room_server_in_background(self):
+        existing_thread = self._room_server_bootstrap_thread
+        if existing_thread is not None and existing_thread.is_alive():
+            return
+
+        bootstrap_thread = threading.Thread(
+            target=self._safe_start_room_server,
+            name="alias-room-bootstrap",
+            daemon=True,
+        )
+        self._room_server_bootstrap_thread = bootstrap_thread
+        bootstrap_thread.start()
 
     def _build_startup_error_screen(self, error):
         manager = ScreenManager(transition=FadeTransition(duration=0))
