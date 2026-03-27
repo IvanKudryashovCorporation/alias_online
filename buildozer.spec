@@ -11,7 +11,7 @@ source.exclude_patterns = *.pyc,*.pyo,data/*.db,data/_*.db
 version = 1.1.0
 requirements = python3,kivy==2.3.1,pyjnius,filetype
 orientation = portrait
-fullscreen = 1
+fullscreen = 0
 
 android.api = 34
 android.minapi = 24
