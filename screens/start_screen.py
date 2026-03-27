@@ -239,8 +239,8 @@ class StartScreen(Screen):
 
         create_btn.bind(on_release=self._handle_create_room_press)
         join_btn.bind(on_release=self._handle_join_room_press)
-        friends_btn.bind(on_release=lambda *_: setattr(self.manager, "current", "friends"))
-        rules_btn.bind(on_release=lambda *_: setattr(self.manager, "current", "rules"))
+        friends_btn.bind(on_release=self._open_friends_screen)
+        rules_btn.bind(on_release=self._open_rules_screen)
 
         content.add_widget(menu_holder)
         content.add_widget(Widget())
@@ -543,6 +543,8 @@ class StartScreen(Screen):
         if room_access_state.get("active"):
             self._open_room_access_popup("Создание комнаты")
             return
+        if app is not None and hasattr(app, "ensure_screen"):
+            app.ensure_screen("create_room")
         self.manager.current = "create_room"
 
     def _handle_join_room_press(self, *_):
@@ -551,7 +553,21 @@ class StartScreen(Screen):
         if room_access_state.get("active"):
             self._open_room_access_popup("Вход в комнату")
             return
+        if app is not None and hasattr(app, "ensure_screen"):
+            app.ensure_screen("join_room")
         self.manager.current = "join_room"
+
+    def _open_friends_screen(self, *_):
+        app = App.get_running_app()
+        if app is not None and hasattr(app, "ensure_screen"):
+            app.ensure_screen("friends")
+        self.manager.current = "friends"
+
+    def _open_rules_screen(self, *_):
+        app = App.get_running_app()
+        if app is not None and hasattr(app, "ensure_screen"):
+            app.ensure_screen("rules")
+        self.manager.current = "rules"
 
     def _go_to_login(self, *_):
         app = App.get_running_app()

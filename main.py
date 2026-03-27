@@ -186,6 +186,17 @@ class AliasApp(App):
         self.guest_room_lock_reason = None
         self._force_draw_event = None
         self._force_draw_until = 0.0
+        self._lazy_screen_specs = {
+            "create_room": ("screens.create_room", "CreateRoomScreen"),
+            "join_room": ("screens.join_room", "JoinRoomScreen"),
+            "friends": ("screens.friends", "FriendsScreen"),
+            "rules": ("screens.rules", "RulesScreen"),
+            "room": ("screens.room_screen", "RoomScreen"),
+            "player_profile": ("screens.player_profile_screen", "PlayerProfileScreen"),
+        }
+        self._screen_warmup_queue = []
+        self._screen_warmup_event = None
+        self.screen_manager = None
 
     def build(self):
         try:
@@ -193,17 +204,11 @@ class AliasApp(App):
             initialize_database()
             Clock.schedule_once(lambda *_: self._start_room_server_in_background(), 0)
 
-            from screens.create_room import CreateRoomScreen
             from screens.email_verification_screen import EmailVerificationScreen
             from screens.entry_screen import EntryScreen
-            from screens.friends import FriendsScreen
-            from screens.join_room import JoinRoomScreen
             from screens.login_screen import LoginScreen
             from screens.password_recovery_screen import PasswordRecoveryScreen
-            from screens.player_profile_screen import PlayerProfileScreen
             from screens.registration_screen import RegistrationScreen
-            from screens.room_screen import RoomScreen
-            from screens.rules import RulesScreen
             from screens.start_screen import StartScreen
 
             active_profile = get_active_profile()
@@ -212,20 +217,16 @@ class AliasApp(App):
 
             transition = NoTransition() if platform == "android" else FadeTransition(duration=0.18)
             screen_manager = ScreenManager(transition=transition)
+            self.screen_manager = screen_manager
             screen_manager.add_widget(EntryScreen(name="entry"))
             screen_manager.add_widget(LoginScreen(name="login"))
             screen_manager.add_widget(RegistrationScreen(name="registration"))
             screen_manager.add_widget(PasswordRecoveryScreen(name="password_recovery"))
             screen_manager.add_widget(EmailVerificationScreen(name="email_verification"))
-            screen_manager.add_widget(PlayerProfileScreen(name="player_profile"))
             screen_manager.add_widget(StartScreen(name="start"))
-            screen_manager.add_widget(CreateRoomScreen(name="create_room"))
-            screen_manager.add_widget(JoinRoomScreen(name="join_room"))
-            screen_manager.add_widget(FriendsScreen(name="friends"))
-            screen_manager.add_widget(RulesScreen(name="rules"))
-            screen_manager.add_widget(RoomScreen(name="room"))
             screen_manager.bind(current=self._guard_session)
             screen_manager.current = "start" if self.authenticated else "entry"
+            Clock.schedule_once(lambda *_: self._start_lazy_screen_warmup(), 0.15)
             return screen_manager
         except Exception as error:
             _log_unhandled_exception(type(error), error, error.__traceback__)
@@ -345,6 +346,7 @@ class AliasApp(App):
         return
 
     def on_stop(self):
+        self._stop_lazy_screen_warmup()
         self._leave_active_room()
         process = self._room_server_process
         if process is not None and process.poll() is None:
@@ -507,6 +509,61 @@ class AliasApp(App):
             Clock.schedule_once(lambda *_: self._debug_dump_ui("start+5s"), 5.0)
             Clock.schedule_once(lambda *_: self._debug_dump_ui("start+12s"), 12.0)
         return
+
+    def ensure_screen(self, screen_name):
+        manager = self.root if isinstance(self.root, ScreenManager) else self.screen_manager
+        if manager is None:
+            return None
+
+        if screen_name in manager.screen_names:
+            return manager.get_screen(screen_name)
+
+        screen_spec = self._lazy_screen_specs.get(screen_name)
+        if screen_spec is None:
+            return None
+
+        module_name, class_name = screen_spec
+        module = importlib.import_module(module_name)
+        screen_class = getattr(module, class_name)
+        screen = screen_class(name=screen_name)
+        manager.add_widget(screen)
+        return screen
+
+    def _start_lazy_screen_warmup(self):
+        self._stop_lazy_screen_warmup()
+        manager = self.root if isinstance(self.root, ScreenManager) else self.screen_manager
+        if manager is None:
+            return
+
+        self._screen_warmup_queue = [
+            name for name in self._lazy_screen_specs.keys() if name not in manager.screen_names
+        ]
+        if not self._screen_warmup_queue:
+            return
+
+        self._screen_warmup_event = Clock.schedule_interval(self._warmup_next_screen, 0.03)
+
+    def _stop_lazy_screen_warmup(self):
+        if self._screen_warmup_event is not None:
+            self._screen_warmup_event.cancel()
+            self._screen_warmup_event = None
+        self._screen_warmup_queue = []
+
+    def _warmup_next_screen(self, _dt):
+        if not self._screen_warmup_queue:
+            self._stop_lazy_screen_warmup()
+            return False
+
+        next_screen = self._screen_warmup_queue.pop(0)
+        try:
+            self.ensure_screen(next_screen)
+        except Exception:
+            pass
+
+        if not self._screen_warmup_queue:
+            self._stop_lazy_screen_warmup()
+            return False
+        return True
 
     def on_resume(self):
         if platform == "android":

@@ -749,4 +749,6 @@ class CreateRoomScreen(Screen):
         )
         if app is not None:
             app.set_active_room(active_room)
+            if hasattr(app, "ensure_screen"):
+                app.ensure_screen("room")
         self.manager.current = "room"

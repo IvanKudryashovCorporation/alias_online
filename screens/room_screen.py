@@ -1519,6 +1519,8 @@ class RoomScreen(Screen):
                 app = App.get_running_app()
                 if app is not None:
                     app.clear_active_room()
+                    if hasattr(app, "ensure_screen"):
+                        app.ensure_screen("join_room")
                 self.room_code = ""
                 self.room_state = {}
                 self.status_label.color = COLORS["warning"]
