@@ -768,16 +768,26 @@ class CoinBadge(ButtonBehavior, RoundedPanel):
     def refresh_from_session(self):
         app = App.get_running_app()
         is_authenticated = bool(app is not None and getattr(app, "authenticated", False))
-        profile = app.current_profile() if is_authenticated and hasattr(app, "current_profile") else None
-        if profile is None:
+        is_guest = bool(app is not None and getattr(app, "guest_mode", False))
+
+        if app is None or not (is_authenticated or is_guest):
             self.opacity = 0
             self.disabled = True
             self.set_value(0)
             return
 
+        coin_value = 0
+        if hasattr(app, "current_alias_coins"):
+            coin_value = app.current_alias_coins()
+        elif is_authenticated and hasattr(app, "current_profile"):
+            profile = app.current_profile()
+            coin_value = getattr(profile, "alias_coins", 0) if profile is not None else 0
+        elif is_guest:
+            coin_value = getattr(app, "guest_alias_coins", 0)
+
         self.opacity = 1
         self.disabled = False
-        self.set_value(getattr(profile, "alias_coins", 0))
+        self.set_value(coin_value)
 
     def _animate_press(self, *_):
         Animation.cancel_all(self._bg_color)

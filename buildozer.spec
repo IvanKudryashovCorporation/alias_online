@@ -4,7 +4,7 @@ package.name = aliasonline
 package.domain = com.aliasonline
 
 source.dir = .
-source.include_exts = py,png,jpg,jpeg,webp,bmp,ttf,kv,atlas,txt,csv,json,md
+source.include_exts = py,png,jpg,jpeg,webp,bmp,ttf,kv,atlas,txt,csv,json,md,env,local
 source.exclude_dirs = venv,.git,__pycache__,bin,dist,build,.buildozer
 source.exclude_patterns = *.pyc,*.pyo,data/*.db,data/_*.db
 

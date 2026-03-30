@@ -278,12 +278,12 @@ class StartScreen(Screen):
 
         if app is not None and getattr(app, "guest_mode", False):
             self.profile_card.set_guest(player_name or "Гость")
-            self.coin_badge.set_value(0)
+            self.coin_badge.refresh_from_session()
             return
 
         profile = app.current_profile() if app is not None else None
         self.profile_card.set_profile(profile, player_name=player_name or "")
-        self.coin_badge.set_value(getattr(profile, "alias_coins", 0) if profile is not None else 0)
+        self.coin_badge.refresh_from_session()
 
     def _on_profile_pressed(self, *_):
         app = App.get_running_app()

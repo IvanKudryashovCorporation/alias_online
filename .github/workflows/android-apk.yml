@@ -79,6 +79,29 @@ jobs:
             echo "ALIAS_ROOM_SERVER_URL is not set, fallback URL config will be used."
           fi
 
+      - name: Inject SMTP config for mobile email verification
+        env:
+          ALIAS_SMTP_EMAIL: ${{ secrets.ALIAS_SMTP_EMAIL }}
+          ALIAS_SMTP_APP_PASSWORD: ${{ secrets.ALIAS_SMTP_APP_PASSWORD }}
+          ALIAS_SMTP_HOST: ${{ secrets.ALIAS_SMTP_HOST }}
+          ALIAS_SMTP_PORT: ${{ secrets.ALIAS_SMTP_PORT }}
+        run: |
+          if [ -n "$ALIAS_SMTP_APP_PASSWORD" ]; then
+            mkdir -p data
+            SMTP_EMAIL_VALUE="${ALIAS_SMTP_EMAIL:-aliasgameonline@gmail.com}"
+            SMTP_HOST_VALUE="${ALIAS_SMTP_HOST:-smtp.gmail.com}"
+            SMTP_PORT_VALUE="${ALIAS_SMTP_PORT:-587}"
+            cat > data/runtime.env <<EOF
+ALIAS_SMTP_EMAIL=${SMTP_EMAIL_VALUE}
+ALIAS_SMTP_APP_PASSWORD=${ALIAS_SMTP_APP_PASSWORD}
+ALIAS_SMTP_HOST=${SMTP_HOST_VALUE}
+ALIAS_SMTP_PORT=${SMTP_PORT_VALUE}
+EOF
+            echo "Injected data/runtime.env for mobile SMTP fallback."
+          else
+            echo "ALIAS_SMTP_APP_PASSWORD secret is not set. Mobile local e-mail fallback may be unavailable."
+          fi
+
       - name: Build debug APK
         id: build_step
         shell: bash

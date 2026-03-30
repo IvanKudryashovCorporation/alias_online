@@ -16,6 +16,8 @@ server/*.log
 server/__pycache__/
 .env
 .env.local
+data/runtime.env
+data/email.env
 logs/
 tools/platform-tools/
 tools/platform-tools.zip

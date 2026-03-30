@@ -229,9 +229,11 @@ class RegistrationScreen(Screen):
         self.name_input = AppTextInput(hint_text="\u0418\u043c\u044f", height=dp(48))
         self.email_input = AppTextInput(hint_text="E-mail", height=dp(48))
         self.password_input = AppTextInput(hint_text="\u041f\u0430\u0440\u043e\u043b\u044c", password=True, height=dp(48))
+        self.confirm_password_input = AppTextInput(hint_text="\u041f\u043e\u0434\u0442\u0432\u0435\u0440\u0434\u0438 \u043f\u0430\u0440\u043e\u043b\u044c", password=True, height=dp(48))
         self.name_input.padding = self.default_input_padding[:]
         self.email_input.padding = self.default_input_padding[:]
         self.password_input.padding = self.default_input_padding[:]
+        self.confirm_password_input.padding = self.default_input_padding[:]
 
         self.name_caption_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=0, opacity=0)
         self.name_caption = BodyLabel(
@@ -264,11 +266,13 @@ class RegistrationScreen(Screen):
         self.name_row = self._centered_row(self.name_input, height=dp(48), width=self.field_width)
         self.email_row = self._centered_row(self.email_input, height=dp(48), width=self.field_width)
         self.password_row = self._centered_row(self.password_input, height=dp(48), width=self.field_width)
+        self.confirm_password_row = self._centered_row(self.confirm_password_input, height=dp(48), width=self.field_width)
         self.card.add_widget(self.name_caption_row)
         self.card.add_widget(self.name_row)
         self.card.add_widget(self.email_caption_row)
         self.card.add_widget(self.email_row)
         self.card.add_widget(self.password_row)
+        self.card.add_widget(self.confirm_password_row)
 
         self.stats_wrap = BoxLayout(
             orientation="vertical",
@@ -533,6 +537,7 @@ class RegistrationScreen(Screen):
             self.name_input.text = ""
             self.email_input.text = ""
             self.password_input.text = ""
+            self.confirm_password_input.text = ""
             self.bio_input.text = ""
             self.selected_avatar_path = None
             self.avatar_preview.set_avatar(None)
@@ -550,6 +555,7 @@ class RegistrationScreen(Screen):
         self.name_input.text = latest_profile.name
         self.email_input.text = latest_profile.email
         self.password_input.text = ""
+        self.confirm_password_input.text = ""
         self.bio_input.text = latest_profile.bio or ""
         self.selected_avatar_path = latest_profile.avatar_path
         self.avatar_preview.set_avatar(latest_profile.avatar_source)
@@ -575,10 +581,14 @@ class RegistrationScreen(Screen):
                     bio=self.bio_input.text,
                 )
             else:
+                entered_password = self.password_input.text
+                confirmed_password = self.confirm_password_input.text
+                if entered_password != confirmed_password:
+                    raise ValueError("\u041f\u0430\u0440\u043e\u043b\u0438 \u043d\u0435 \u0441\u043e\u0432\u043f\u0430\u0434\u0430\u044e\u0442. \u041f\u0440\u043e\u0432\u0435\u0440\u044c \u0438 \u043f\u043e\u0432\u0442\u043e\u0440\u0438 \u0432\u0432\u043e\u0434.")
                 verification = begin_registration_verification(
                     name=self.name_input.text,
                     email=self.email_input.text,
-                    password=self.password_input.text,
+                    password=entered_password,
                     bio=self.bio_input.text,
                 )
         except ValueError as error:
@@ -723,6 +733,10 @@ class RegistrationScreen(Screen):
             self.password_row.height = 0
             self.password_row.opacity = 0
             self.password_input.disabled = True
+            self.confirm_password_input.text = ""
+            self.confirm_password_row.height = 0
+            self.confirm_password_row.opacity = 0
+            self.confirm_password_input.disabled = True
             self.stats_wrap.height = dp(110)
             self.stats_wrap.opacity = 1
             self.avatar_mode_note_row.height = 0
@@ -812,6 +826,7 @@ class RegistrationScreen(Screen):
         self.name_input.padding = self.default_input_padding[:]
         self.email_input.padding = self.default_input_padding[:]
         self.password_input.padding = self.default_input_padding[:]
+        self.confirm_password_input.padding = self.default_input_padding[:]
         self.name_input.readonly = False
         self.email_input.readonly = False
         self.name_input.disabled = False
@@ -819,6 +834,10 @@ class RegistrationScreen(Screen):
         self.password_row.height = dp(48)
         self.password_row.opacity = 1
         self.password_input.disabled = False
+        self.confirm_password_input.text = ""
+        self.confirm_password_row.height = dp(48)
+        self.confirm_password_row.opacity = 1
+        self.confirm_password_input.disabled = False
         self.stats_wrap.height = 0
         self.stats_wrap.opacity = 0
         self.avatar_mode_note_row.height = dp(22)
@@ -867,7 +886,7 @@ class RegistrationScreen(Screen):
         self.status_row.opacity = 1
         self.forgot_password_row.height = dp(22)
         self.forgot_password_row.opacity = 0.85
-        self.card.height = dp(560)
+        self.card.height = dp(612)
         self.logout_btn.disabled = True
         self.logout_btn.opacity = 0
         self.logout_row.height = 0
@@ -888,7 +907,7 @@ class RegistrationScreen(Screen):
         button_width = min(self.button_width, inner_width - dp(6))
         avatar_width = min(self.avatar_panel_width, inner_width - dp(6))
 
-        for widget in (self.name_input, self.email_input, self.password_input, self.bio_input):
+        for widget in (self.name_input, self.email_input, self.password_input, self.confirm_password_input, self.bio_input):
             widget.size_hint_x = None
             widget.width = field_width
 

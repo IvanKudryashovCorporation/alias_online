@@ -176,6 +176,7 @@ class AliasApp(App):
         self.authenticated = False
         self.guest_mode = False
         self.guest_counter = 0
+        self.guest_alias_coins = 0
         self.pending_registration_session_id = None
         self.active_room = {}
         self._room_server_process = None
@@ -380,9 +381,28 @@ class AliasApp(App):
         profile = self.current_profile()
         return profile.name if profile is not None else None
 
+    def current_alias_coins(self):
+        if self.authenticated:
+            profile = self.current_profile()
+            if profile is None:
+                return 0
+            try:
+                return int(getattr(profile, "alias_coins", 0) or 0)
+            except (TypeError, ValueError):
+                return 0
+
+        if self.guest_mode:
+            try:
+                return int(getattr(self, "guest_alias_coins", 0) or 0)
+            except (TypeError, ValueError):
+                return 0
+
+        return 0
+
     def sign_in(self, profile=None):
         self.authenticated = profile is not None
         self.guest_mode = False
+        self.guest_alias_coins = 0
         self.clear_pending_registration_session()
         self.clear_active_room()
 
@@ -395,6 +415,7 @@ class AliasApp(App):
         self.authenticated = False
         self.guest_mode = True
         self.guest_counter += 1
+        self.guest_alias_coins = 100
         self.guest_name = f"Гость{self.guest_counter}"
         self.clear_pending_registration_session()
         self.clear_active_room()
@@ -402,6 +423,7 @@ class AliasApp(App):
     def start_registration_flow(self):
         self.authenticated = False
         self.guest_mode = False
+        self.guest_alias_coins = 0
         self.clear_pending_registration_session()
         set_active_profile(None)
         self.clear_active_room()
@@ -410,6 +432,7 @@ class AliasApp(App):
         self._leave_active_room()
         self.authenticated = False
         self.guest_mode = False
+        self.guest_alias_coins = 0
         self.clear_pending_registration_session()
         set_active_profile(None)
         self.clear_active_room()

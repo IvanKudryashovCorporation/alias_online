@@ -2,10 +2,17 @@ import argparse
 import json
 import os
 import random
+import re
+import secrets
+import smtplib
 import sqlite3
+import ssl
 import string
+import threading
+import time
 from contextlib import suppress
 from datetime import datetime, timedelta
+from email.message import EmailMessage
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -51,6 +58,399 @@ WORDS = {
         "термодинамика",
     ],
 }
+
+DEFAULT_SMTP_HOST = "smtp.gmail.com"
+DEFAULT_SMTP_PORT = 587
+DEFAULT_SENDER_EMAIL = "aliasgameonline@gmail.com"
+DEFAULT_CODE_TTL_SECONDS = 10 * 60
+DEFAULT_RESEND_COOLDOWN_SECONDS = 30
+DEFAULT_MAX_ATTEMPTS = 5
+EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+_AUTH_LOCK = threading.Lock()
+_PENDING_REGISTRATIONS = {}
+_PENDING_PASSWORD_RESETS = {}
+
+
+def _safe_int_env(name, default):
+    raw = (os.getenv(name) or "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return max(1, value)
+
+
+def _code_ttl_seconds():
+    return _safe_int_env("ALIAS_EMAIL_CODE_TTL_SECONDS", DEFAULT_CODE_TTL_SECONDS)
+
+
+def _resend_cooldown_seconds():
+    return _safe_int_env("ALIAS_EMAIL_RESEND_COOLDOWN_SECONDS", DEFAULT_RESEND_COOLDOWN_SECONDS)
+
+
+def _max_attempts():
+    return _safe_int_env("ALIAS_EMAIL_MAX_ATTEMPTS", DEFAULT_MAX_ATTEMPTS)
+
+
+def _smtp_sender_email():
+    return (os.getenv("ALIAS_SMTP_EMAIL") or DEFAULT_SENDER_EMAIL).strip().lower()
+
+
+def _smtp_app_password():
+    raw = (os.getenv("ALIAS_SMTP_APP_PASSWORD") or "").strip()
+    return raw.replace(" ", "")
+
+
+def _smtp_host():
+    return (os.getenv("ALIAS_SMTP_HOST") or DEFAULT_SMTP_HOST).strip()
+
+
+def _smtp_port():
+    return _safe_int_env("ALIAS_SMTP_PORT", DEFAULT_SMTP_PORT)
+
+
+def _generate_email_code():
+    return f"{secrets.randbelow(1_000_000):06d}"
+
+
+def _mask_email(email):
+    local, _, domain = (email or "").partition("@")
+    if not local or not domain:
+        return email
+    if len(local) <= 2:
+        masked_local = local[0] + "*"
+    else:
+        masked_local = local[0] + "*" * (len(local) - 2) + local[-1]
+    return f"{masked_local}@{domain}"
+
+
+def _normalize_code(code):
+    return "".join(character for character in (code or "") if character.isdigit())
+
+
+def _send_code_email(recipient_email, code, subject=None, intro_line=None):
+    sender_email = _smtp_sender_email()
+    app_password = _smtp_app_password()
+    if not app_password:
+        raise ValueError(
+            "Почтовая отправка не настроена на сервере. Укажи ALIAS_SMTP_APP_PASSWORD для аккаунта aliasgameonline@gmail.com."
+        )
+
+    message = EmailMessage()
+    message["From"] = sender_email
+    message["To"] = recipient_email
+    message["Subject"] = (subject or "").strip() or "Код подтверждения Alias Online"
+    intro = (intro_line or "").strip() or f"Твой код подтверждения для Alias Online: {code}"
+    message.set_content(
+        "\n".join(
+            [
+                "Привет!",
+                "",
+                intro,
+                "",
+                f"Код действует {_code_ttl_seconds() // 60} минут.",
+                "Если ты не запрашивал действие, просто проигнорируй это письмо.",
+            ]
+        )
+    )
+
+    context = ssl.create_default_context()
+    try:
+        with smtplib.SMTP(_smtp_host(), _smtp_port(), timeout=20) as server:
+            server.ehlo()
+            server.starttls(context=context)
+            server.ehlo()
+            server.login(sender_email, app_password)
+            server.send_message(message)
+    except smtplib.SMTPAuthenticationError as error:
+        raise ValueError("Не удалось авторизоваться в почте отправителя. Проверь ALIAS_SMTP_EMAIL и ALIAS_SMTP_APP_PASSWORD.") from error
+    except OSError as error:
+        raise ValueError("Не удалось отправить письмо с кодом. Проверь интернет и SMTP-настройки сервера.") from error
+
+
+def _cleanup_auth_sessions_locked(now=None):
+    now = time.time() if now is None else now
+    expired_registration = [
+        session_id
+        for session_id, record in _PENDING_REGISTRATIONS.items()
+        if float(record.get("expires_at", 0)) <= now
+    ]
+    for session_id in expired_registration:
+        _PENDING_REGISTRATIONS.pop(session_id, None)
+
+    expired_password = [
+        session_id
+        for session_id, record in _PENDING_PASSWORD_RESETS.items()
+        if float(record.get("expires_at", 0)) <= now
+    ]
+    for session_id in expired_password:
+        _PENDING_PASSWORD_RESETS.pop(session_id, None)
+
+
+def _begin_registration_verification(name, email, password, bio=None):
+    clean_name = (name or "").strip()
+    clean_email = (email or "").strip().lower()
+    clean_password = (password or "").strip()
+    clean_bio = (bio or "").strip() or None
+
+    if len(clean_name) < 2:
+        raise ValueError("Имя должно содержать минимум 2 символа.")
+    if not EMAIL_PATTERN.match(clean_email):
+        raise ValueError("Укажи корректный e-mail.")
+    if len(clean_password) < 6:
+        raise ValueError("Пароль должен содержать минимум 6 символов.")
+
+    now = time.time()
+    session_id = secrets.token_urlsafe(24)
+    code = _generate_email_code()
+    record = {
+        "session_id": session_id,
+        "name": clean_name,
+        "email": clean_email,
+        "password": clean_password,
+        "bio": clean_bio,
+        "code": code,
+        "expires_at": now + _code_ttl_seconds(),
+        "resend_available_at": now + _resend_cooldown_seconds(),
+        "attempts_left": _max_attempts(),
+    }
+
+    _send_code_email(record["email"], record["code"])
+
+    with _AUTH_LOCK:
+        _cleanup_auth_sessions_locked(now=now)
+        for existing_id, existing in list(_PENDING_REGISTRATIONS.items()):
+            if existing.get("email") == record["email"]:
+                _PENDING_REGISTRATIONS.pop(existing_id, None)
+        _PENDING_REGISTRATIONS[record["session_id"]] = record
+
+    return {
+        "session_id": record["session_id"],
+        "masked_email": _mask_email(record["email"]),
+        "expires_in": int(record["expires_at"] - now),
+        "resend_in": int(record["resend_available_at"] - now),
+        "attempts_left": int(record["attempts_left"]),
+    }
+
+
+def _registration_state(session_id):
+    now = time.time()
+    with _AUTH_LOCK:
+        _cleanup_auth_sessions_locked(now=now)
+        record = _PENDING_REGISTRATIONS.get(session_id)
+        if record is None:
+            raise ValueError("Сессия подтверждения не найдена. Начни регистрацию заново.")
+
+        return {
+            "session_id": record["session_id"],
+            "masked_email": _mask_email(record["email"]),
+            "expires_in": max(0, int(record["expires_at"] - now)),
+            "resend_in": max(0, int(record["resend_available_at"] - now)),
+            "attempts_left": max(0, int(record["attempts_left"])),
+        }
+
+
+def _resend_registration_code(session_id):
+    now = time.time()
+    with _AUTH_LOCK:
+        _cleanup_auth_sessions_locked(now=now)
+        record = _PENDING_REGISTRATIONS.get(session_id)
+        if record is None:
+            raise ValueError("Сессия подтверждения не найдена. Начни регистрацию заново.")
+
+        seconds_left = int(record["resend_available_at"] - now)
+        if seconds_left > 0:
+            raise ValueError(f"Повторная отправка будет доступна через {seconds_left} сек.")
+
+        email = record["email"]
+
+    new_code = _generate_email_code()
+    _send_code_email(email, new_code)
+
+    now = time.time()
+    with _AUTH_LOCK:
+        record = _PENDING_REGISTRATIONS.get(session_id)
+        if record is None:
+            raise ValueError("Сессия подтверждения не найдена. Начни регистрацию заново.")
+
+        record["code"] = new_code
+        record["expires_at"] = now + _code_ttl_seconds()
+        record["resend_available_at"] = now + _resend_cooldown_seconds()
+        return {
+            "session_id": record["session_id"],
+            "masked_email": _mask_email(record["email"]),
+            "expires_in": int(record["expires_at"] - now),
+            "resend_in": int(record["resend_available_at"] - now),
+            "attempts_left": max(0, int(record["attempts_left"])),
+        }
+
+
+def _confirm_registration_code(session_id, code):
+    normalized_code = _normalize_code(code)
+    if len(normalized_code) != 6:
+        raise ValueError("Введи 6-значный код из письма.")
+
+    now = time.time()
+    with _AUTH_LOCK:
+        _cleanup_auth_sessions_locked(now=now)
+        record = _PENDING_REGISTRATIONS.get(session_id)
+        if record is None:
+            raise ValueError("Сессия подтверждения не найдена. Начни регистрацию заново.")
+
+        if float(record["expires_at"]) <= now:
+            _PENDING_REGISTRATIONS.pop(session_id, None)
+            raise ValueError("Срок действия кода истёк. Запроси новый код.")
+
+        if normalized_code != record["code"]:
+            record["attempts_left"] = max(0, int(record["attempts_left"]) - 1)
+            if record["attempts_left"] <= 0:
+                _PENDING_REGISTRATIONS.pop(session_id, None)
+                raise ValueError("Превышено число попыток. Начни регистрацию заново.")
+            raise ValueError(f"Неверный код. Осталось попыток: {record['attempts_left']}.")
+
+        _PENDING_REGISTRATIONS.pop(session_id, None)
+        return {
+            "name": record["name"],
+            "email": record["email"],
+            "password": record["password"],
+            "bio": record["bio"],
+        }
+
+
+def _cancel_registration_session(session_id):
+    with _AUTH_LOCK:
+        _PENDING_REGISTRATIONS.pop(session_id, None)
+
+
+def _begin_password_reset(email):
+    clean_email = (email or "").strip().lower()
+    if not EMAIL_PATTERN.match(clean_email):
+        raise ValueError("Укажи корректный e-mail.")
+
+    now = time.time()
+    session_id = secrets.token_urlsafe(24)
+    code = _generate_email_code()
+    record = {
+        "session_id": session_id,
+        "email": clean_email,
+        "code": code,
+        "expires_at": now + _code_ttl_seconds(),
+        "resend_available_at": now + _resend_cooldown_seconds(),
+        "attempts_left": _max_attempts(),
+    }
+
+    _send_code_email(
+        record["email"],
+        record["code"],
+        subject="Код восстановления пароля Alias Online",
+        intro_line=f"Твой код для восстановления пароля Alias Online: {record['code']}",
+    )
+
+    with _AUTH_LOCK:
+        _cleanup_auth_sessions_locked(now=now)
+        for existing_id, existing in list(_PENDING_PASSWORD_RESETS.items()):
+            if existing.get("email") == record["email"]:
+                _PENDING_PASSWORD_RESETS.pop(existing_id, None)
+        _PENDING_PASSWORD_RESETS[record["session_id"]] = record
+
+    return {
+        "session_id": record["session_id"],
+        "masked_email": _mask_email(record["email"]),
+        "expires_in": int(record["expires_at"] - now),
+        "resend_in": int(record["resend_available_at"] - now),
+        "attempts_left": int(record["attempts_left"]),
+    }
+
+
+def _password_reset_state(session_id):
+    now = time.time()
+    with _AUTH_LOCK:
+        _cleanup_auth_sessions_locked(now=now)
+        record = _PENDING_PASSWORD_RESETS.get(session_id)
+        if record is None:
+            raise ValueError("Сессия восстановления не найдена. Запроси код заново.")
+        return {
+            "session_id": record["session_id"],
+            "masked_email": _mask_email(record["email"]),
+            "expires_in": max(0, int(record["expires_at"] - now)),
+            "resend_in": max(0, int(record["resend_available_at"] - now)),
+            "attempts_left": max(0, int(record["attempts_left"])),
+        }
+
+
+def _resend_password_reset_code(session_id):
+    now = time.time()
+    with _AUTH_LOCK:
+        _cleanup_auth_sessions_locked(now=now)
+        record = _PENDING_PASSWORD_RESETS.get(session_id)
+        if record is None:
+            raise ValueError("Сессия восстановления не найдена. Запроси код заново.")
+
+        seconds_left = int(record["resend_available_at"] - now)
+        if seconds_left > 0:
+            raise ValueError(f"Повторная отправка будет доступна через {seconds_left} сек.")
+
+        email = record["email"]
+
+    new_code = _generate_email_code()
+    _send_code_email(
+        email,
+        new_code,
+        subject="Код восстановления пароля Alias Online",
+        intro_line=f"Твой новый код для восстановления пароля Alias Online: {new_code}",
+    )
+
+    now = time.time()
+    with _AUTH_LOCK:
+        record = _PENDING_PASSWORD_RESETS.get(session_id)
+        if record is None:
+            raise ValueError("Сессия восстановления не найдена. Запроси код заново.")
+
+        record["code"] = new_code
+        record["expires_at"] = now + _code_ttl_seconds()
+        record["resend_available_at"] = now + _resend_cooldown_seconds()
+        return {
+            "session_id": record["session_id"],
+            "masked_email": _mask_email(record["email"]),
+            "expires_in": int(record["expires_at"] - now),
+            "resend_in": int(record["resend_available_at"] - now),
+            "attempts_left": max(0, int(record["attempts_left"])),
+        }
+
+
+def _confirm_password_reset_code(session_id, code):
+    normalized_code = _normalize_code(code)
+    if len(normalized_code) != 6:
+        raise ValueError("Введи 6-значный код из письма.")
+
+    now = time.time()
+    with _AUTH_LOCK:
+        _cleanup_auth_sessions_locked(now=now)
+        record = _PENDING_PASSWORD_RESETS.get(session_id)
+        if record is None:
+            raise ValueError("Сессия восстановления не найдена. Запроси код заново.")
+
+        if float(record["expires_at"]) <= now:
+            _PENDING_PASSWORD_RESETS.pop(session_id, None)
+            raise ValueError("Срок действия кода истёк. Запроси новый код.")
+
+        if normalized_code != record["code"]:
+            record["attempts_left"] = max(0, int(record["attempts_left"]) - 1)
+            if record["attempts_left"] <= 0:
+                _PENDING_PASSWORD_RESETS.pop(session_id, None)
+                raise ValueError("Превышено число попыток. Запроси код заново.")
+            raise ValueError(f"Неверный код. Осталось попыток: {record['attempts_left']}.")
+
+        _PENDING_PASSWORD_RESETS.pop(session_id, None)
+        return {"email": record["email"]}
+
+
+def _cancel_password_reset_session(session_id):
+    with _AUTH_LOCK:
+        _PENDING_PASSWORD_RESETS.pop(session_id, None)
 
 
 def configure_db_path(path):
@@ -934,7 +1334,7 @@ def _room_payload(connection, room_code, player_name="", since_id=None):
 
 
 class RoomHandler(BaseHTTPRequestHandler):
-    server_version = "AliasRoomServer/1.4"
+    server_version = "AliasRoomServer/1.5"
 
     def _json_response(self, code, payload):
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -985,6 +1385,14 @@ class RoomHandler(BaseHTTPRequestHandler):
             self._handle_voice_chunks(parts[2].upper(), parsed.query)
             return
 
+        if parts == ["api", "auth", "register", "state"]:
+            self._handle_auth_register_state(parsed.query)
+            return
+
+        if parts == ["api", "auth", "password", "state"]:
+            self._handle_auth_password_state(parsed.query)
+            return
+
         self._json_response(404, {"error": "Route not found."})
 
     def do_POST(self):
@@ -1027,7 +1435,162 @@ class RoomHandler(BaseHTTPRequestHandler):
             self._handle_voice_chunk(parts[2].upper())
             return
 
+        if parts == ["api", "auth", "register", "request-code"]:
+            self._handle_auth_register_request_code()
+            return
+
+        if parts == ["api", "auth", "register", "resend"]:
+            self._handle_auth_register_resend()
+            return
+
+        if parts == ["api", "auth", "register", "confirm"]:
+            self._handle_auth_register_confirm()
+            return
+
+        if parts == ["api", "auth", "register", "cancel"]:
+            self._handle_auth_register_cancel()
+            return
+
+        if parts == ["api", "auth", "password", "request-code"]:
+            self._handle_auth_password_request_code()
+            return
+
+        if parts == ["api", "auth", "password", "resend"]:
+            self._handle_auth_password_resend()
+            return
+
+        if parts == ["api", "auth", "password", "confirm"]:
+            self._handle_auth_password_confirm()
+            return
+
+        if parts == ["api", "auth", "password", "cancel"]:
+            self._handle_auth_password_cancel()
+            return
+
         self._json_response(404, {"error": "Route not found."})
+
+    def _session_id_from_query(self, query):
+        params = parse_qs(query)
+        return (params.get("session_id", [""])[0] or "").strip()
+
+    def _handle_auth_register_request_code(self):
+        try:
+            payload = self._parse_json_body()
+            result = _begin_registration_verification(
+                name=payload.get("name"),
+                email=payload.get("email"),
+                password=payload.get("password"),
+                bio=payload.get("bio"),
+            )
+        except ValueError as error:
+            self._json_response(400, {"error": str(error)})
+            return
+        self._json_response(200, result)
+
+    def _handle_auth_register_state(self, query):
+        session_id = self._session_id_from_query(query)
+        if not session_id:
+            self._json_response(400, {"error": "session_id is required."})
+            return
+        try:
+            result = _registration_state(session_id)
+        except ValueError as error:
+            self._json_response(400, {"error": str(error)})
+            return
+        self._json_response(200, result)
+
+    def _handle_auth_register_resend(self):
+        try:
+            payload = self._parse_json_body()
+            session_id = (payload.get("session_id") or "").strip()
+            if not session_id:
+                raise ValueError("session_id is required.")
+            result = _resend_registration_code(session_id)
+        except ValueError as error:
+            self._json_response(400, {"error": str(error)})
+            return
+        self._json_response(200, result)
+
+    def _handle_auth_register_confirm(self):
+        try:
+            payload = self._parse_json_body()
+            session_id = (payload.get("session_id") or "").strip()
+            if not session_id:
+                raise ValueError("session_id is required.")
+            result = _confirm_registration_code(session_id, payload.get("code"))
+        except ValueError as error:
+            self._json_response(400, {"error": str(error)})
+            return
+        self._json_response(200, result)
+
+    def _handle_auth_register_cancel(self):
+        try:
+            payload = self._parse_json_body()
+            session_id = (payload.get("session_id") or "").strip()
+            if not session_id:
+                raise ValueError("session_id is required.")
+            _cancel_registration_session(session_id)
+        except ValueError as error:
+            self._json_response(400, {"error": str(error)})
+            return
+        self._json_response(200, {"ok": True})
+
+    def _handle_auth_password_request_code(self):
+        try:
+            payload = self._parse_json_body()
+            result = _begin_password_reset(email=payload.get("email"))
+        except ValueError as error:
+            self._json_response(400, {"error": str(error)})
+            return
+        self._json_response(200, result)
+
+    def _handle_auth_password_state(self, query):
+        session_id = self._session_id_from_query(query)
+        if not session_id:
+            self._json_response(400, {"error": "session_id is required."})
+            return
+        try:
+            result = _password_reset_state(session_id)
+        except ValueError as error:
+            self._json_response(400, {"error": str(error)})
+            return
+        self._json_response(200, result)
+
+    def _handle_auth_password_resend(self):
+        try:
+            payload = self._parse_json_body()
+            session_id = (payload.get("session_id") or "").strip()
+            if not session_id:
+                raise ValueError("session_id is required.")
+            result = _resend_password_reset_code(session_id)
+        except ValueError as error:
+            self._json_response(400, {"error": str(error)})
+            return
+        self._json_response(200, result)
+
+    def _handle_auth_password_confirm(self):
+        try:
+            payload = self._parse_json_body()
+            session_id = (payload.get("session_id") or "").strip()
+            if not session_id:
+                raise ValueError("session_id is required.")
+            result = _confirm_password_reset_code(session_id, payload.get("code"))
+        except ValueError as error:
+            self._json_response(400, {"error": str(error)})
+            return
+        self._json_response(200, result)
+
+    def _handle_auth_password_cancel(self):
+        try:
+            payload = self._parse_json_body()
+            session_id = (payload.get("session_id") or "").strip()
+            if not session_id:
+                raise ValueError("session_id is required.")
+            _cancel_password_reset_session(session_id)
+        except ValueError as error:
+            self._json_response(400, {"error": str(error)})
+            return
+        self._json_response(200, {"ok": True})
 
     def _handle_list_rooms(self, query):
         params = parse_qs(query)

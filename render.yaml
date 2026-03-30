@@ -13,6 +13,14 @@ services:
         value: "1"
       - key: ALIAS_ROOMS_DB_PATH
         value: /var/data/rooms.db
+      - key: ALIAS_SMTP_EMAIL
+        value: aliasgameonline@gmail.com
+      - key: ALIAS_SMTP_APP_PASSWORD
+        sync: false
+      - key: ALIAS_SMTP_HOST
+        value: smtp.gmail.com
+      - key: ALIAS_SMTP_PORT
+        value: "587"
     disks:
       - name: alias-room-data
         mountPath: /var/data
