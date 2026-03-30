@@ -91,12 +91,12 @@ jobs:
             SMTP_EMAIL_VALUE="${ALIAS_SMTP_EMAIL:-aliasgameonline@gmail.com}"
             SMTP_HOST_VALUE="${ALIAS_SMTP_HOST:-smtp.gmail.com}"
             SMTP_PORT_VALUE="${ALIAS_SMTP_PORT:-587}"
-            cat > data/runtime.env <<EOF
-ALIAS_SMTP_EMAIL=${SMTP_EMAIL_VALUE}
-ALIAS_SMTP_APP_PASSWORD=${ALIAS_SMTP_APP_PASSWORD}
-ALIAS_SMTP_HOST=${SMTP_HOST_VALUE}
-ALIAS_SMTP_PORT=${SMTP_PORT_VALUE}
-EOF
+            printf "%s\n" \
+              "ALIAS_SMTP_EMAIL=${SMTP_EMAIL_VALUE}" \
+              "ALIAS_SMTP_APP_PASSWORD=${ALIAS_SMTP_APP_PASSWORD}" \
+              "ALIAS_SMTP_HOST=${SMTP_HOST_VALUE}" \
+              "ALIAS_SMTP_PORT=${SMTP_PORT_VALUE}" \
+              > data/runtime.env
             echo "Injected data/runtime.env for mobile SMTP fallback."
           else
             echo "ALIAS_SMTP_APP_PASSWORD secret is not set. Mobile local e-mail fallback may be unavailable."
