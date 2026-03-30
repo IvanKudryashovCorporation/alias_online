@@ -134,6 +134,15 @@ def _request_json(method, path, payload=None, timeout=7, base_url=None):
     if not server_url:
         raise ConnectionError("URL сервера комнат не настроен.")
 
+    if is_local_room_server_url(server_url):
+        app = App.get_running_app()
+        ensure_server_ready = getattr(app, "ensure_local_room_server_ready", None) if app is not None else None
+        if callable(ensure_server_ready):
+            try:
+                ensure_server_ready(timeout=2.8)
+            except Exception:
+                pass
+
     url = f"{server_url}{path}"
     data = None
     headers = {"Accept": "application/json"}

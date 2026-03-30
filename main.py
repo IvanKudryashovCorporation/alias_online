@@ -255,6 +255,19 @@ class AliasApp(App):
         self._room_server_bootstrap_thread = bootstrap_thread
         bootstrap_thread.start()
 
+    def ensure_local_room_server_ready(self, timeout=3.0):
+        configured_url = room_server_url(refresh=True)
+        if not is_local_room_server_url(configured_url):
+            return True
+
+        self._start_room_server_in_background()
+        deadline = time.time() + max(0.2, float(timeout))
+        while time.time() < deadline:
+            if self._room_server_is_healthy(configured_url):
+                return True
+            time.sleep(0.1)
+        return self._room_server_is_healthy(configured_url)
+
     def _build_startup_error_screen(self, error):
         manager = ScreenManager(transition=FadeTransition(duration=0))
         screen = Screen(name="startup_error")
@@ -687,6 +700,10 @@ if __name__ == "__main__":
     if not _instance_guard.acquire():
         raise SystemExit(0)
     try:
-        AliasApp().run()
+        try:
+            AliasApp().run()
+        except KeyboardInterrupt:
+            # Graceful terminal stop (Ctrl+C / forced console interrupt) without traceback noise.
+            pass
     finally:
         _instance_guard.release()
