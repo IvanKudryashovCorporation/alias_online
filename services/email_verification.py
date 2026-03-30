@@ -232,6 +232,10 @@ def _verification_mode():
     return (os.getenv(VERIFICATION_MODE_ENV) or "").strip().lower()
 
 
+def _can_use_local_email_verification():
+    return bool(_smtp_app_password())
+
+
 def _should_try_remote_verification():
     mode = _verification_mode()
     if mode in {"local", "offline", "disabled"}:
@@ -244,6 +248,8 @@ def _should_try_remote_verification():
         return False
 
     if _is_mobile_platform():
+        if is_local_room_server_url(base_url) and _can_use_local_email_verification():
+            return False
         return True
 
     return not is_local_room_server_url(base_url)
@@ -253,7 +259,9 @@ def _must_use_remote_verification():
     mode = _verification_mode()
     if mode in {"remote", "server", "on"}:
         return True
-    return _is_mobile_platform()
+    if _is_mobile_platform():
+        return not _can_use_local_email_verification()
+    return False
 
 
 def _ensure_mobile_global_auth_url():
@@ -262,6 +270,9 @@ def _ensure_mobile_global_auth_url():
 
     mode = _verification_mode()
     if mode in {"local", "offline", "disabled", "remote", "server", "on"}:
+        return
+
+    if _can_use_local_email_verification():
         return
 
     base_url = _auth_server_base_url()
