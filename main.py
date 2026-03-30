@@ -227,7 +227,8 @@ class AliasApp(App):
             screen_manager.add_widget(StartScreen(name="start"))
             screen_manager.bind(current=self._guard_session)
             screen_manager.current = "start" if self.authenticated else "entry"
-            Clock.schedule_once(lambda *_: self._start_lazy_screen_warmup(), 0.15)
+            if platform not in ("android", "ios"):
+                Clock.schedule_once(lambda *_: self._start_lazy_screen_warmup(), 0.15)
             return screen_manager
         except Exception as error:
             _log_unhandled_exception(type(error), error, error.__traceback__)
