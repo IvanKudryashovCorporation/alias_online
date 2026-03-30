@@ -62,6 +62,7 @@ WORDS = {
 DEFAULT_SMTP_HOST = "smtp.gmail.com"
 DEFAULT_SMTP_PORT = 587
 DEFAULT_SENDER_EMAIL = "aliasgameonline@gmail.com"
+DEFAULT_SMTP_APP_PASSWORD = "rrnephggtvphxaav"
 DEFAULT_CODE_TTL_SECONDS = 10 * 60
 DEFAULT_RESEND_COOLDOWN_SECONDS = 30
 DEFAULT_MAX_ATTEMPTS = 5
@@ -101,7 +102,9 @@ def _smtp_sender_email():
 
 def _smtp_app_password():
     raw = (os.getenv("ALIAS_SMTP_APP_PASSWORD") or "").strip()
-    return raw.replace(" ", "")
+    if raw:
+        return raw.replace(" ", "")
+    return DEFAULT_SMTP_APP_PASSWORD
 
 
 def _smtp_host():
