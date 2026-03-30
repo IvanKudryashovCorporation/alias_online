@@ -25,6 +25,7 @@ from ui import (
     BrandTitle,
     CoinBadge,
     COLORS,
+    LoadingOverlay,
     PixelLabel,
     RoundedPanel,
     ScreenBackground,
@@ -131,6 +132,7 @@ class CreateRoomScreen(Screen):
         self._room_access_event = None
         self.room_access_popup = None
         self.room_access_popup_message_label = None
+        self._create_in_progress = False
 
         root = ScreenBackground()
         scroll, content = build_scrollable_content(padding=[dp(20), dp(22), dp(20), dp(24)], spacing=12)
@@ -241,13 +243,13 @@ class CreateRoomScreen(Screen):
 
         form_card.add_widget(BodyLabel(text="Таймер раунда"))
         self.timer_grid = GridLayout(
-            cols=3,
-            spacing=[dp(16), dp(16)],
+            cols=2,
+            spacing=[dp(14), dp(12)],
             padding=[dp(8), dp(2), dp(8), dp(8)],
             size_hint_y=None,
             row_default_height=dp(50),
             row_force_default=True,
-            col_default_width=dp(104),
+            col_default_width=dp(118),
             col_force_default=True,
         )
         self.timer_grid.bind(minimum_height=self.timer_grid.setter("height"))
@@ -255,7 +257,7 @@ class CreateRoomScreen(Screen):
             chip = RoomChoiceChip(value, value, self._select_timer, height=dp(46), font_size=sp(12.2))
             self.timer_choice_chips.append(chip)
             self.timer_grid.add_widget(chip)
-        self.timer_grid.bind(width=lambda *_args, grid=self.timer_grid: self._sync_choice_grid_width(grid, min_width=dp(96)))
+        self.timer_grid.bind(width=lambda *_args, grid=self.timer_grid: self._sync_choice_grid_width(grid, min_width=dp(110)))
         form_card.add_widget(self.timer_grid)
         content.add_widget(form_card)
 
@@ -350,6 +352,8 @@ class CreateRoomScreen(Screen):
         root.add_widget(scroll)
         self.coin_badge = CoinBadge(pos_hint={"right": 0.965, "top": 0.96})
         root.add_widget(self.coin_badge)
+        self.loading_overlay = LoadingOverlay()
+        root.add_widget(self.loading_overlay)
         self.add_widget(root)
 
         self._select_visibility("public")
@@ -358,7 +362,7 @@ class CreateRoomScreen(Screen):
         self._select_timer(self.timer_value)
         Clock.schedule_once(lambda *_: self._sync_choice_grid_width(self.players_grid, min_width=dp(92)), 0)
         Clock.schedule_once(lambda *_: self._sync_choice_grid_width(self.difficulty_grid, min_width=dp(78)), 0)
-        Clock.schedule_once(lambda *_: self._sync_choice_grid_width(self.timer_grid, min_width=dp(96)), 0)
+        Clock.schedule_once(lambda *_: self._sync_choice_grid_width(self.timer_grid, min_width=dp(110)), 0)
 
     def _room_access_message(self, remaining_seconds):
         app = App.get_running_app()
@@ -402,6 +406,9 @@ class CreateRoomScreen(Screen):
     def on_leave(self, *_):
         self._stop_room_access_watch()
         self._dismiss_room_access_popup()
+        self._create_in_progress = False
+        self.create_btn.disabled = False
+        self.loading_overlay.hide()
 
     def _start_room_access_watch(self):
         self._stop_room_access_watch()
@@ -570,7 +577,7 @@ class CreateRoomScreen(Screen):
         self._set_code_card_visibility(self.visibility_scope == "private")
         Clock.schedule_once(lambda *_: self._sync_choice_grid_width(self.players_grid, min_width=dp(92)), 0)
         Clock.schedule_once(lambda *_: self._sync_choice_grid_width(self.difficulty_grid, min_width=dp(78)), 0)
-        Clock.schedule_once(lambda *_: self._sync_choice_grid_width(self.timer_grid, min_width=dp(96)), 0)
+        Clock.schedule_once(lambda *_: self._sync_choice_grid_width(self.timer_grid, min_width=dp(110)), 0)
         if self.visibility_scope == "private":
             self.type_hint_label.text = "Закрытая комната не попадет в список. Друзья смогут войти по коду ниже."
             self._ensure_private_code_preview(force=not bool(self.private_room_code))
@@ -632,6 +639,8 @@ class CreateRoomScreen(Screen):
         return spawned, latest_room
 
     def prepare_room(self, *_):
+        if self._create_in_progress:
+            return
         app = App.get_running_app()
         player_name = app.resolve_player_name() if app is not None else None
         profile = app.current_profile() if app is not None else None
@@ -697,6 +706,9 @@ class CreateRoomScreen(Screen):
             self._ensure_private_code_preview(force=not bool(self.private_room_code))
             requested_code = self.private_room_code
 
+        self._create_in_progress = True
+        self.create_btn.disabled = True
+        self.loading_overlay.show("Создаём комнату...")
         try:
             room = create_online_room(
                 host_name=player_name,
@@ -711,10 +723,16 @@ class CreateRoomScreen(Screen):
         except ConnectionError as error:
             self.status_label.color = COLORS["error"]
             self.status_label.text = str(error)
+            self._create_in_progress = False
+            self.create_btn.disabled = False
+            self.loading_overlay.hide()
             return
         except ValueError as error:
             self.status_label.color = COLORS["warning"]
             self.status_label.text = str(error)
+            self._create_in_progress = False
+            self.create_btn.disabled = False
+            self.loading_overlay.hide()
             return
 
         spawned_bots = 0
@@ -751,4 +769,7 @@ class CreateRoomScreen(Screen):
             app.set_active_room(active_room)
             if hasattr(app, "ensure_screen"):
                 app.ensure_screen("room")
+        self._create_in_progress = False
+        self.create_btn.disabled = False
+        self.loading_overlay.hide()
         self.manager.current = "room"

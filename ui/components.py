@@ -30,6 +30,7 @@ from kivy.uix.textinput import TextInput
 from kivy.uix.widget import Widget
 
 from .theme import BACKGROUND_PATH, COLORS, radius, register_game_font
+from .feedback import trigger_tap_feedback
 
 
 def resolve_image_source(source):
@@ -379,10 +380,15 @@ class AppButton(ButtonBehavior, Label):
         self.text_size = (max(0, self.width - dp(30)), max(0, self.height - dp(18)))
 
     def on_press(self):
+        if self.disabled:
+            return
+        trigger_tap_feedback(play_sound=True, haptic=True)
         Animation.cancel_all(self._button_color)
         Animation(rgba=self._pressed_button_color, duration=0.08).start(self._button_color)
 
     def on_release(self):
+        if self.disabled:
+            return
         Animation.cancel_all(self._button_color)
         Animation(rgba=self._rest_button_color, duration=0.12).start(self._button_color)
 
@@ -997,28 +1003,23 @@ class IconMetaChip(RoundedPanel):
             auto_height=False,
         )
         self.label.unbind(width=self.label._sync_text)
-        self.label.bind(texture_size=self._sync_label_width)
-        self.label.bind(text=self._sync_label_metrics)
-        self.label.bind(width=self._sync_chip_width)
-        self.icon.bind(size=self._sync_chip_width)
+        self._layout_trigger = Clock.create_trigger(self._reflow, 0)
+        self.label.bind(text=lambda *_: self._layout_trigger())
+        self.label.bind(texture_size=lambda *_: self._layout_trigger())
+        self.icon.bind(size=lambda *_: self._layout_trigger())
         self.add_widget(self.label)
-        self._sync_label_metrics()
-        Clock.schedule_once(lambda *_: self._sync_chip_width(), 0)
+        self._layout_trigger()
 
     def set_text(self, text):
         self.label.text = text
 
-    def _sync_label_metrics(self, *_):
+    def _reflow(self, *_):
         self.label.text_size = (None, None)
         self.label.texture_update()
-        self._sync_label_width()
-
-    def _sync_label_width(self, *_):
         next_width = max(dp(18), self.label.texture_size[0] + dp(2))
         if abs(self.label.width - next_width) > 0.5:
             self.label.width = next_width
 
-    def _sync_chip_width(self, *_):
         horizontal_padding = self.padding[0] + self.padding[2]
         next_width = horizontal_padding + self.spacing + self.icon.width + self.label.width
         if abs(self.width - next_width) > 0.5:
@@ -1067,6 +1068,9 @@ class IconCircleButton(ButtonBehavior, FloatLayout):
         )
 
     def on_press(self):
+        if self.disabled:
+            return
+        trigger_tap_feedback(play_sound=True, haptic=False)
         Animation.cancel_all(self._bg_color)
         Animation(rgba=COLORS["surface_panel"], duration=0.08).start(self._bg_color)
 
@@ -1119,6 +1123,100 @@ class IconCircleButton(ButtonBehavior, FloatLayout):
         self._spun_degrees += rotated
         if self._stop_requested and self._spun_degrees >= 360:
             self._finalize_spin()
+
+
+class LoadingOverlay(FloatLayout):
+    def __init__(self, **kwargs):
+        kwargs.setdefault("size_hint", (1, 1))
+        super().__init__(**kwargs)
+        self.opacity = 0
+        self.disabled = True
+        self._spin_event = None
+        self._angle = 0.0
+
+        with self.canvas.before:
+            self._dim_color = Color(0.03, 0.07, 0.12, 0.54)
+            self._dim_rect = Rectangle(pos=self.pos, size=self.size)
+        self.bind(pos=self._sync_dim, size=self._sync_dim)
+
+        self.panel = RoundedPanel(
+            orientation="vertical",
+            spacing=dp(10),
+            padding=[dp(16), dp(14), dp(16), dp(14)],
+            size_hint=(None, None),
+            size=(dp(250), dp(118)),
+            pos_hint={"center_x": 0.5, "center_y": 0.5},
+            bg_color=COLORS["surface_panel"],
+            shadow_alpha=0.22,
+        )
+        self.panel.bind(pos=lambda *_: self._center_spinner(), size=lambda *_: self._center_spinner())
+
+        spinner_wrap = FloatLayout(size_hint=(1, None), height=dp(40))
+        self._spinner = Widget(size_hint=(None, None), size=(dp(30), dp(30)))
+        with self._spinner.canvas.before:
+            self._spinner_color = Color(*COLORS["accent"])
+            self._spinner_push = PushMatrix()
+            self._spinner_rotate = Rotate(angle=0, origin=self._spinner.center)
+            self._spinner_arc = Line(width=dp(2.4), ellipse=(0, 0, 0, 0, 30, 300))
+            self._spinner_pop = PopMatrix()
+        self._spinner.bind(pos=self._sync_spinner, size=self._sync_spinner)
+        spinner_wrap.add_widget(self._spinner)
+        self.panel.add_widget(spinner_wrap)
+
+        self.message_label = BodyLabel(
+            center=True,
+            color=COLORS["text_soft"],
+            font_size=sp(12.5),
+            text="Загрузка...",
+            size_hint_y=None,
+        )
+        self.panel.add_widget(self.message_label)
+        self.add_widget(self.panel)
+        Clock.schedule_once(lambda *_: self._center_spinner(), 0)
+
+    def _sync_dim(self, *_):
+        self._dim_rect.pos = self.pos
+        self._dim_rect.size = self.size
+
+    def _center_spinner(self):
+        self._spinner.pos = (
+            self.panel.center_x - self._spinner.width / 2,
+            self.panel.y + self.panel.height - dp(50),
+        )
+        self._sync_spinner()
+
+    def _sync_spinner(self, *_):
+        self._spinner_rotate.origin = self._spinner.center
+        self._spinner_arc.ellipse = (
+            self._spinner.x,
+            self._spinner.y,
+            self._spinner.width,
+            self._spinner.height,
+            30,
+            300,
+        )
+
+    def _advance(self, dt):
+        self._angle = (self._angle - dt * 420.0) % 360
+        self._spinner_rotate.angle = self._angle
+        return True
+
+    def show(self, message="Загрузка..."):
+        self.message_label.text = message
+        self.disabled = False
+        self.opacity = 1
+        self._angle = 0.0
+        self._spinner_rotate.angle = 0
+        self._center_spinner()
+        if self._spin_event is None:
+            self._spin_event = Clock.schedule_interval(self._advance, 1 / 60.0)
+
+    def hide(self):
+        if self._spin_event is not None:
+            self._spin_event.cancel()
+            self._spin_event = None
+        self.opacity = 0
+        self.disabled = True
 
 
 def build_scrollable_content(padding=None, spacing=16):

@@ -4,14 +4,15 @@ package.name = aliasonline
 package.domain = com.aliasonline
 
 source.dir = .
-source.include_exts = py,png,jpg,jpeg,webp,bmp,ttf,kv,atlas,txt,csv,json,md,env,local
+source.include_exts = py,png,jpg,jpeg,webp,bmp,ttf,kv,atlas,txt,csv,json,md,env,local,wav,mp3
 source.exclude_dirs = venv,.git,__pycache__,bin,dist,build,.buildozer
 source.exclude_patterns = *.pyc,*.pyo,data/*.db,data/_*.db
 
 version = 1.1.0
 requirements = python3,kivy==2.3.1,pyjnius,filetype,certifi
 orientation = portrait
-fullscreen = 0
+fullscreen = 1
+icon.filename = image/app_icon.png
 
 android.api = 34
 android.minapi = 24

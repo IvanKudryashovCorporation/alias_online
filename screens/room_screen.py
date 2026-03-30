@@ -44,6 +44,7 @@ from ui import (
     BrandTitle,
     CoinBadge,
     COLORS,
+    LoadingOverlay,
     PixelLabel,
     RoundedPanel,
     ScreenBackground,
@@ -77,7 +78,7 @@ class VoiceMicButton(ButtonBehavior, Widget):
         self._muted = True
         self._enabled = True
         self._level = 0.0
-        self._hit_padding = dp(48)
+        self._hit_padding = dp(24)
         self._pressed_touch = None
         self._texture = self._mic_texture()
 
@@ -821,7 +822,7 @@ class RoomScreen(Screen):
             size_hint=(None, None),
             size=(dp(228), dp(46)),
         )
-        self.start_game_btn.bind(on_press=self._queue_start_game, on_release=self._queue_start_game)
+        self.start_game_btn.bind(on_release=self._queue_start_game)
         self.lobby_start_row.add_widget(self.start_game_btn)
         self.lobby_start_row.add_widget(Widget())
         content.add_widget(self.lobby_start_row)
@@ -945,6 +946,8 @@ class RoomScreen(Screen):
         root.add_widget(content)
         root.add_widget(self.chat_overlay_layer)
         root.add_widget(self.countdown_overlay)
+        self.loading_overlay = LoadingOverlay()
+        root.add_widget(self.loading_overlay)
         self.add_widget(root)
 
     def _start_button_hit(self, touch):
@@ -978,6 +981,7 @@ class RoomScreen(Screen):
         self._start_game_request_in_flight = False
         self._set_mic_muted(True)
         self._set_mic_level(0.0)
+        self.loading_overlay.hide()
         self.coin_badge.refresh_from_session()
         self.countdown_overlay.hide()
         if self.room_code and player_name:
@@ -996,6 +1000,7 @@ class RoomScreen(Screen):
         self._stop_polling()
         self._stop_voice_ui_sync()
         self._stop_voice_engine()
+        self.loading_overlay.hide()
         self.countdown_overlay.hide()
         self._dismiss_leave_popup()
         self.disabled = True
@@ -1401,7 +1406,7 @@ class RoomScreen(Screen):
         self.word_push_spacer.height = dp(0)
 
     def _mount_chat_overlay(self, can_chat, is_explainer=False):
-        overlay_height = dp(154 if is_explainer else (176 if can_chat else 152))
+        overlay_height = dp(188 if is_explainer else (196 if can_chat else 168))
         self.chat_host.size_hint_y = None if is_explainer else 1
         self.chat_host.height = dp(0)
         self.chat_host.opacity = 0
@@ -1423,7 +1428,7 @@ class RoomScreen(Screen):
         if self.chat_card.parent is not self.chat_overlay_layer:
             return
 
-        overlay_height = dp(154 if is_explainer else (176 if can_chat else 152))
+        overlay_height = dp(188 if is_explainer else (196 if can_chat else 168))
         if is_explainer:
             word_x, word_y = self._widget_screen_pos(self.word_stage)
             _score_panel_x, score_panel_y = self._widget_screen_pos(self.scores_wrap)
@@ -1435,9 +1440,9 @@ class RoomScreen(Screen):
                 _phase_x, phase_y = self._widget_screen_pos(self.phase_wrap)
                 phase_limit = min(phase_limit, phase_y - dp(10))
 
-            base_bottom = word_top + dp(8)
+            base_bottom = word_top + dp(14)
             max_available = phase_limit - base_bottom
-            max_available = max(dp(36), max_available)
+            max_available = max(dp(56), max_available)
             overlay_height = min(overlay_height, max_available)
             overlay_height = max(dp(36), overlay_height)
             overlay_width = min(max(dp(300), self.word_stage.width - dp(18)), dp(430))
@@ -1447,7 +1452,7 @@ class RoomScreen(Screen):
                 bottom = phase_limit - overlay_height
             bottom = max(word_top + dp(2), bottom)
             if bottom + overlay_height > phase_limit:
-                overlay_height = max(dp(8), phase_limit - bottom)
+                overlay_height = max(dp(42), phase_limit - bottom)
             self.chat_card.size = (overlay_width, overlay_height)
             self.chat_card.pos = (left, bottom)
             return
@@ -1731,7 +1736,7 @@ class RoomScreen(Screen):
 
         phase = self._current_phase()
         is_explainer = self._is_explainer()
-        display_messages = list(messages) if phase == "round" else list(messages[-24:])
+        display_messages = list(messages[-10:]) if phase == "round" else list(messages[-24:])
         self.chat_box.clear_widgets()
 
         if not display_messages:
@@ -1785,6 +1790,7 @@ class RoomScreen(Screen):
         if player_name and self.room_code:
             self._start_game_request_in_flight = True
             self.start_game_btn.disabled = True
+            self.loading_overlay.show("Запускаем игру...")
 
             try:
                 start_response = start_room_game(room_code=self.room_code, player_name=player_name)
@@ -1793,12 +1799,14 @@ class RoomScreen(Screen):
                 self.status_label.text = str(error)
                 self._start_game_request_in_flight = False
                 self.start_game_btn.disabled = False
+                self.loading_overlay.hide()
                 return
             except ValueError as error:
                 self.status_label.color = COLORS["warning"]
                 self.status_label.text = str(error)
                 self._start_game_request_in_flight = False
                 self.start_game_btn.disabled = False
+                self.loading_overlay.hide()
                 return
 
             if isinstance(start_response, dict):
@@ -1828,6 +1836,7 @@ class RoomScreen(Screen):
                 self._apply_state()
 
             self._start_game_request_in_flight = False
+            self.loading_overlay.hide()
             self.status_label.color = COLORS["success"]
             self.status_label.text = "РЎС‚Р°СЂС‚ РёРіСЂС‹! РќР° СЌРєСЂР°РЅРµ РѕР±С‰РёР№ РѕС‚СЃС‡РµС‚ 10 СЃРµРєСѓРЅРґ."
             self._poll_state()
@@ -2005,11 +2014,11 @@ class RoomScreen(Screen):
             return
 
         raw_level = self.voice_engine.level() if self.voice_engine.active() else 0.0
-        raw_level = max(0.0, min(1.0, raw_level * 2.9))
+        raw_level = max(0.0, min(1.0, raw_level * 4.2))
         if self._mic_is_muted():
             raw_level = 0.0
 
-        smoothing = 0.52 if raw_level >= self._smoothed_voice_level else 0.30
+        smoothing = 0.64 if raw_level >= self._smoothed_voice_level else 0.36
         self._smoothed_voice_level += (raw_level - self._smoothed_voice_level) * smoothing
         if self._smoothed_voice_level < 0.01:
             self._smoothed_voice_level = 0.0

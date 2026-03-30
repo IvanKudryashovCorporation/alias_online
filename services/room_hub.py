@@ -1,5 +1,6 @@
 import json
 import os
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -11,6 +12,7 @@ from kivy.utils import platform
 DEFAULT_LOCAL_ROOM_SERVER_URL = "http://127.0.0.1:8765"
 ROOM_SERVER_URL_ENV = "ALIAS_ROOM_SERVER_URL"
 ROOM_SERVER_URL_FILE_ENV = "ALIAS_ROOM_SERVER_URL_FILE"
+MOBILE_ROOM_SERVER_URL_ENV = "ALIAS_MOBILE_ROOM_SERVER_URL"
 
 _cached_room_server_url = None
 
@@ -77,6 +79,13 @@ def _resolve_room_server_url():
     if from_file:
         return from_file
 
+    if platform in {"android", "ios"}:
+        mobile_default = _normalize_room_server_url(os.environ.get(MOBILE_ROOM_SERVER_URL_ENV, ""))
+        if mobile_default:
+            return mobile_default
+        # Mobile release should use a configured public backend.
+        return ""
+
     return DEFAULT_LOCAL_ROOM_SERVER_URL
 
 
@@ -126,37 +135,52 @@ def _request_json(method, path, payload=None, timeout=7, base_url=None):
         raise ConnectionError("URL сервера комнат не настроен.")
 
     url = f"{server_url}{path}"
-
     data = None
     headers = {"Accept": "application/json"}
     if payload is not None:
         data = json.dumps(payload).encode("utf-8")
         headers["Content-Type"] = "application/json; charset=utf-8"
 
-    request = urllib.request.Request(url, data=data, headers=headers, method=method)
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            body = response.read().decode("utf-8")
-    except urllib.error.HTTPError as error:
-        details = error.read().decode("utf-8", errors="ignore")
+    attempts = 3 if method.upper() == "GET" else 1
+    request_timeout = timeout if timeout is not None else 7
+    if platform in {"android", "ios"}:
+        request_timeout = max(9, int(request_timeout))
+
+    body = ""
+    last_transport_error = None
+    for attempt in range(1, attempts + 1):
+        request = urllib.request.Request(url, data=data, headers=headers, method=method)
         try:
-            parsed = json.loads(details)
-        except json.JSONDecodeError:
-            parsed = None
-        message = parsed.get("error") if isinstance(parsed, dict) else f"HTTP {error.code}"
-        raise ValueError(message) from error
-    except urllib.error.URLError as error:
+            with urllib.request.urlopen(request, timeout=request_timeout) as response:
+                body = response.read().decode("utf-8")
+            last_transport_error = None
+            break
+        except urllib.error.HTTPError as error:
+            details = error.read().decode("utf-8", errors="ignore")
+            try:
+                parsed = json.loads(details)
+            except json.JSONDecodeError:
+                parsed = None
+            message = parsed.get("error") if isinstance(parsed, dict) else f"HTTP {error.code}"
+            raise ValueError(message) from error
+        except (urllib.error.URLError, TimeoutError, OSError) as error:
+            last_transport_error = error
+            if attempt < attempts:
+                time.sleep(0.25 * attempt)
+                continue
+
+    if last_transport_error is not None:
         if platform in ("android", "ios"):
             if is_local_room_server_url(server_url):
                 raise ConnectionError(
                     "Не удалось подключиться к комнатам. Проверь интернет и перезапусти приложение."
-                ) from error
+                ) from last_transport_error
             raise ConnectionError(
                 "Не удалось подключиться к серверу комнат. Проверь интернет и адрес сервера."
-            ) from error
+            ) from last_transport_error
         raise ConnectionError(
             "Не удалось подключиться к серверу комнат. Проверь интернет и запусти server/room_server.py."
-        ) from error
+        ) from last_transport_error
 
     try:
         return json.loads(body) if body else {}

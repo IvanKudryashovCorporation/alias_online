@@ -17,6 +17,7 @@ from ui import (
     COLORS,
     IconCircleButton,
     IconMetaChip,
+    LoadingOverlay,
     PixelLabel,
     RoundedPanel,
     ScreenBackground,
@@ -37,6 +38,7 @@ class JoinRoomScreen(Screen):
         self.room_access_popup_message_label = None
         self._refresh_in_progress = False
         self._refresh_token = 0
+        self._join_in_progress = False
 
         root = ScreenBackground()
         scroll, content = build_scrollable_content(padding=[dp(20), dp(20), dp(20), dp(24)], spacing=12)
@@ -117,6 +119,8 @@ class JoinRoomScreen(Screen):
         root.add_widget(scroll)
         self.coin_badge = CoinBadge(pos_hint={"right": 0.965, "top": 0.96})
         root.add_widget(self.coin_badge)
+        self.loading_overlay = LoadingOverlay()
+        root.add_widget(self.loading_overlay)
         self.add_widget(root)
 
     def _room_access_message(self, remaining_seconds):
@@ -131,6 +135,8 @@ class JoinRoomScreen(Screen):
         player_name = app.resolve_player_name() if app is not None else None
         room_access_state = app.room_access_state() if app is not None and hasattr(app, "room_access_state") else {"active": False}
         self._room_access_locked = bool(room_access_state.get("active"))
+        self._join_in_progress = False
+        self.loading_overlay.hide()
         self.coin_badge.refresh_from_session()
         self._apply_room_access_ui()
         self._start_room_access_watch()
@@ -152,6 +158,8 @@ class JoinRoomScreen(Screen):
         self._stop_room_access_watch()
         self._refresh_token += 1
         self._refresh_in_progress = False
+        self._join_in_progress = False
+        self.loading_overlay.hide()
         self.refresh_btn.stop_spinning()
         self._dismiss_room_access_popup()
 
@@ -449,6 +457,8 @@ class JoinRoomScreen(Screen):
         self._join_by_code(code)
 
     def _join_by_code(self, code):
+        if self._join_in_progress:
+            return
         app = App.get_running_app()
         player_name = app.resolve_player_name() if app is not None else None
         room_access_state = app.room_access_state() if app is not None and hasattr(app, "room_access_state") else {"active": False, "remaining_seconds": 0}
@@ -466,15 +476,27 @@ class JoinRoomScreen(Screen):
             self._set_status("Введи корректный код комнаты.", COLORS["warning"], "warning")
             return
 
+        self._join_in_progress = True
+        self.join_btn.disabled = True
+        self.loading_overlay.show("Подключаем к комнате...")
         try:
             joined_room = join_online_room(room_code=code, player_name=player_name)
         except ConnectionError as error:
             self._set_status(str(error), COLORS["error"], "error")
+            self._join_in_progress = False
+            self.join_btn.disabled = False
+            self.loading_overlay.hide()
             return
         except ValueError as error:
             self._set_status(str(error), COLORS["warning"], "warning")
+            self._join_in_progress = False
+            self.join_btn.disabled = False
+            self.loading_overlay.hide()
             return
 
+        self._join_in_progress = False
+        self.join_btn.disabled = False
+        self.loading_overlay.hide()
         self.joined_room = joined_room
         self._set_status(
             f"Ты в комнате «{joined_room.get('room_name', code)}». "
