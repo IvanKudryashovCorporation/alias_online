@@ -83,8 +83,8 @@ def _resolve_room_server_url():
         mobile_default = _normalize_room_server_url(os.environ.get(MOBILE_ROOM_SERVER_URL_ENV, ""))
         if mobile_default:
             return mobile_default
-        # Mobile release should use a configured public backend.
-        return ""
+        # Fallback to embedded local room server when public backend is not configured.
+        return DEFAULT_LOCAL_ROOM_SERVER_URL
 
     return DEFAULT_LOCAL_ROOM_SERVER_URL
 
