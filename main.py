@@ -335,6 +335,9 @@ class AliasApp(App):
             return
 
         creation_flags = subprocess.CREATE_NO_WINDOW if hasattr(subprocess, "CREATE_NO_WINDOW") else 0
+        server_env = os.environ.copy()
+        # Prevent Kivy argument parser from intercepting room-server CLI flags.
+        server_env.setdefault("KIVY_NO_ARGS", "1")
         try:
             self._room_server_process = subprocess.Popen(
                 [sys.executable, str(server_script), "--host", bind_host, "--port", str(bind_port)],
@@ -342,6 +345,7 @@ class AliasApp(App):
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
                 creationflags=creation_flags,
+                env=server_env,
             )
         except OSError:
             self._room_server_process = None

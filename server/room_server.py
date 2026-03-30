@@ -8,6 +8,7 @@ import smtplib
 import sqlite3
 import ssl
 import string
+import sys
 import threading
 import time
 from contextlib import suppress
@@ -516,7 +517,15 @@ def configure_db_path(path):
 
 
 def _resolve_mobile_storage_dir():
+    # Do not import Kivy in desktop/server processes: Kivy may parse CLI args
+    # and break --host/--port for this server script.
+    is_android = bool(os.environ.get("ANDROID_ARGUMENT"))
+    is_ios = sys.platform == "ios" or bool(os.environ.get("KIVY_BUILD") == "ios")
+    if not (is_android or is_ios):
+        return None
+
     with suppress(Exception):
+        os.environ.setdefault("KIVY_NO_ARGS", "1")
         from kivy.app import App
         from kivy.utils import platform
 

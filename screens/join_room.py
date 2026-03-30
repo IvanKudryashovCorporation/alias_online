@@ -39,6 +39,7 @@ class JoinRoomScreen(Screen):
         self._refresh_in_progress = False
         self._refresh_token = 0
         self._join_in_progress = False
+        self._join_request_token = 0
 
         root = ScreenBackground()
         scroll, content = build_scrollable_content(padding=[dp(20), dp(20), dp(20), dp(24)], spacing=12)
@@ -157,8 +158,10 @@ class JoinRoomScreen(Screen):
     def on_leave(self, *_):
         self._stop_room_access_watch()
         self._refresh_token += 1
+        self._join_request_token += 1
         self._refresh_in_progress = False
         self._join_in_progress = False
+        self.join_btn.disabled = False
         self.loading_overlay.hide()
         self.refresh_btn.stop_spinning()
         self._dismiss_room_access_popup()
@@ -460,6 +463,8 @@ class JoinRoomScreen(Screen):
         if self._join_in_progress:
             return
         app = App.get_running_app()
+        if app is not None and hasattr(app, "_start_room_server_in_background"):
+            app._start_room_server_in_background()
         player_name = app.resolve_player_name() if app is not None else None
         room_access_state = app.room_access_state() if app is not None and hasattr(app, "room_access_state") else {"active": False, "remaining_seconds": 0}
 
@@ -475,6 +480,9 @@ class JoinRoomScreen(Screen):
         if len(code) < 4:
             self._set_status("Введи корректный код комнаты.", COLORS["warning"], "warning")
             return
+
+        self._start_join_request(code=code, player_name=player_name)
+        return
 
         self._join_in_progress = True
         self.join_btn.disabled = True
@@ -509,3 +517,62 @@ class JoinRoomScreen(Screen):
             if hasattr(app, "ensure_screen"):
                 app.ensure_screen("room")
         self.manager.current = "room"
+
+    def _start_join_request(self, *, code, player_name):
+        self._join_in_progress = True
+        self._join_request_token += 1
+        request_token = self._join_request_token
+        self.join_btn.disabled = True
+        self.loading_overlay.show("Подключаем к комнате...")
+
+        worker = Thread(
+            target=self._join_by_code_worker,
+            args=(request_token, code, player_name),
+            daemon=True,
+        )
+        worker.start()
+
+    def _join_by_code_worker(self, request_token, room_code, player_name):
+        try:
+            joined_room = join_online_room(room_code=room_code, player_name=player_name)
+            payload = {"status": "success", "room": joined_room, "room_code": room_code}
+        except ConnectionError as error:
+            payload = {"status": "error", "tone": "error", "message": str(error)}
+        except ValueError as error:
+            payload = {"status": "error", "tone": "warning", "message": str(error)}
+        except Exception as error:
+            payload = {"status": "error", "tone": "error", "message": f"Неожиданная ошибка: {error}"}
+
+        Clock.schedule_once(lambda _dt, token=request_token, result=payload: self._finish_join_request(token, result))
+
+    def _finish_join_request(self, request_token, payload):
+        if request_token != self._join_request_token:
+            return
+
+        self._join_in_progress = False
+        self.join_btn.disabled = False
+        self.loading_overlay.hide()
+
+        if payload.get("status") != "success":
+            tone = payload.get("tone", "error")
+            color = COLORS["warning"] if tone == "warning" else COLORS["error"]
+            self._set_status(payload.get("message") or "Не удалось войти в комнату.", color, tone)
+            return
+
+        joined_room = payload.get("room") or {}
+        room_code = payload.get("room_code") or "----"
+        self.joined_room = joined_room
+        self._set_status(
+            f"Ты в комнате «{joined_room.get('room_name', room_code)}». "
+            f"Игроков: {joined_room.get('players_count', '?')}/{joined_room.get('max_players', '?')}.",
+            COLORS["success"],
+            "success",
+        )
+
+        app = App.get_running_app()
+        if app is not None:
+            app.set_active_room(joined_room)
+            if hasattr(app, "ensure_screen"):
+                app.ensure_screen("room")
+        if self.manager is not None:
+            self.manager.current = "room"

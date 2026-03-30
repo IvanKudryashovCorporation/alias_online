@@ -1,5 +1,6 @@
 import random
 import string
+from threading import Thread
 
 from kivy.app import App
 from kivy.clock import Clock
@@ -133,6 +134,9 @@ class CreateRoomScreen(Screen):
         self.room_access_popup = None
         self.room_access_popup_message_label = None
         self._create_in_progress = False
+        self._create_request_token = 0
+        self._code_preview_token = 0
+        self._code_preview_in_progress = False
 
         root = ScreenBackground()
         scroll, content = build_scrollable_content(padding=[dp(20), dp(22), dp(20), dp(24)], spacing=12)
@@ -407,6 +411,9 @@ class CreateRoomScreen(Screen):
         self._stop_room_access_watch()
         self._dismiss_room_access_popup()
         self._create_in_progress = False
+        self._create_request_token += 1
+        self._code_preview_token += 1
+        self._code_preview_in_progress = False
         self.create_btn.disabled = False
         self.loading_overlay.hide()
 
@@ -604,12 +611,44 @@ class CreateRoomScreen(Screen):
             return
         if self.private_room_code and not force:
             self.private_code_label.text = self.private_room_code
-            return
-        try:
-            self.private_room_code = generate_room_code_preview() or self._local_code_fallback()
-        except (ConnectionError, ValueError):
+        else:
             self.private_room_code = self._local_code_fallback()
         self.private_code_label.text = self.private_room_code
+        self._request_private_code_preview()
+
+    def _request_private_code_preview(self):
+        if self.visibility_scope != "private":
+            return
+        if self._code_preview_in_progress:
+            return
+
+        self._code_preview_in_progress = True
+        self._code_preview_token += 1
+        request_token = self._code_preview_token
+        worker = Thread(target=self._load_private_code_worker, args=(request_token,), daemon=True)
+        worker.start()
+
+    def _load_private_code_worker(self, request_token):
+        code_value = ""
+        try:
+            code_value = (generate_room_code_preview() or "").strip().upper()
+        except (ConnectionError, ValueError):
+            code_value = ""
+        Clock.schedule_once(
+            lambda _dt, token=request_token, code=code_value: self._finish_private_code_preview(token, code)
+        )
+
+    def _finish_private_code_preview(self, request_token, code_value):
+        if request_token != self._code_preview_token:
+            return
+
+        self._code_preview_in_progress = False
+        if self.visibility_scope != "private":
+            return
+
+        if code_value:
+            self.private_room_code = code_value
+            self.private_code_label.text = code_value
 
     def _copy_private_code(self, *_):
         if not self.private_room_code:
@@ -642,6 +681,8 @@ class CreateRoomScreen(Screen):
         if self._create_in_progress:
             return
         app = App.get_running_app()
+        if app is not None and hasattr(app, "_start_room_server_in_background"):
+            app._start_room_server_in_background()
         player_name = app.resolve_player_name() if app is not None else None
         profile = app.current_profile() if app is not None else None
         room_access_state = app.room_access_state() if app is not None and hasattr(app, "room_access_state") else {"active": False}
@@ -705,6 +746,18 @@ class CreateRoomScreen(Screen):
         if self.visibility_scope == "private":
             self._ensure_private_code_preview(force=not bool(self.private_room_code))
             requested_code = self.private_room_code
+
+        self._start_create_room_request(
+            player_name=player_name,
+            profile=profile,
+            room_name=room_name,
+            requested_players=requested_players,
+            difficulty=difficulty,
+            visibility_label=visibility_label,
+            requested_code=requested_code,
+            round_timer=round_timer,
+        )
+        return
 
         self._create_in_progress = True
         self.create_btn.disabled = True
@@ -773,3 +826,132 @@ class CreateRoomScreen(Screen):
         self.create_btn.disabled = False
         self.loading_overlay.hide()
         self.manager.current = "room"
+
+    def _start_create_room_request(
+        self,
+        *,
+        player_name,
+        profile,
+        room_name,
+        requested_players,
+        difficulty,
+        visibility_label,
+        requested_code,
+        round_timer,
+    ):
+        self._create_in_progress = True
+        self._create_request_token += 1
+        request_token = self._create_request_token
+        self.create_btn.disabled = True
+        self.loading_overlay.show("Создаем комнату...")
+
+        payload = {
+            "player_name": player_name,
+            "room_name": room_name,
+            "requested_players": int(requested_players),
+            "difficulty": difficulty,
+            "visibility_label": visibility_label,
+            "visibility_scope": self.visibility_scope,
+            "round_timer_sec": self._timer_to_seconds(round_timer),
+            "requested_code": requested_code,
+            "profile_email": profile.email,
+            "profile_fallback": profile,
+        }
+        worker = Thread(target=self._create_room_worker_async, args=(request_token, payload), daemon=True)
+        worker.start()
+
+    def _create_room_worker_async(self, request_token, payload):
+        result = {"status": "error", "message": "Не удалось создать комнату.", "tone": "error"}
+        try:
+            room = create_online_room(
+                host_name=payload["player_name"],
+                room_name=payload["room_name"],
+                max_players=payload["requested_players"],
+                difficulty=payload["difficulty"],
+                visibility=payload["visibility_label"],
+                visibility_scope=payload["visibility_scope"],
+                round_timer_sec=payload["round_timer_sec"],
+                requested_code=payload["requested_code"],
+            )
+
+            spawned_bots = 0
+            latest_room = None
+            room_code = room.get("code")
+            if room_code:
+                spawned_bots, latest_room = self._spawn_test_bots(
+                    room_code, room.get("max_players", payload["requested_players"])
+                )
+
+            active_room = latest_room or room
+            if room_code:
+                try:
+                    active_room = join_online_room(room_code=room_code, player_name=payload["player_name"])
+                except (ConnectionError, ValueError):
+                    active_room = latest_room or room
+
+            try:
+                updated_profile = spend_alias_coins(email=payload["profile_email"], amount=ROOM_CREATION_COST)
+            except ValueError:
+                updated_profile = payload["profile_fallback"]
+
+            result = {
+                "status": "success",
+                "room": room,
+                "active_room": active_room,
+                "room_code": room_code,
+                "spawned_bots": int(spawned_bots),
+                "updated_profile": updated_profile,
+                "room_name": payload["room_name"],
+            }
+        except ConnectionError as error:
+            result = {"status": "error", "message": str(error), "tone": "error"}
+        except ValueError as error:
+            result = {"status": "error", "message": str(error), "tone": "warning"}
+        except Exception as error:
+            result = {"status": "error", "message": f"Неожиданная ошибка: {error}", "tone": "error"}
+
+        Clock.schedule_once(lambda _dt, token=request_token, data=result: self._finish_create_room_async(token, data))
+
+    def _finish_create_room_async(self, request_token, result):
+        if request_token != self._create_request_token:
+            return
+
+        self._create_in_progress = False
+        self.create_btn.disabled = False
+        self.loading_overlay.hide()
+
+        if result.get("status") != "success":
+            tone = result.get("tone", "error")
+            self.status_label.color = COLORS["warning"] if tone == "warning" else COLORS["error"]
+            self.status_label.text = result.get("message") or "Не удалось создать комнату."
+            return
+
+        room = result.get("room") or {}
+        active_room = result.get("active_room") or room
+        room_code = result.get("room_code")
+        updated_profile = result.get("updated_profile")
+        spawned_bots = int(result.get("spawned_bots", 0))
+
+        if self.visibility_scope == "private" and room_code:
+            self.private_room_code = room_code
+            self.private_code_label.text = room_code
+
+        self.pending_room_config = active_room
+        current_coins = "?"
+        if updated_profile is not None:
+            self.coin_badge.set_value(updated_profile.alias_coins)
+            current_coins = updated_profile.alias_coins
+
+        self.status_label.color = COLORS["success"]
+        self.status_label.text = (
+            f"Комната «{room.get('room_name', result.get('room_name', 'Комната'))}» готова. "
+            f"Код: {room_code or '----'}. Осталось {current_coins} AC. Ботов подключено: {spawned_bots}."
+        )
+
+        app = App.get_running_app()
+        if app is not None:
+            app.set_active_room(active_room)
+            if hasattr(app, "ensure_screen"):
+                app.ensure_screen("room")
+        if self.manager is not None:
+            self.manager.current = "room"
