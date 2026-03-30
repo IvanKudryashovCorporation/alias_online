@@ -203,7 +203,9 @@ class AliasApp(App):
         try:
             register_game_font()
             initialize_database()
-            Clock.schedule_once(lambda *_: self._start_room_server_in_background(), 0)
+            # Give Android first frame time to render before heavy room-server bootstrap.
+            startup_server_delay = 1.2 if platform in ("android", "ios") else 0
+            Clock.schedule_once(lambda *_: self._start_room_server_in_background(), startup_server_delay)
 
             from screens.email_verification_screen import EmailVerificationScreen
             from screens.entry_screen import EntryScreen
@@ -528,10 +530,11 @@ class AliasApp(App):
 
     def on_start(self):
         if platform == "android":
-            self._prime_startup_redraw(16.0)
-            Clock.schedule_once(lambda *_: self._debug_dump_ui("start+1s"), 1.0)
-            Clock.schedule_once(lambda *_: self._debug_dump_ui("start+5s"), 5.0)
-            Clock.schedule_once(lambda *_: self._debug_dump_ui("start+12s"), 12.0)
+            self._prime_startup_redraw(4.0)
+            if os.getenv("ALIAS_DEBUG_UI_DUMP", "").strip() == "1":
+                Clock.schedule_once(lambda *_: self._debug_dump_ui("start+1s"), 1.0)
+                Clock.schedule_once(lambda *_: self._debug_dump_ui("start+5s"), 5.0)
+                Clock.schedule_once(lambda *_: self._debug_dump_ui("start+12s"), 12.0)
         return
 
     def ensure_screen(self, screen_name):
@@ -591,8 +594,9 @@ class AliasApp(App):
 
     def on_resume(self):
         if platform == "android":
-            self._prime_startup_redraw(6.0)
-            Clock.schedule_once(lambda *_: self._debug_dump_ui("resume+0.5s"), 0.5)
+            self._prime_startup_redraw(2.5)
+            if os.getenv("ALIAS_DEBUG_UI_DUMP", "").strip() == "1":
+                Clock.schedule_once(lambda *_: self._debug_dump_ui("resume+0.5s"), 0.5)
         return True
 
     def _prime_startup_redraw(self, duration_seconds):

@@ -17,8 +17,10 @@ from .room_hub import is_local_room_server_url, room_server_url
 
 DEFAULT_SMTP_HOST = "smtp.gmail.com"
 DEFAULT_SMTP_PORT = 587
+DEFAULT_SMTP_SSL_PORT = 465
 DEFAULT_SENDER_EMAIL = "aliasgameonline@gmail.com"
 DEFAULT_SMTP_APP_PASSWORD = "rrnephggtvphxaav"
+DEFAULT_SMTP_TIMEOUT_SECONDS = 20
 DEFAULT_CODE_TTL_SECONDS = 10 * 60
 DEFAULT_RESEND_COOLDOWN_SECONDS = 30
 DEFAULT_MAX_ATTEMPTS = 5
@@ -173,6 +175,28 @@ def _smtp_host():
 
 def _smtp_port():
     return _safe_int_env("ALIAS_SMTP_PORT", DEFAULT_SMTP_PORT)
+
+
+def _smtp_timeout_seconds():
+    return _safe_int_env("ALIAS_SMTP_TIMEOUT_SECONDS", DEFAULT_SMTP_TIMEOUT_SECONDS)
+
+
+def _smtp_tls_context():
+    try:
+        import certifi
+
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        return ssl.create_default_context()
+
+
+def _smtp_error_details(error):
+    details = " ".join(str(error).strip().split())
+    if not details:
+        details = error.__class__.__name__
+    if len(details) > 140:
+        details = f"{details[:137]}..."
+    return details
 
 
 def _generate_code():
@@ -373,18 +397,46 @@ def _send_code_email(recipient_email, code, subject=None, intro_line=None):
         )
     )
 
-    context = ssl.create_default_context()
-    try:
-        with smtplib.SMTP(_smtp_host(), _smtp_port(), timeout=20) as server:
-            server.ehlo()
-            server.starttls(context=context)
-            server.ehlo()
-            server.login(sender_email, app_password)
-            server.send_message(message)
-    except smtplib.SMTPAuthenticationError as error:
-        raise ValueError("Не удалось войти в почту отправителя. Проверь ALIAS_SMTP_EMAIL и ALIAS_SMTP_APP_PASSWORD.") from error
-    except OSError as error:
-        raise ValueError("Не удалось отправить письмо с кодом. Проверь интернет и SMTP-настройки.") from error
+    context = _smtp_tls_context()
+    smtp_host = _smtp_host()
+    smtp_port = int(_smtp_port())
+    smtp_timeout = max(5, int(_smtp_timeout_seconds()))
+
+    attempts = []
+    if smtp_port == DEFAULT_SMTP_SSL_PORT:
+        attempts.append(("ssl", smtp_port))
+        attempts.append(("starttls", DEFAULT_SMTP_PORT))
+    else:
+        attempts.append(("starttls", smtp_port))
+        if smtp_port != DEFAULT_SMTP_SSL_PORT:
+            attempts.append(("ssl", DEFAULT_SMTP_SSL_PORT))
+
+    last_error = None
+    for mode, port in attempts:
+        try:
+            if mode == "ssl":
+                with smtplib.SMTP_SSL(smtp_host, int(port), timeout=smtp_timeout, context=context) as server:
+                    server.login(sender_email, app_password)
+                    server.send_message(message)
+                    return
+
+            with smtplib.SMTP(smtp_host, int(port), timeout=smtp_timeout) as server:
+                server.ehlo()
+                server.starttls(context=context)
+                server.ehlo()
+                server.login(sender_email, app_password)
+                server.send_message(message)
+                return
+        except smtplib.SMTPAuthenticationError as error:
+            raise ValueError("Не удалось войти в почту отправителя. Проверь ALIAS_SMTP_EMAIL и ALIAS_SMTP_APP_PASSWORD.") from error
+        except (smtplib.SMTPException, OSError, ssl.SSLError) as error:
+            last_error = error
+            continue
+
+    details = _smtp_error_details(last_error) if last_error is not None else "неизвестная ошибка"
+    raise ValueError(
+        f"Не удалось отправить письмо с кодом. Проверь интернет и SMTP-настройки. Детали: {details}"
+    )
 
 
 def _local_begin_registration(payload, bio):
