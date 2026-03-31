@@ -134,14 +134,17 @@ def _request_json(method, path, payload=None, timeout=7, base_url=None):
     if not server_url:
         raise ConnectionError("URL сервера комнат не настроен.")
 
-    if is_local_room_server_url(server_url):
+    local_room_server = is_local_room_server_url(server_url)
+    if local_room_server:
         app = App.get_running_app()
         ensure_server_ready = getattr(app, "ensure_local_room_server_ready", None) if app is not None else None
         if callable(ensure_server_ready):
             try:
-                ensure_server_ready(timeout=2.8)
+                ready = bool(ensure_server_ready(timeout=2.8))
             except Exception:
-                pass
+                ready = False
+            if not ready:
+                raise ConnectionError("Не удалось запустить локальный сервер комнат. Перезапусти приложение.")
 
     url = f"{server_url}{path}"
     data = None
@@ -154,6 +157,9 @@ def _request_json(method, path, payload=None, timeout=7, base_url=None):
     request_timeout = timeout if timeout is not None else 7
     if platform in {"android", "ios"}:
         request_timeout = max(9, int(request_timeout))
+    if local_room_server:
+        attempts = 1
+        request_timeout = min(float(request_timeout), 3.0)
 
     body = ""
     last_transport_error = None
