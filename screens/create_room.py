@@ -139,7 +139,7 @@ class CreateRoomScreen(Screen):
         self._code_preview_in_progress = False
 
         root = ScreenBackground()
-        scroll, content = build_scrollable_content(padding=[dp(20), dp(22), dp(20), dp(24)], spacing=12)
+        scroll, content = build_scrollable_content(padding=[dp(18), dp(18), dp(18), dp(20)], spacing=12)
 
         top_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(52))
         back_btn = AppButton(text="Назад", compact=True, size_hint=(None, None), size=(dp(132), dp(48)))
@@ -148,7 +148,7 @@ class CreateRoomScreen(Screen):
         top_row.add_widget(Widget())
         content.add_widget(top_row)
 
-        content.add_widget(BrandTitle(text="ALIAS ONLINE", height=dp(104), font_size=sp(38), shadow_step=dp(3)))
+        content.add_widget(BrandTitle(text="ALIAS ONLINE", height=dp(120), font_size=sp(42), shadow_step=dp(3)))
 
         intro_card = RoundedPanel(
             orientation="vertical",
@@ -158,6 +158,8 @@ class CreateRoomScreen(Screen):
             bg_color=COLORS["surface_card"],
         )
         intro_card.bind(minimum_height=intro_card.setter("height"))
+        intro_card._border_color.rgba = (1, 1, 1, 0.14)
+        intro_card._border_line.width = 1.2
         intro_card.add_widget(PixelLabel(text="Новая комната", font_size=sp(22), center=True, size_hint_y=None))
         intro_card.add_widget(
             BodyLabel(
@@ -180,11 +182,14 @@ class CreateRoomScreen(Screen):
 
         form_card = RoundedPanel(
             orientation="vertical",
-            padding=[dp(22), dp(18), dp(22), dp(18)],
+            padding=[dp(20), dp(18), dp(20), dp(18)],
             spacing=dp(14),
             size_hint_y=None,
+            bg_color=COLORS["surface_card"],
         )
         form_card.bind(minimum_height=form_card.setter("height"))
+        form_card._border_color.rgba = COLORS["outline_soft"] if "outline_soft" in COLORS else COLORS["outline"]
+        form_card._border_line.width = 1.0
         form_card.add_widget(PixelLabel(text="Параметры комнаты", font_size=sp(15), center=True, size_hint_y=None))
 
         form_card.add_widget(BodyLabel(text="Название комнаты"))
@@ -194,12 +199,12 @@ class CreateRoomScreen(Screen):
         form_card.add_widget(BodyLabel(text="Сколько человек играет"))
         self.players_grid = GridLayout(
             cols=3,
-            spacing=[dp(12), dp(12)],
+            spacing=[dp(14), dp(10)],
             padding=[dp(8), dp(2), dp(8), dp(6)],
             size_hint_y=None,
             row_default_height=dp(48),
             row_force_default=True,
-            col_default_width=dp(94),
+            col_default_width=dp(96),
             col_force_default=True,
         )
         self.players_grid.bind(minimum_height=self.players_grid.setter("height"))
@@ -213,20 +218,20 @@ class CreateRoomScreen(Screen):
         form_card.add_widget(BodyLabel(text="Сложность слов"))
         self.difficulty_grid = GridLayout(
             cols=4,
-            spacing=[dp(10), dp(0)],
+            spacing=[dp(12), dp(10)],
             padding=[dp(8), dp(2), dp(8), dp(4)],
             size_hint_y=None,
             row_default_height=dp(46),
             row_force_default=True,
-            col_default_width=dp(82),
+            col_default_width=dp(108),
             col_force_default=True,
         )
         self.difficulty_grid.bind(minimum_height=self.difficulty_grid.setter("height"))
         for value in ["Легкие", "Средние", "Сложные", "Микс"]:
-            chip = RoomChoiceChip(value, value, self._select_difficulty, height=dp(44), font_size=sp(11.8))
+            chip = RoomChoiceChip(value, value, self._select_difficulty, height=dp(44), font_size=sp(12.4))
             self.difficulty_choice_chips.append(chip)
             self.difficulty_grid.add_widget(chip)
-        self.difficulty_grid.bind(width=lambda *_args, grid=self.difficulty_grid: self._sync_choice_grid_width(grid, min_width=dp(78)))
+        self.difficulty_grid.bind(width=lambda *_args, grid=self.difficulty_grid: self._sync_choice_grid_width(grid, min_width=dp(108)))
         form_card.add_widget(self.difficulty_grid)
 
         form_card.add_widget(BodyLabel(text="Тип комнаты"))
@@ -247,21 +252,21 @@ class CreateRoomScreen(Screen):
 
         form_card.add_widget(BodyLabel(text="Таймер раунда"))
         self.timer_grid = GridLayout(
-            cols=2,
-            spacing=[dp(14), dp(12)],
+            cols=3,
+            spacing=[dp(18), dp(12)],
             padding=[dp(8), dp(2), dp(8), dp(8)],
             size_hint_y=None,
             row_default_height=dp(50),
             row_force_default=True,
-            col_default_width=dp(118),
+            col_default_width=dp(108),
             col_force_default=True,
         )
         self.timer_grid.bind(minimum_height=self.timer_grid.setter("height"))
         for value in ["30 сек", "45 сек", "60 сек", "75 сек", "90 сек", "120 сек"]:
-            chip = RoomChoiceChip(value, value, self._select_timer, height=dp(46), font_size=sp(12.2))
+            chip = RoomChoiceChip(value, value, self._select_timer, height=dp(46), font_size=sp(12.3))
             self.timer_choice_chips.append(chip)
             self.timer_grid.add_widget(chip)
-        self.timer_grid.bind(width=lambda *_args, grid=self.timer_grid: self._sync_choice_grid_width(grid, min_width=dp(110)))
+        self.timer_grid.bind(width=lambda *_args, grid=self.timer_grid: self._sync_choice_grid_width(grid, min_width=dp(108)))
         form_card.add_widget(self.timer_grid)
         content.add_widget(form_card)
 
@@ -320,16 +325,19 @@ class CreateRoomScreen(Screen):
             padding=[dp(18), dp(16), dp(18), dp(16)],
             spacing=dp(10),
             size_hint_y=None,
+            bg_color=COLORS["surface_card"],
         )
         actions_card.bind(minimum_height=actions_card.setter("height"))
-        create_row = BoxLayout(orientation="horizontal", spacing=dp(10), size_hint_y=None, height=dp(72))
+        actions_card._border_color.rgba = (1, 1, 1, 0.14)
+        actions_card._border_line.width = 1.2
+        create_row = BoxLayout(orientation="horizontal", spacing=dp(10), size_hint_y=None, height=dp(74))
         self.create_btn = AppButton(text="Создать комнату", font_size=sp(18))
         self.create_btn.bind(on_release=self.prepare_room)
         create_row.add_widget(self.create_btn)
         cost_chip = RoundedPanel(
             orientation="vertical",
             size_hint=(None, None),
-            size=(dp(98), dp(56)),
+            size=(dp(102), dp(58)),
             padding=[dp(8), dp(8), dp(8), dp(8)],
             bg_color=COLORS["surface_panel"],
             shadow_alpha=0.18,
@@ -365,8 +373,8 @@ class CreateRoomScreen(Screen):
         self._select_difficulty(self.difficulty_value)
         self._select_timer(self.timer_value)
         Clock.schedule_once(lambda *_: self._sync_choice_grid_width(self.players_grid, min_width=dp(92)), 0)
-        Clock.schedule_once(lambda *_: self._sync_choice_grid_width(self.difficulty_grid, min_width=dp(78)), 0)
-        Clock.schedule_once(lambda *_: self._sync_choice_grid_width(self.timer_grid, min_width=dp(110)), 0)
+        Clock.schedule_once(lambda *_: self._sync_choice_grid_width(self.difficulty_grid, min_width=dp(108)), 0)
+        Clock.schedule_once(lambda *_: self._sync_choice_grid_width(self.timer_grid, min_width=dp(108)), 0)
 
     def _room_access_message(self, remaining_seconds):
         app = App.get_running_app()
@@ -585,8 +593,8 @@ class CreateRoomScreen(Screen):
         self.private_chip.set_active(self.visibility_scope == "private")
         self._set_code_card_visibility(self.visibility_scope == "private")
         Clock.schedule_once(lambda *_: self._sync_choice_grid_width(self.players_grid, min_width=dp(92)), 0)
-        Clock.schedule_once(lambda *_: self._sync_choice_grid_width(self.difficulty_grid, min_width=dp(78)), 0)
-        Clock.schedule_once(lambda *_: self._sync_choice_grid_width(self.timer_grid, min_width=dp(110)), 0)
+        Clock.schedule_once(lambda *_: self._sync_choice_grid_width(self.difficulty_grid, min_width=dp(108)), 0)
+        Clock.schedule_once(lambda *_: self._sync_choice_grid_width(self.timer_grid, min_width=dp(108)), 0)
         if self.visibility_scope == "private":
             self.type_hint_label.text = "Закрытая комната не попадет в список. Друзья смогут войти по коду ниже."
             self._ensure_private_code_preview(force=not bool(self.private_room_code))
@@ -760,74 +768,6 @@ class CreateRoomScreen(Screen):
             round_timer=round_timer,
         )
         return
-
-        self._create_in_progress = True
-        self.create_btn.disabled = True
-        self.loading_overlay.show("Создаём комнату...")
-        try:
-            room = create_online_room(
-                host_name=player_name,
-                room_name=room_name,
-                max_players=requested_players,
-                difficulty=difficulty,
-                visibility=visibility_label,
-                visibility_scope=self.visibility_scope,
-                round_timer_sec=self._timer_to_seconds(round_timer),
-                requested_code=requested_code,
-            )
-        except ConnectionError as error:
-            self.status_label.color = COLORS["error"]
-            self.status_label.text = str(error)
-            self._create_in_progress = False
-            self.create_btn.disabled = False
-            self.loading_overlay.hide()
-            return
-        except ValueError as error:
-            self.status_label.color = COLORS["warning"]
-            self.status_label.text = str(error)
-            self._create_in_progress = False
-            self.create_btn.disabled = False
-            self.loading_overlay.hide()
-            return
-
-        spawned_bots = 0
-        latest_room = None
-        room_code = room.get("code")
-        if room_code:
-            if self.visibility_scope == "private":
-                self.private_room_code = room_code
-                self.private_code_label.text = room_code
-            spawned_bots, latest_room = self._spawn_test_bots(room_code, room.get("max_players", requested_players))
-
-        active_room = latest_room or room
-        if room_code:
-            try:
-                active_room = join_online_room(room_code=room_code, player_name=player_name)
-            except (ConnectionError, ValueError):
-                active_room = latest_room or room
-
-        self.pending_room_config = active_room
-        try:
-            updated_profile = spend_alias_coins(email=profile.email, amount=ROOM_CREATION_COST)
-        except ValueError:
-            updated_profile = profile
-
-        self.coin_badge.set_value(updated_profile.alias_coins)
-        self.status_label.color = COLORS["success"]
-        self.status_label.text = (
-            f"Комната «{room.get('room_name', room_name)}» готова. "
-            f"Код: {room_code or '----'}. "
-            f"Осталось {updated_profile.alias_coins} AC. "
-            f"Ботов подключено: {spawned_bots}."
-        )
-        if app is not None:
-            app.set_active_room(active_room)
-            if hasattr(app, "ensure_screen"):
-                app.ensure_screen("room")
-        self._create_in_progress = False
-        self.create_btn.disabled = False
-        self.loading_overlay.hide()
-        self.manager.current = "room"
 
     def _start_create_room_request(
         self,

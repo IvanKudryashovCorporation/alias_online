@@ -202,7 +202,7 @@ class EmailVerificationScreen(Screen):
                 name=registration_payload["name"],
                 email=registration_payload["email"],
                 password=registration_payload["password"],
-                avatar_path=None,
+                avatar_path=registration_payload.get("avatar_path"),
                 bio=registration_payload.get("bio"),
             )
         except ValueError as error:

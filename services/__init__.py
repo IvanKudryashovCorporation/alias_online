@@ -59,6 +59,7 @@ from .room_hub import (
     ping_room_voice,
     room_server_bind_params,
     room_server_url,
+    set_room_mic_state,
     set_room_server_url,
     send_room_voice_chunk,
     send_room_chat,

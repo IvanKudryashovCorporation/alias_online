@@ -44,6 +44,7 @@ class PendingRegistration:
     email: str
     password: str
     bio: str | None
+    avatar_path: str | None
     code: str
     expires_at: float
     resend_available_at: float
@@ -439,7 +440,7 @@ def _send_code_email(recipient_email, code, subject=None, intro_line=None):
     )
 
 
-def _local_begin_registration(payload, bio):
+def _local_begin_registration(payload, bio, avatar_path):
     now = time.time()
     session_id = secrets.token_urlsafe(24)
     code = _generate_code()
@@ -449,6 +450,7 @@ def _local_begin_registration(payload, bio):
         email=payload["email"],
         password=payload["password"],
         bio=bio,
+        avatar_path=avatar_path,
         code=code,
         expires_at=now + _code_ttl_seconds(),
         resend_available_at=now + _resend_cooldown_seconds(),
@@ -546,6 +548,7 @@ def _local_confirm_registration(session_id, code):
             "email": record.email,
             "password": record.password,
             "bio": record.bio,
+            "avatar_path": record.avatar_path,
         }
 
 
@@ -672,7 +675,7 @@ def _local_cancel_password_reset(session_id):
         _PENDING_PASSWORD_RESETS.pop(session_id, None)
 
 
-def begin_registration_verification(name, email, password, bio=None, db_path=None):
+def begin_registration_verification(name, email, password, bio=None, avatar_path=None, db_path=None):
     _ensure_mobile_global_auth_url()
 
     payload = validate_registration_payload(
@@ -683,6 +686,7 @@ def begin_registration_verification(name, email, password, bio=None, db_path=Non
         allow_existing_email=False,
     )
     clean_bio = (bio or "").strip() or None
+    clean_avatar_path = (avatar_path or "").strip() or None
 
     remote_result, remote_error = _try_remote(
         f"{REMOTE_API_PREFIX}/register/request-code",
@@ -691,6 +695,7 @@ def begin_registration_verification(name, email, password, bio=None, db_path=Non
             "email": payload["email"],
             "password": payload["password"],
             "bio": clean_bio,
+            "avatar_path": clean_avatar_path,
         },
     )
     if remote_result is not None:
@@ -702,7 +707,7 @@ def begin_registration_verification(name, email, password, bio=None, db_path=Non
         }
 
     try:
-        return _local_begin_registration(payload, clean_bio)
+        return _local_begin_registration(payload, clean_bio, clean_avatar_path)
     except ValueError as local_error:
         if remote_error is not None:
             raise ValueError(str(remote_error)) from local_error
@@ -768,6 +773,7 @@ def confirm_registration_verification_code(session_id, code):
             "email": remote_result.get("email", ""),
             "password": remote_result.get("password", ""),
             "bio": remote_result.get("bio"),
+            "avatar_path": remote_result.get("avatar_path"),
         }
 
     try:

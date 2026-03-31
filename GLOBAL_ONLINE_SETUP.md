@@ -18,6 +18,14 @@ In Render service environment variables, set:
 
 Without these variables, phone users will not receive registration/recovery codes.
 
+Optional (for smarter voice-aware bots):
+
+- `ALIAS_OPENAI_API_KEY=<your OpenAI API key>`
+- `ALIAS_OPENAI_BASE_URL=https://api.openai.com/v1` (optional override)
+- `ALIAS_OPENAI_TRANSCRIBE_MODEL=gpt-4o-mini-transcribe` (optional override)
+
+When `ALIAS_OPENAI_API_KEY` is set, bots in active rounds can analyze recent explainer voice chunks and produce more context-aware guesses.
+
 ## 3) Point APK to global backend
 
 Use one of these methods:

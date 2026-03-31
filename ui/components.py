@@ -56,7 +56,8 @@ class ScreenBackground(FloatLayout):
         self._bound_parent = None
 
         self._background_image = Image(source=str(BACKGROUND_PATH), fit_mode="fill")
-        self._background_image.opacity = 0 if self.variant == "game" else 1
+        # Use only programmatic scene layers on all screens.
+        self._background_image.opacity = 0
         self.add_widget(self._background_image)
 
         self._scene = Widget()
@@ -398,7 +399,6 @@ class AppTextInput(TextInput):
         register_game_font()
         multiline = kwargs.pop("multiline", False)
         height = kwargs.pop("height", dp(58 if not multiline else 144))
-        self._rendering_hint_label = False
         super().__init__(
             multiline=multiline,
             font_name="GameFont",
@@ -464,25 +464,6 @@ class AppTextInput(TextInput):
         self.cursor_color = cursor_color
         self._bg_color.rgba = bg_color
         self._border_color.rgba = border_color
-
-    def _resolve_line_color(self):
-        if self._rendering_hint_label:
-            return tuple(self.hint_text_color)
-        if self.disabled:
-            return tuple(self.disabled_foreground_color)
-        return tuple(self.foreground_color)
-
-    def _get_line_options(self):
-        line_options = super()._get_line_options().copy()
-        line_options["color"] = self._resolve_line_color()
-        return line_options
-
-    def _create_line_label(self, text, hint=False):
-        self._rendering_hint_label = hint
-        try:
-            return super()._create_line_label(text, hint=hint)
-        finally:
-            self._rendering_hint_label = False
 
     def _refresh_text_colors(self, *_):
         text_color = COLORS["input_readonly_text"] if self.readonly or self.disabled else COLORS["input_text"]
@@ -825,6 +806,8 @@ class CoinBadge(ButtonBehavior, RoundedPanel):
                     "• Играй чаще, чтобы накапливать AC\n\n"
                     "Важно:\n"
                     "• Создание комнаты стоит 25 AC\n"
+                    "• Первый запуск игры после создания комнаты — бесплатный\n"
+                    "• Каждый следующий запуск в том же лобби: -25 AC\n"
                     "• Выход из матча раньше времени: -50 AC и блокировка на 5 минут"
                 ),
             )
@@ -981,11 +964,13 @@ class MiniIcon(Widget):
 
 class IconMetaChip(RoundedPanel):
     def __init__(self, icon="users", text="", **kwargs):
+        chip_width = kwargs.pop("width", dp(92))
         super().__init__(
             orientation="horizontal",
             spacing=dp(6),
             padding=[dp(10), dp(6), dp(10), dp(6)],
             size_hint=(None, None),
+            width=chip_width,
             height=dp(30),
             bg_color=COLORS["surface_chip"],
             shadow_alpha=0.08,
@@ -999,30 +984,19 @@ class IconMetaChip(RoundedPanel):
             text=text,
             font_size=sp(10.5),
             color=COLORS["text_soft"],
-            size_hint=(None, 1),
+            size_hint=(1, 1),
             auto_height=False,
         )
-        self.label.unbind(width=self.label._sync_text)
-        self._layout_trigger = Clock.create_trigger(self._reflow, 0)
-        self.label.bind(text=lambda *_: self._layout_trigger())
-        self.icon.bind(size=lambda *_: self._layout_trigger())
+        self.label.halign = "left"
+        self.label.bind(size=self._sync_label_text)
         self.add_widget(self.label)
-        self._layout_trigger()
+        self._sync_label_text()
 
     def set_text(self, text):
         self.label.text = text
 
-    def _reflow(self, *_):
-        self.label.text_size = (None, None)
-        self.label.texture_update()
-        next_width = max(dp(18), self.label.texture_size[0] + dp(2))
-        if abs(self.label.width - next_width) > 0.5:
-            self.label.width = next_width
-
-        horizontal_padding = self.padding[0] + self.padding[2]
-        next_width = horizontal_padding + self.spacing + self.icon.width + self.label.width
-        if abs(self.width - next_width) > 0.5:
-            self.width = next_width
+    def _sync_label_text(self, *_):
+        self.label.text_size = (max(0, self.label.width), max(0, self.label.height))
 
 
 class IconCircleButton(ButtonBehavior, FloatLayout):

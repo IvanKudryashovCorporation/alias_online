@@ -5,7 +5,18 @@ from kivy.uix.screenmanager import Screen
 from kivy.uix.widget import Widget
 
 from services import has_profiles, login_profile
-from ui import AppButton, AppTextInput, BodyLabel, BrandTitle, CoinBadge, COLORS, PixelLabel, RoundedPanel, ScreenBackground, register_game_font
+from ui import (
+    AppButton,
+    AppTextInput,
+    BodyLabel,
+    BrandTitle,
+    COLORS,
+    PixelLabel,
+    RoundedPanel,
+    ScreenBackground,
+    build_scrollable_content,
+    register_game_font,
+)
 
 
 class LoginScreen(Screen):
@@ -14,73 +25,83 @@ class LoginScreen(Screen):
         register_game_font()
 
         root = ScreenBackground()
-
-        content = BoxLayout(
-            orientation="vertical",
-            spacing=dp(10),
+        scroll, content = build_scrollable_content(
             padding=[dp(18), dp(18), dp(18), dp(18)],
+            spacing=12,
         )
 
-        top_bar = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(48))
+        top_bar = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(50))
         back_btn = AppButton(text="Назад", compact=True, size_hint=(None, None), size=(dp(128), dp(46)))
         back_btn.bind(on_release=lambda *_: setattr(self.manager, "current", "entry"))
         top_bar.add_widget(back_btn)
         top_bar.add_widget(Widget())
         content.add_widget(top_bar)
 
-        content.add_widget(BrandTitle(text="ALIAS ONLINE", height=dp(136), font_size=sp(44), shadow_step=dp(3)))
+        content.add_widget(BrandTitle(text="ALIAS ONLINE", height=dp(178), font_size=sp(60), shadow_step=dp(4)))
 
         card = RoundedPanel(
             orientation="vertical",
-            padding=[dp(16), dp(16), dp(16), dp(16)],
-            spacing=dp(10),
+            padding=[dp(20), dp(20), dp(20), dp(18)],
+            spacing=dp(12),
             size_hint_y=None,
-            height=dp(330),
+            bg_color=COLORS["surface_card"],
         )
-        card.add_widget(PixelLabel(text="Вход", font_size=sp(22), center=True, size_hint_y=None, height=dp(30)))
+        card.bind(minimum_height=card.setter("height"))
+        card._border_color.rgba = (1, 1, 1, 0.16)
+        card._border_line.width = 1.2
+        card.add_widget(PixelLabel(text="Вход", font_size=sp(31), center=True, size_hint_y=None, height=dp(40)))
         card.add_widget(
             BodyLabel(
                 center=True,
                 color=COLORS["text_muted"],
-                font_size=sp(13),
+                font_size=sp(13.5),
                 size_hint_y=None,
-                height=dp(24),
-                text="Введи почту и пароль от сохранённого профиля.",
+                text="Введи почту и пароль от сохранённого профиля",
             )
         )
 
-        self.email_input = AppTextInput(hint_text="E-mail", height=dp(52))
-        self.password_input = AppTextInput(hint_text="Пароль", password=True, height=dp(52))
+        self.email_input = AppTextInput(hint_text="E-mail", height=dp(54))
+        self.password_input = AppTextInput(hint_text="Пароль", password=True, height=dp(54))
         card.add_widget(self.email_input)
         card.add_widget(self.password_input)
 
-        login_btn = AppButton(text="Войти", font_size=sp(20))
+        login_btn = AppButton(text="Войти", font_size=sp(21))
+        login_btn.height = dp(72)
         login_btn.bind(on_release=self.submit_login)
         card.add_widget(login_btn)
 
         self.status_label = BodyLabel(
             center=True,
             color=COLORS["text_muted"],
-            font_size=sp(12),
+            font_size=sp(11.5),
             text="Если аккаунта ещё нет, вернись и выбери регистрацию.",
+            size_hint_y=None,
         )
         card.add_widget(self.status_label)
 
-        forgot_password_btn = AppButton(text="Забыл пароль?", compact=True, font_size=sp(15), size_hint_y=None, height=dp(38))
+        forgot_password_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(28))
+        forgot_password_row.add_widget(Widget())
+        forgot_password_btn = AppButton(
+            text="Забыли пароль?",
+            compact=True,
+            font_size=sp(10.5),
+            size_hint=(None, None),
+            size=(dp(124), dp(24)),
+            button_color=(0.12, 0.17, 0.27, 0.42),
+            pressed_color=(0.10, 0.15, 0.24, 0.58),
+        )
         forgot_password_btn.bind(on_release=self.open_password_recovery)
-        card.add_widget(forgot_password_btn)
+        forgot_password_row.add_widget(forgot_password_btn)
+        forgot_password_row.add_widget(Widget())
+        card.add_widget(forgot_password_row)
 
-        content.add_widget(Widget())
         content.add_widget(card)
-        content.add_widget(Widget())
+        content.add_widget(Widget(size_hint_y=None, height=dp(6)))
 
-        root.add_widget(content)
-        self.coin_badge = CoinBadge(pos_hint={"right": 0.965, "top": 0.96})
-        root.add_widget(self.coin_badge)
+        root.add_widget(scroll)
         self.add_widget(root)
 
     def on_pre_enter(self, *_):
-        self.coin_badge.refresh_from_session()
         self.password_input.text = ""
         self.status_label.color = COLORS["text_muted"]
         if has_profiles():

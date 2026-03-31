@@ -24,6 +24,7 @@ from kivy.uix.screenmanager import Screen
 from kivy.uix.widget import Widget
 
 from services import (
+    ROOM_CREATION_COST,
     RoomVoiceEngine,
     get_online_room_state,
     join_online_room,
@@ -32,7 +33,9 @@ from services import (
     ping_room_voice,
     send_room_chat,
     send_room_guess,
+    set_room_mic_state,
     skip_room_word,
+    spend_alias_coins,
     start_room_game,
     sync_room_progress,
 )
@@ -78,7 +81,7 @@ class VoiceMicButton(ButtonBehavior, Widget):
         self._muted = True
         self._enabled = True
         self._level = 0.0
-        self._hit_padding = dp(24)
+        self._hit_padding = dp(32)
         self._pressed_touch = None
         self._texture = self._mic_texture()
 
@@ -166,7 +169,7 @@ class VoiceMicButton(ButtonBehavior, Widget):
             self._outline_color.rgba = (1, 1, 1, 0.08)
             self._ring_color.rgba = (1, 1, 1, 0.08)
             self._halo_color.rgba = (0.22, 0.90, 0.42, 0.0)
-            self._mute_color.rgba = (0.96, 0.23, 0.23, 0.42)
+            self._mute_color.rgba = (0.96, 0.23, 0.23, 0.0)
         else:
             if self._muted:
                 self._bg_color.rgba = (0.08, 0.13, 0.21, 0.98)
@@ -656,6 +659,10 @@ class FullscreenCountdownOverlay(FloatLayout):
         with self.canvas.before:
             self._shade_color = Color(0, 0, 0, 0.78)
             self._shade_rect = Rectangle(pos=self.pos, size=self.size)
+            self._ring_color = Color(*COLORS["accent"])
+            self._ring = Line(width=dp(2.8), circle=(0, 0, 0))
+            self._inner_color = Color(0.06, 0.10, 0.18, 0.92)
+            self._inner = Ellipse(pos=(0, 0), size=(0, 0))
 
         self._label = Label(
             text="",
@@ -666,21 +673,41 @@ class FullscreenCountdownOverlay(FloatLayout):
             valign="middle",
         )
         self.add_widget(self._label)
+        self._caption = Label(
+            text="СТАРТ ЧЕРЕЗ",
+            font_name="GameFont",
+            font_size=sp(18),
+            color=COLORS["accent"],
+            halign="center",
+            valign="middle",
+            size_hint=(None, None),
+            size=(dp(220), dp(34)),
+        )
+        self.add_widget(self._caption)
         self.bind(pos=self._sync_canvas, size=self._sync_canvas)
         self.hide()
 
     def _sync_canvas(self, *_):
         self._shade_rect.pos = self.pos
         self._shade_rect.size = self.size
+        diameter = min(self.width, self.height) * 0.46
+        cx, cy = self.center_x, self.center_y + dp(18)
+        self._inner.pos = (cx - diameter / 2, cy - diameter / 2)
+        self._inner.size = (diameter, diameter)
+        self._ring.circle = (cx, cy, diameter / 2)
         self._label.pos = self.pos
         self._label.size = self.size
         self._label.text_size = self.size
+        self._caption.pos = (self.center_x - self._caption.width / 2, cy + diameter / 2 + dp(8))
+        self._caption.text_size = self._caption.size
 
     def show(self, seconds_left):
         self._active = True
         self.opacity = 1
         number = max(1, int(seconds_left))
         self._label.text = str(number)
+        self._caption.text = "СТАРТ ЧЕРЕЗ"
+        self._sync_canvas()
 
     def hide(self):
         self._active = False
@@ -723,6 +750,7 @@ class RoomScreen(Screen):
         self._start_game_scheduled = False
         self._last_start_attempt_ts = 0.0
         self._start_game_request_in_flight = False
+        self._local_starts_count = 0
 
         root = ScreenBackground(variant="game")
         content = BoxLayout(
@@ -731,7 +759,7 @@ class RoomScreen(Screen):
             spacing=dp(6),
         )
 
-        top_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(50))
+        top_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(56))
         self.back_btn = AppButton(text="В меню", compact=True, size_hint=(None, None), size=(dp(122), dp(46)))
         self.back_btn.bind(on_release=self._go_back_to_menu)
         self._set_room_exit_button(False)
@@ -764,7 +792,7 @@ class RoomScreen(Screen):
         )
         content.add_widget(self.explainer_status_label)
 
-        self.players_wrap_height = dp(252)
+        self.players_wrap_height = dp(248)
         self.players_wrap_round_height = dp(176)
         self.players_wrap = RoundedPanel(
             orientation="vertical",
@@ -792,15 +820,15 @@ class RoomScreen(Screen):
         self.players_wrap.add_widget(self.players_scroll)
         content.add_widget(self.players_wrap)
 
-        self.scores_wrap_height = dp(126)
-        self.scores_wrap_overlay_height = dp(156)
+        self.scores_wrap_height = dp(132)
+        self.scores_wrap_overlay_height = dp(162)
         self.scores_wrap = FloatLayout(size_hint_y=None, height=self.scores_wrap_height)
         self.score_chat_layer = FloatLayout(size_hint=(1, 1), opacity=0, disabled=True)
         self.scores_wrap.add_widget(self.score_chat_layer)
         self.score_badge = ScoreBadge(pos_hint={"center_x": 0.5, "top": 1.0})
         self.scores_wrap.add_widget(self.score_badge)
         self.mic_button_top = VoiceMicButton(size=(dp(88), dp(88)), pos_hint={"right": 0.98, "top": 0.96})
-        self.mic_button_top.bind(on_press=self._toggle_mic)
+        self.mic_button_top.bind(on_release=self._toggle_mic)
         self.mic_button_top.opacity = 0
         self.mic_button_top.disabled = True
         self.scores_wrap.add_widget(self.mic_button_top)
@@ -827,7 +855,7 @@ class RoomScreen(Screen):
         self.lobby_start_row.add_widget(Widget())
         content.add_widget(self.lobby_start_row)
 
-        self.phase_wrap_height = dp(54)
+        self.phase_wrap_height = dp(62)
         self.phase_wrap = RoundedPanel(
             orientation="horizontal",
             size_hint_y=None,
@@ -838,7 +866,7 @@ class RoomScreen(Screen):
         )
         self.phase_wrap._border_color.rgba = COLORS["accent"]
         self.phase_wrap._border_line.width = 1.5
-        self.phase_label = PixelLabel(center=True, color=COLORS["warning"], font_size=sp(21), size_hint_y=None, text="")
+        self.phase_label = PixelLabel(center=True, color=COLORS["warning"], font_size=sp(23), size_hint_y=None, text="")
         self.phase_wrap.add_widget(self.phase_label)
         content.add_widget(self.phase_wrap)
 
@@ -850,8 +878,8 @@ class RoomScreen(Screen):
         self.word_push_spacer = Widget(size_hint_y=None, height=dp(0))
         content.add_widget(self.word_push_spacer)
 
-        self.word_card_height = dp(170)
-        self.word_stage_height = dp(176)
+        self.word_card_height = dp(188)
+        self.word_stage_height = dp(198)
         self.word_stage = FloatLayout(size_hint_y=None, height=self.word_stage_height)
         self.word_stage.bind(size=self._sync_word_stage_layout, pos=self._sync_word_stage_layout)
         self.word_card = SwipeWordCard(
@@ -896,7 +924,7 @@ class RoomScreen(Screen):
         self.voice_card.add_widget(voice_text_col)
         self.voice_card.add_widget(Widget())
         self.mic_button = VoiceMicButton()
-        self.mic_button.bind(on_press=self._toggle_mic)
+        self.mic_button.bind(on_release=self._toggle_mic)
         self.voice_card.add_widget(self.mic_button)
         content.add_widget(self.voice_card)
 
@@ -905,14 +933,14 @@ class RoomScreen(Screen):
         self.chat_card = RoundedPanel(
             orientation="vertical",
             size_hint_y=1,
-            spacing=dp(5),
+            spacing=dp(6),
             padding=[dp(12), dp(8), dp(12), dp(8)],
         )
-        self.chat_title = PixelLabel(text="Текстовый чат", center=True, font_size=sp(12), size_hint_y=None)
+        self.chat_title = PixelLabel(text="Текстовый чат", center=True, font_size=sp(13), size_hint_y=None)
         self.chat_card.add_widget(self.chat_title)
 
         self.chat_scroll = ScrollView(do_scroll_x=False, bar_width=dp(4), scroll_type=["bars", "content"])
-        self.chat_box = BoxLayout(orientation="vertical", spacing=dp(3), size_hint_y=None)
+        self.chat_box = BoxLayout(orientation="vertical", spacing=dp(2), size_hint_y=None)
         self.chat_box.bind(minimum_height=self.chat_box.setter("height"))
         self.chat_scroll.add_widget(self.chat_box)
         self.chat_card.add_widget(self.chat_scroll)
@@ -979,6 +1007,7 @@ class RoomScreen(Screen):
         self._leave_sent = False
         self._last_start_attempt_ts = 0.0
         self._start_game_request_in_flight = False
+        self._local_starts_count = 0
         self._set_mic_muted(True)
         self._set_mic_level(0.0)
         self.loading_overlay.hide()
@@ -1006,7 +1035,7 @@ class RoomScreen(Screen):
         self.disabled = True
 
     def _go_back_to_menu(self, *_):
-        if self._current_phase() in {"countdown", "round"}:
+        if self._is_match_active():
             self._open_leave_popup()
             return
         self._leave_room()
@@ -1237,6 +1266,14 @@ class RoomScreen(Screen):
             return room_phase
         return "lobby"
 
+    def _is_match_active(self):
+        phase = self._current_phase()
+        if phase in {"countdown", "round"}:
+            return True
+        room = self.room_state.get("room", {}) if isinstance(self.room_state, dict) else {}
+        room_phase = (room.get("game_phase") or "").strip().lower()
+        return room_phase in {"countdown", "round"}
+
     def _is_explainer(self):
         viewer = self._viewer_state()
         if viewer:
@@ -1272,13 +1309,27 @@ class RoomScreen(Screen):
         return bool(self._player_name())
 
     def _can_use_voice(self):
+        if self._current_phase() != "round":
+            return False
+        if self._is_explainer():
+            return True
         viewer = self._viewer_state()
-        if viewer:
+        if viewer and "can_use_voice" in viewer:
             return bool(viewer.get("can_use_voice"))
-        return self._is_explainer() and self._current_phase() == "round"
+        return False
 
     def _can_toggle_mic(self):
-        return self._can_use_voice() and self.voice_engine.available
+        if self._current_phase() != "round":
+            return False
+        viewer = self._viewer_state()
+        if viewer:
+            if "can_toggle_mic" in viewer:
+                return bool(viewer.get("can_toggle_mic"))
+            if "can_use_voice" in viewer:
+                return bool(viewer.get("can_use_voice"))
+            if "is_explainer" in viewer:
+                return bool(viewer.get("is_explainer"))
+        return self._is_explainer()
 
     def _required_players_to_start(self, room):
         return 1
@@ -1406,7 +1457,7 @@ class RoomScreen(Screen):
         self.word_push_spacer.height = dp(0)
 
     def _mount_chat_overlay(self, can_chat, is_explainer=False):
-        overlay_height = dp(188 if is_explainer else (196 if can_chat else 168))
+        overlay_height = dp(238 if is_explainer else (214 if can_chat else 182))
         self.chat_host.size_hint_y = None if is_explainer else 1
         self.chat_host.height = dp(0)
         self.chat_host.opacity = 0
@@ -1428,19 +1479,19 @@ class RoomScreen(Screen):
         if self.chat_card.parent is not self.chat_overlay_layer:
             return
 
-        overlay_height = dp(188 if is_explainer else (196 if can_chat else 168))
+        overlay_height = dp(238 if is_explainer else (214 if can_chat else 182))
         if is_explainer:
             word_x, word_y = self._widget_screen_pos(self.word_stage)
             _score_panel_x, score_panel_y = self._widget_screen_pos(self.scores_wrap)
             word_top = word_y + self.word_stage.height
-            score_panel_bottom = score_panel_y - dp(8)
+            score_panel_bottom = score_panel_y - dp(14)
 
             phase_limit = score_panel_bottom
             if self.phase_wrap.opacity > 0 and self.phase_wrap.height > dp(0):
                 _phase_x, phase_y = self._widget_screen_pos(self.phase_wrap)
                 phase_limit = min(phase_limit, phase_y - dp(10))
 
-            base_bottom = word_top + dp(14)
+            base_bottom = word_top + dp(10)
             max_available = phase_limit - base_bottom
             max_available = max(dp(56), max_available)
             overlay_height = min(overlay_height, max_available)
@@ -1552,10 +1603,17 @@ class RoomScreen(Screen):
         player_name = self._player_name() or ""
         is_explainer = bool(viewer.get("is_explainer")) if viewer else self._same_player(player_name, room.get("current_explainer"))
         phase = self._current_phase()
-        self._set_room_exit_button(phase in {"countdown", "round"})
+        self._set_room_exit_button(self._is_match_active())
         countdown_left = int(self.room_state.get("countdown_left_sec") or 0)
         round_left = int(self.room_state.get("round_left_sec") or 0)
         explainer_name = room.get("current_explainer") or "—"
+        server_mic_muted_raw = self.room_state.get("explainer_mic_muted")
+        if server_mic_muted_raw is None and isinstance(room, dict):
+            server_mic_muted_raw = room.get("explainer_mic_muted")
+        server_mic_muted = bool(server_mic_muted_raw) if server_mic_muted_raw is not None else True
+        server_mic_state = (
+            (self.room_state.get("explainer_mic_state") or viewer.get("explainer_mic_state") or "").strip().lower()
+        )
 
         room_name = room.get("room_name", "Комната")
         code = room.get("code", self.room_code)
@@ -1568,6 +1626,12 @@ class RoomScreen(Screen):
             for score_entry in scores
         }
         explainer_profile = profile_map.get((explainer_name or "").strip().lower())
+        try:
+            remote_starts_count = int((room or {}).get("starts_count") or 0)
+        except (TypeError, ValueError):
+            remote_starts_count = 0
+        if remote_starts_count > self._local_starts_count:
+            self._local_starts_count = remote_starts_count
 
         self.room_meta_label.text = f"{room_name} | Код: {code} | Игроков: {players_text}"
         if phase == "round":
@@ -1610,6 +1674,8 @@ class RoomScreen(Screen):
                 self.chat_input.hint_text = "Пиши догадку в чат..." if phase == "round" else "Сообщение в чат..."
             self._set_mic_enabled(False)
             self._set_mic_muted(True)
+        if phase == "round" and is_explainer and self._mic_is_muted() != server_mic_muted:
+            self._set_mic_muted(server_mic_muted)
         self._set_chat_input_visibility(can_chat)
         if phase == "round":
             self._mount_chat_overlay(can_chat, is_explainer=is_explainer)
@@ -1620,13 +1686,11 @@ class RoomScreen(Screen):
         voice_speaker = self.room_state.get("voice_speaker")
         if phase != "round":
             mic_state_text = "ожидает старт"
-        elif not self.voice_engine.available and is_explainer:
-            mic_state_text = "недоступен"
-        elif voice_active and voice_speaker == explainer_name:
+        elif server_mic_state == "speaking" or (voice_active and self._same_player(voice_speaker, explainer_name)):
             mic_state_text = "говорит"
-        elif is_explainer and self._mic_is_muted():
+        elif server_mic_state == "off" or server_mic_muted:
             mic_state_text = "выключен"
-        elif is_explainer and not self._mic_is_muted():
+        elif server_mic_state == "on":
             mic_state_text = "включен"
         else:
             mic_state_text = "молчит"
@@ -1635,7 +1699,7 @@ class RoomScreen(Screen):
             self.voice_status.text = "Голос недоступен на этом устройстве."
         elif self._mic_is_muted():
             self.voice_status.text = "Выключен"
-        elif voice_active and voice_speaker == explainer_name:
+        elif voice_active and self._same_player(voice_speaker, explainer_name):
             self.voice_status.text = "Говоришь"
         else:
             self.voice_status.text = "Включен"
@@ -1736,7 +1800,7 @@ class RoomScreen(Screen):
 
         phase = self._current_phase()
         is_explainer = self._is_explainer()
-        display_messages = list(messages[-10:]) if phase == "round" else list(messages[-24:])
+        display_messages = list(messages[-14:]) if phase == "round" else list(messages[-26:])
         self.chat_box.clear_widgets()
 
         if not display_messages:
@@ -1771,7 +1835,7 @@ class RoomScreen(Screen):
                 BodyLabel(
                     text=line,
                     color=color,
-                    font_size=sp(10.8 if phase == "round" and is_explainer else 12),
+                    font_size=sp(10.2 if phase == "round" and is_explainer else 11.6),
                     size_hint_y=None,
                 )
             )
@@ -1785,91 +1849,100 @@ class RoomScreen(Screen):
         self._last_start_attempt_ts = now_ts
         self._start_game()
 
+    def _charge_start_cost(self):
+        app = App.get_running_app()
+        if app is None or not getattr(app, "authenticated", False):
+            return True, None
+
+        profile = app.current_profile()
+        if profile is None:
+            return True, None
+
+        try:
+            current_coins = int(getattr(profile, "alias_coins", 0) or 0)
+        except (TypeError, ValueError):
+            current_coins = 0
+
+        if current_coins < ROOM_CREATION_COST:
+            return (
+                False,
+                f"Нужно минимум {ROOM_CREATION_COST} AC для запуска игры. Сейчас: {current_coins} AC.",
+            )
+
+        try:
+            updated_profile = spend_alias_coins(
+                email=profile.email,
+                amount=ROOM_CREATION_COST,
+                increment_rooms_created=False,
+                reason_label="запуск игры",
+            )
+        except ValueError as error:
+            return False, str(error)
+
+        self.coin_badge.set_value(updated_profile.alias_coins)
+        return True, updated_profile
+
     def _start_game(self, *_):
-        player_name = self._player_name()
-        if player_name and self.room_code:
-            self._start_game_request_in_flight = True
-            self.start_game_btn.disabled = True
-            self.loading_overlay.show("Запускаем игру...")
-
-            try:
-                start_response = start_room_game(room_code=self.room_code, player_name=player_name)
-            except ConnectionError as error:
-                self.status_label.color = COLORS["error"]
-                self.status_label.text = str(error)
-                self._start_game_request_in_flight = False
-                self.start_game_btn.disabled = False
-                self.loading_overlay.hide()
-                return
-            except ValueError as error:
-                self.status_label.color = COLORS["warning"]
-                self.status_label.text = str(error)
-                self._start_game_request_in_flight = False
-                self.start_game_btn.disabled = False
-                self.loading_overlay.hide()
-                return
-
-            if isinstance(start_response, dict):
-                updated_state = dict(self.room_state or {})
-                for key in (
-                    "room",
-                    "players",
-                    "scores",
-                    "messages",
-                    "viewer",
-                    "voice_active",
-                    "voice_speaker",
-                    "can_see_word",
-                    "current_word",
-                    "server_time",
-                ):
-                    if key in start_response:
-                        updated_state[key] = start_response.get(key)
-                phase = (start_response.get("game_phase") or updated_state.get("game_phase") or "").strip().lower()
-                if phase in {"lobby", "countdown", "round"}:
-                    updated_state["game_phase"] = phase
-                if "countdown_left_sec" in start_response:
-                    updated_state["countdown_left_sec"] = int(start_response.get("countdown_left_sec") or 0)
-                if "round_left_sec" in start_response:
-                    updated_state["round_left_sec"] = int(start_response.get("round_left_sec") or 0)
-                self.room_state = updated_state
-                self._apply_state()
-
-            self._start_game_request_in_flight = False
-            self.loading_overlay.hide()
-            self.status_label.color = COLORS["success"]
-            self.status_label.text = "РЎС‚Р°СЂС‚ РёРіСЂС‹! РќР° СЌРєСЂР°РЅРµ РѕР±С‰РёР№ РѕС‚СЃС‡РµС‚ 10 СЃРµРєСѓРЅРґ."
-            self._poll_state()
-            return
         if self._current_phase() != "lobby":
             self.status_label.color = COLORS["warning"]
             self.status_label.text = "Игра уже запущена."
             return
-
-        if not self._is_explainer():
+        if not self._can_control_start():
             self.status_label.color = COLORS["warning"]
-            self.status_label.text = "Начать игру может только тот, кто объясняет слова."
+            self.status_label.text = "Начать игру может только объясняющий."
             return
 
         player_name = self._player_name()
-        if not player_name:
+        if not player_name or not self.room_code:
             self.status_label.color = COLORS["error"]
             self.status_label.text = "Не удалось определить игрока для старта игры."
             return
+
+        room_before_start = self.room_state.get("room", {}) if isinstance(self.room_state, dict) else {}
+        try:
+            starts_before = int((room_before_start or {}).get("starts_count") or 0)
+        except (TypeError, ValueError):
+            starts_before = 0
+        starts_before = max(starts_before, int(self._local_starts_count or 0))
+        should_charge_by_local_state = starts_before >= 1
+
+        app = App.get_running_app()
+        profile = app.current_profile() if app is not None and getattr(app, "authenticated", False) else None
+        if should_charge_by_local_state and profile is not None:
+            try:
+                current_coins = int(getattr(profile, "alias_coins", 0) or 0)
+            except (TypeError, ValueError):
+                current_coins = 0
+            if current_coins < ROOM_CREATION_COST:
+                self.status_label.color = COLORS["warning"]
+                self.status_label.text = (
+                    f"Нужно минимум {ROOM_CREATION_COST} AC для запуска игры. Сейчас: {current_coins} AC."
+                )
+                return
+
+        self._start_game_request_in_flight = True
+        self.start_game_btn.disabled = True
+        self.loading_overlay.show("Запускаем игру...")
 
         try:
             start_response = start_room_game(room_code=self.room_code, player_name=player_name)
         except ConnectionError as error:
             self.status_label.color = COLORS["error"]
             self.status_label.text = str(error)
+            self._start_game_request_in_flight = False
+            self.start_game_btn.disabled = False
+            self.loading_overlay.hide()
             return
         except ValueError as error:
             self.status_label.color = COLORS["warning"]
             self.status_label.text = str(error)
+            self._start_game_request_in_flight = False
+            self.start_game_btn.disabled = False
+            self.loading_overlay.hide()
             return
 
+        updated_state = dict(self.room_state or {})
         if isinstance(start_response, dict):
-            updated_state = dict(self.room_state or {})
             for key in (
                 "room",
                 "players",
@@ -1891,11 +1964,39 @@ class RoomScreen(Screen):
                 updated_state["countdown_left_sec"] = int(start_response.get("countdown_left_sec") or 0)
             if "round_left_sec" in start_response:
                 updated_state["round_left_sec"] = int(start_response.get("round_left_sec") or 0)
-            self.room_state = updated_state
-            self._apply_state()
 
+        self.room_state = updated_state
+        self._apply_state()
+
+        room_payload = updated_state.get("room") if isinstance(updated_state, dict) else {}
+        try:
+            starts_count = int((room_payload or {}).get("starts_count") or 0)
+        except (TypeError, ValueError):
+            starts_count = 0
+        should_charge_start = starts_count > 1 or should_charge_by_local_state
+        self._local_starts_count = max(starts_count, starts_before + 1)
+
+        charge_payload = None
+        if should_charge_start:
+            charged, charge_payload = self._charge_start_cost()
+            if not charged:
+                self._start_game_request_in_flight = False
+                self.start_game_btn.disabled = False
+                self.loading_overlay.hide()
+                self.status_label.color = COLORS["warning"]
+                self.status_label.text = str(charge_payload)
+                return
+
+        self._start_game_request_in_flight = False
+        self.loading_overlay.hide()
         self.status_label.color = COLORS["success"]
-        self.status_label.text = "Старт игры! На экране общий отсчет 10 секунд."
+        if should_charge_start and charge_payload is not None:
+            remaining_coins = int(getattr(charge_payload, "alias_coins", 0) or 0)
+            self.status_label.text = (
+                f"Старт игры! Списано {ROOM_CREATION_COST} AC, осталось {remaining_coins} AC."
+            )
+        else:
+            self.status_label.text = "Старт игры! Первый запуск в этой комнате бесплатный."
         self._poll_state()
 
     def _send_chat_message(self, *_):
@@ -1983,25 +2084,67 @@ class RoomScreen(Screen):
         Clock.schedule_once(lambda *_: self._poll_state(), 0.1)
 
     def _toggle_mic(self, *_):
-        if not self._can_use_voice():
+        if not self._can_toggle_mic():
             self.status_label.color = COLORS["warning"]
             self.status_label.text = "Микрофон доступен только тому, кто объясняет слова."
             return
-        if not self.voice_engine.available:
-            self.status_label.color = COLORS["warning"]
-            self.status_label.text = "На этом устройстве голосовой микрофон недоступен."
+
+        player_name = self._player_name()
+        if not player_name or not self.room_code:
+            self.status_label.color = COLORS["error"]
+            self.status_label.text = "Не удалось определить игрока или комнату."
             return
 
-        new_muted = not self._mic_is_muted()
+        old_muted = self._mic_is_muted()
+        new_muted = not old_muted
         self._set_mic_muted(new_muted)
-        if new_muted:
+
+        try:
+            response = set_room_mic_state(
+                room_code=self.room_code,
+                player_name=player_name,
+                muted=new_muted,
+            )
+        except ConnectionError as error:
+            self._set_mic_muted(old_muted)
+            self.status_label.color = COLORS["error"]
+            self.status_label.text = str(error)
+            return
+        except ValueError as error:
+            self._set_mic_muted(old_muted)
+            self.status_label.color = COLORS["warning"]
+            self.status_label.text = str(error)
+            return
+
+        updated_state = dict(self.room_state or {})
+        if isinstance(response, dict):
+            for key in ("room", "voice_active", "voice_speaker", "explainer_mic_state", "server_time"):
+                if key in response:
+                    updated_state[key] = response.get(key)
+
+            room_payload = response.get("room")
+            if isinstance(room_payload, dict) and "explainer_mic_muted" in room_payload:
+                updated_state["explainer_mic_muted"] = bool(room_payload.get("explainer_mic_muted"))
+            elif "muted" in response:
+                updated_state["explainer_mic_muted"] = bool(response.get("muted"))
+
+        self.room_state = updated_state
+        self._set_mic_muted(bool(updated_state.get("explainer_mic_muted", new_muted)))
+
+        if self._mic_is_muted():
             self.voice_status.text = "Микрофон выключен"
             self.status_label.color = COLORS["text_muted"]
             self.status_label.text = "Микрофон выключен."
         else:
             self.voice_status.text = "Микрофон включен"
-            self.status_label.color = COLORS["success"]
-            self.status_label.text = "Микрофон включен."
+            if self.voice_engine.available:
+                self.status_label.color = COLORS["success"]
+                self.status_label.text = "Микрофон включен."
+            else:
+                self.status_label.color = COLORS["warning"]
+                self.status_label.text = "Микрофон включен, но запись недоступна на этом устройстве."
+
+        self._apply_state()
 
     def _sync_voice_ui(self):
         if not self._can_use_voice():

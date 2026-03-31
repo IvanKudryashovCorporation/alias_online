@@ -94,16 +94,16 @@ class StatTile(RoundedPanel):
     def __init__(self, title, **kwargs):
         super().__init__(
             orientation="vertical",
-            spacing=dp(1),
-            padding=[dp(8), dp(4), dp(8), dp(4)],
+            spacing=dp(2),
+            padding=[dp(8), dp(5), dp(8), dp(5)],
             size_hint=(None, None),
-            size=(dp(118), dp(36)),
+            size=(dp(126), dp(42)),
             bg_color=COLORS["surface_panel"],
             shadow_alpha=0.14,
             **kwargs,
         )
-        self.title_label = BodyLabel(center=True, color=COLORS["text_muted"], font_size=sp(9), text=title)
-        self.value_label = PixelLabel(center=True, font_size=sp(13), text="0")
+        self.title_label = BodyLabel(center=True, color=COLORS["text_muted"], font_size=sp(9.2), text=title)
+        self.value_label = PixelLabel(center=True, font_size=sp(14), text="0")
         self.add_widget(self.title_label)
         self.add_widget(self.value_label)
 
@@ -115,37 +115,37 @@ class ProfileSummaryCard(ButtonBehavior, RoundedPanel):
     def __init__(self, **kwargs):
         super().__init__(
             orientation="vertical",
-            spacing=dp(4),
-            padding=[dp(16), dp(8), dp(16), dp(8)],
+            spacing=dp(6),
+            padding=[dp(16), dp(10), dp(16), dp(10)],
             size_hint=(None, None),
-            size=(dp(286), dp(202)),
+            size=(dp(330), dp(260)),
             bg_color=COLORS["surface"],
             shadow_alpha=0.22,
             **kwargs,
         )
 
-        avatar_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(48))
+        avatar_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(62))
         avatar_row.add_widget(Widget())
         self.avatar_button = AvatarButton()
-        self.avatar_button.size = (dp(46), dp(46))
+        self.avatar_button.size = (dp(58), dp(58))
         avatar_row.add_widget(self.avatar_button)
         avatar_row.add_widget(Widget())
         self.add_widget(avatar_row)
 
-        self.name_label = PixelLabel(center=True, font_size=sp(18), text="Профиль", size_hint_y=None)
+        self.name_label = PixelLabel(center=True, font_size=sp(20), text="Профиль", size_hint_y=None)
         self.add_widget(self.name_label)
 
-        self.meta_label = BodyLabel(center=True, color=COLORS["text_muted"], font_size=sp(10), text="", size_hint_y=None)
+        self.meta_label = BodyLabel(center=True, color=COLORS["text_muted"], font_size=sp(11.5), text="", size_hint_y=None)
         self.add_widget(self.meta_label)
 
-        first_row = BoxLayout(orientation="horizontal", spacing=dp(8), size_hint_y=None, height=dp(36))
+        first_row = BoxLayout(orientation="horizontal", spacing=dp(8), size_hint_y=None, height=dp(42))
         self.games_tile = StatTile("Игр")
         self.earned_tile = StatTile("Заработано")
         first_row.add_widget(self.games_tile)
         first_row.add_widget(self.earned_tile)
         self.add_widget(first_row)
 
-        second_row = BoxLayout(orientation="horizontal", spacing=dp(8), size_hint_y=None, height=dp(36))
+        second_row = BoxLayout(orientation="horizontal", spacing=dp(8), size_hint_y=None, height=dp(42))
         self.guessed_tile = StatTile("Отгадано")
         self.explained_tile = StatTile("Объяснено")
         second_row.add_widget(self.guessed_tile)
@@ -205,36 +205,56 @@ class StartScreen(Screen):
 
         content = BoxLayout(
             orientation="vertical",
-            spacing=dp(6),
-            padding=[dp(20), dp(24), dp(20), dp(18)],
+            spacing=dp(11),
+            padding=[dp(18), dp(16), dp(18), dp(16)],
         )
 
-        content.add_widget(Widget(size_hint_y=None, height=dp(10)))
-        content.add_widget(BrandTitle(height=dp(212), font_size=sp(56)))
+        content.add_widget(Widget(size_hint_y=None, height=dp(4)))
+        content.add_widget(BrandTitle(height=dp(270), font_size=sp(76), shadow_step=dp(4)))
 
-        profile_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(210))
+        subtitle_card = RoundedPanel(
+            orientation="vertical",
+            size_hint_y=None,
+            height=dp(44),
+            padding=[dp(12), dp(8), dp(12), dp(8)],
+            bg_color=(0.11, 0.18, 0.29, 0.70),
+        )
+        subtitle_card._border_color.rgba = (0.99, 0.95, 0.36, 0.22)
+        subtitle_card._border_line.width = 1.2
+        subtitle_card.add_widget(
+            BodyLabel(
+                center=True,
+                color=COLORS["accent"],
+                font_size=sp(15),
+                size_hint_y=None,
+                text="Выбери режим и заходи в матч",
+            )
+        )
+        content.add_widget(subtitle_card)
+
+        profile_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(264))
         profile_row.add_widget(Widget())
         profile_row.add_widget(self.profile_card)
         profile_row.add_widget(Widget())
         content.add_widget(profile_row)
-        content.add_widget(Widget(size_hint_y=None, height=dp(8)))
+        content.add_widget(Widget(size_hint_y=None, height=dp(6)))
 
         menu_holder = BoxLayout(
             orientation="vertical",
-            size_hint_y=None,
-            height=dp(308),
-            spacing=dp(12),
+            size_hint_y=1,
+            spacing=dp(13),
+            padding=[0, dp(4), 0, dp(4)],
         )
 
-        create_btn = AppButton(text="Создать комнату", font_size=sp(22))
-        join_btn = AppButton(text="Войти в комнату", font_size=sp(22))
-        friends_btn = AppButton(text="Друзья", font_size=sp(22))
-        rules_btn = AppButton(text="Правила", font_size=sp(22))
+        create_btn = AppButton(text="Создать комнату", font_size=sp(23))
+        join_btn = AppButton(text="Войти в комнату", font_size=sp(23))
+        friends_btn = AppButton(text="Друзья", font_size=sp(23))
+        rules_btn = AppButton(text="Правила", font_size=sp(23))
         self.create_room_btn = create_btn
         self.join_room_btn = join_btn
 
         for button in (create_btn, join_btn, friends_btn, rules_btn):
-            button.height = dp(68)
+            button.height = dp(84)
             menu_holder.add_widget(button)
 
         create_btn.bind(on_release=self._handle_create_room_press)
@@ -243,14 +263,13 @@ class StartScreen(Screen):
         rules_btn.bind(on_release=self._open_rules_screen)
 
         content.add_widget(menu_holder)
-        content.add_widget(Widget())
 
         self.version_label = BodyLabel(
             center=True,
             size_hint=(None, None),
             size=(dp(168), dp(18)),
-            pos_hint={"center_x": 0.5, "y": 0.003},
-            font_size=sp(11),
+            pos_hint={"center_x": 0.5, "y": 0.001},
+            font_size=sp(10.5),
             color=COLORS["text_muted"],
             text=f"Версия {APP_VERSION}",
         )

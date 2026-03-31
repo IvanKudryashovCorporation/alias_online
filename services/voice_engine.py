@@ -17,7 +17,7 @@ from .room_hub import get_room_voice_chunks, send_room_voice_chunk
 
 
 class RoomVoiceEngine:
-    def __init__(self, sample_rate=16000, block_frames=1600):
+    def __init__(self, sample_rate=24000, block_frames=960):
         self.sample_rate = int(sample_rate)
         self.block_frames = int(block_frames)
 
@@ -40,6 +40,7 @@ class RoomVoiceEngine:
         self._send_thread = None
         self._recv_thread = None
         self._lock = threading.Lock()
+        self._agc_gain = 1.0
 
     def start(self, *, room_code, player_name, should_transmit):
         if not self.available or self._active:
@@ -58,6 +59,7 @@ class RoomVoiceEngine:
                 channels=1,
                 dtype="float32",
                 blocksize=self.block_frames,
+                latency="low",
                 callback=self._input_callback,
             )
             self._input_stream.start()
@@ -67,6 +69,7 @@ class RoomVoiceEngine:
                 channels=1,
                 dtype="float32",
                 blocksize=self.block_frames,
+                latency="low",
                 callback=self._output_callback,
             )
             self._output_stream.start()
@@ -118,6 +121,7 @@ class RoomVoiceEngine:
 
         with self._lock:
             self._level = 0.0
+        self._agc_gain = 1.0
 
     def set_muted(self, muted):
         self._muted = bool(muted)
@@ -139,6 +143,45 @@ class RoomVoiceEngine:
         with self._lock:
             self._level = max(0.0, min(1.0, float(value)))
 
+    def _prepare_capture_audio(self, mono):
+        if mono.size == 0:
+            return mono
+
+        clean = np.nan_to_num(mono, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32, copy=False)
+        if clean.size > 1:
+            # Gentle pre-emphasis keeps speech consonants clearer in compressed voice chunks.
+            clean = np.concatenate(([clean[0]], clean[1:] - 0.95 * clean[:-1])).astype(np.float32, copy=False)
+
+        rms = float(np.sqrt(np.mean(clean * clean))) if clean.size else 0.0
+        if rms < 0.0038:
+            return np.zeros_like(clean, dtype=np.float32)
+
+        peak = float(np.max(np.abs(clean))) if clean.size else 0.0
+        if peak > 0:
+            target_peak = 0.82
+            desired_gain = max(0.7, min(4.0, target_peak / peak))
+            self._agc_gain += (desired_gain - self._agc_gain) * 0.24
+            clean = clean * self._agc_gain
+
+        clean = np.clip(clean, -1.0, 1.0).astype(np.float32, copy=False)
+        return clean
+
+    def _resample_pcm(self, pcm, src_rate, dst_rate):
+        src = int(src_rate or 0)
+        dst = int(dst_rate or 0)
+        if pcm.size == 0 or src <= 0 or dst <= 0 or src == dst:
+            return pcm.astype(np.float32, copy=False)
+
+        src_len = int(pcm.size)
+        dst_len = max(1, int(src_len * float(dst) / float(src)))
+        if dst_len == src_len:
+            return pcm.astype(np.float32, copy=False)
+
+        src_axis = np.linspace(0.0, 1.0, num=src_len, endpoint=False, dtype=np.float32)
+        dst_axis = np.linspace(0.0, 1.0, num=dst_len, endpoint=False, dtype=np.float32)
+        resampled = np.interp(dst_axis, src_axis, pcm).astype(np.float32)
+        return np.clip(resampled, -1.0, 1.0)
+
     def _input_callback(self, indata, frames, _time_info, status):
         if status:
             return
@@ -146,9 +189,9 @@ class RoomVoiceEngine:
             self._set_level(0.0)
             return
 
-        mono = indata[:, 0].copy()
+        mono = self._prepare_capture_audio(indata[:, 0].copy())
         rms = float(np.sqrt(np.mean(mono * mono))) if mono.size else 0.0
-        level = min(1.0, rms * 7.0)
+        level = min(1.0, max(0.0, (rms - 0.004) * 12.5))
         self._set_level(0.0 if self._muted else level)
 
         if self._muted or not self._should_transmit() or not self.room_code:
@@ -246,6 +289,21 @@ class RoomVoiceEngine:
                     continue
 
                 try:
+                    source_rate = int(chunk.get("sample_rate") or self.sample_rate)
+                except (TypeError, ValueError):
+                    source_rate = self.sample_rate
+                pcm = self._resample_pcm(pcm, source_rate, self.sample_rate)
+
+                # Tiny fade-in/out avoids clicks between chunks.
+                if pcm.size >= 8:
+                    fade_len = min(24, pcm.size // 4)
+                    if fade_len > 0:
+                        fade = np.linspace(0.0, 1.0, num=fade_len, dtype=np.float32)
+                        pcm[:fade_len] *= fade
+                        pcm[-fade_len:] *= fade[::-1]
+                pcm = np.tanh(pcm * 1.08).astype(np.float32, copy=False)
+
+                try:
                     self._play_queue.put_nowait(pcm)
                 except queue.Full:
                     try:
@@ -257,4 +315,4 @@ class RoomVoiceEngine:
                     except queue.Full:
                         pass
 
-            time.sleep(0.12)
+            time.sleep(0.08)

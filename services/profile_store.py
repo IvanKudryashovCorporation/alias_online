@@ -1258,7 +1258,7 @@ def has_profiles(db_path=None):
     return row is not None
 
 
-def spend_alias_coins(email, amount, db_path=None):
+def spend_alias_coins(email, amount, db_path=None, *, increment_rooms_created=True, reason_label="действие"):
     initialize_database(db_path)
 
     clean_email = (email or "").strip().lower()
@@ -1283,18 +1283,30 @@ def spend_alias_coins(email, amount, db_path=None):
 
         current_coins = int(row["alias_coins"] or 0)
         if current_coins < spend_amount:
-            raise ValueError(f"Нужно минимум {spend_amount} Alias Coin, чтобы создать комнату.")
+            clean_reason = (reason_label or "действие").strip()
+            raise ValueError(f"Нужно минимум {spend_amount} Alias Coin, чтобы выполнить: {clean_reason}.")
 
-        connection.execute(
-            """
-            UPDATE profiles
-            SET alias_coins = alias_coins - ?,
-                rooms_created = rooms_created + 1,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE email = ?
-            """,
-            (spend_amount, clean_email),
-        )
+        if increment_rooms_created:
+            connection.execute(
+                """
+                UPDATE profiles
+                SET alias_coins = alias_coins - ?,
+                    rooms_created = rooms_created + 1,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE email = ?
+                """,
+                (spend_amount, clean_email),
+            )
+        else:
+            connection.execute(
+                """
+                UPDATE profiles
+                SET alias_coins = alias_coins - ?,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE email = ?
+                """,
+                (spend_amount, clean_email),
+            )
         updated = _fetch_profile_row(connection, "email = ?", (clean_email,))
 
     return _row_to_profile(updated)

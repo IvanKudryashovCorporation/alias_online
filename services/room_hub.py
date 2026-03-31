@@ -339,6 +339,16 @@ def ping_room_voice(*, room_code, player_name, active_seconds=3, base_url=None):
     )
 
 
+def set_room_mic_state(*, room_code, player_name, muted, base_url=None):
+    payload = {"player_name": player_name, "muted": bool(muted)}
+    return _request_json(
+        "POST",
+        f"/api/rooms/{urllib.parse.quote(room_code)}/mic-state",
+        payload=payload,
+        base_url=base_url,
+    )
+
+
 def send_room_voice_chunk(*, room_code, player_name, pcm16_b64, sample_rate=16000, base_url=None):
     payload = {
         "player_name": player_name,

@@ -1,21 +1,18 @@
 from kivy.metrics import dp, sp
+from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.screenmanager import Screen
+from kivy.uix.widget import Widget
 
-from ui import AppButton, BodyLabel, BrandTitle, CoinBadge, COLORS, PixelLabel, RoundedPanel, ScreenBackground, build_scrollable_content, register_game_font
-
-RULES = [
-    "Соберите команды и выберите объясняющего на текущий раунд.",
-    "Объясняющий описывает слово без однокоренных слов, перевода и прямых подсказок.",
-    "Если слово угадано, команда получает очко и сразу переходит к следующему слову.",
-    "Если команда говорит «пас», слово пропускается и ход продолжается по вашим правилам матча.",
-    "Побеждает команда, которая набрала больше очков к концу всех раундов.",
-]
-
-ONLINE_NOTES = [
-    "Перед матчем удобно синхронизировать язык словаря и длительность раунда.",
-    "Хост комнаты должен видеть, кто подключился и готов ли каждый игрок.",
-    "На мобильном экране правила лучше держать короткими и с прокруткой, чтобы они не ломались на маленьких дисплеях.",
-]
+from ui import (
+    AppButton,
+    BodyLabel,
+    BrandTitle,
+    PixelLabel,
+    RoundedPanel,
+    ScreenBackground,
+    build_scrollable_content,
+    register_game_font,
+)
 
 
 class RulesScreen(Screen):
@@ -24,64 +21,76 @@ class RulesScreen(Screen):
         register_game_font()
 
         root = ScreenBackground()
-        scroll, content = build_scrollable_content(spacing=18)
+        scroll, content = build_scrollable_content(
+            padding=[dp(18), dp(18), dp(18), dp(20)],
+            spacing=12,
+        )
 
-        back_btn = AppButton(text="Назад", compact=True, size_hint_x=None, width=dp(132))
+        top_bar = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(50))
+        back_btn = AppButton(text="Назад", compact=True, size_hint=(None, None), size=(dp(126), dp(46)))
         back_btn.bind(on_release=lambda *_: setattr(self.manager, "current", "start"))
-        content.add_widget(back_btn)
-        content.add_widget(BrandTitle(text="ALIAS ONLINE", height=dp(136), font_size=sp(44), shadow_step=dp(3)))
-        content.add_widget(PixelLabel(text="Правила игры", font_size=sp(20), center=True))
+        top_bar.add_widget(back_btn)
+        top_bar.add_widget(Widget())
+        content.add_widget(top_bar)
 
-        summary = RoundedPanel(
+        content.add_widget(BrandTitle(text="ALIAS ONLINE", height=dp(136), font_size=sp(46), shadow_step=dp(3)))
+
+        card = RoundedPanel(
             orientation="vertical",
-            padding=[dp(18), dp(18), dp(18), dp(18)],
             spacing=dp(10),
+            padding=[dp(18), dp(16), dp(18), dp(16)],
             size_hint_y=None,
         )
-        summary.bind(minimum_height=summary.setter("height"))
-        summary.add_widget(
-            BodyLabel(
-                center=True,
-                text="Экран правил теперь прокручивается и нормально помещается на телефонах. Это важно для Android-сборки и разных диагоналей.",
+        card.bind(minimum_height=card.setter("height"))
+        card.add_widget(PixelLabel(text="Правила игры", font_size=sp(24), center=True, size_hint_y=None))
+
+        blocks = [
+            (
+                "1. Кто объясняет",
+                "Хост комнаты начинает матч и становится объясняющим. Он видит слово и говорит голосом, не печатая в чат.",
+            ),
+            (
+                "2. Как угадывать",
+                "Остальные игроки пишут догадки в текстовый чат. Если слово совпало, раундовое слово сразу меняется на следующее.",
+            ),
+            (
+                "3. Очки за слово",
+                "За верную догадку +1 получает объясняющий и +1 получает игрок, который угадал.",
+            ),
+            (
+                "4. Скип карточки",
+                "Если слово неудобно объяснять, смахни карточку в любую сторону. За скип начисляется -1.",
+            ),
+            (
+                "5. Типы комнат",
+                "Публичная комната видна всем в списке. Закрытая комната доступна только по коду приглашения.",
+            ),
+            (
+                "6. Alias Coin",
+                "Создание комнаты стоит 25 AC. Первый запуск игры в новом лобби бесплатный, каждый следующий запуск в этом же лобби — 25 AC.",
+            ),
+            (
+                "7. Штраф за выход",
+                "Если выйти из активного матча, действует штраф: -50 AC и временная блокировка входа/создания комнат.",
+            ),
+            (
+                "8. Матчи подряд",
+                "После окончания игры игроки остаются в комнате и могут сразу запустить следующий матч без пересоздания лобби.",
+            ),
+        ]
+        for title, text in blocks:
+            card.add_widget(PixelLabel(text=title, font_size=sp(15), center=False, size_hint_y=None))
+            card.add_widget(
+                BodyLabel(
+                    text=text,
+                    center=False,
+                    font_size=sp(12),
+                    size_hint_y=None,
+                )
             )
-        )
-        summary.add_widget(
-            BodyLabel(
-                center=True,
-                color=COLORS["text_muted"],
-                text="Ниже — короткая версия правил и заметки для онлайн-комнат.",
-            )
-        )
-        content.add_widget(summary)
 
-        rules_card = RoundedPanel(
-            orientation="vertical",
-            padding=[dp(16), dp(16), dp(16), dp(16)],
-            spacing=dp(10),
-            size_hint_y=None,
-        )
-        rules_card.bind(minimum_height=rules_card.setter("height"))
-        rules_card.add_widget(PixelLabel(text="Базовые правила", font_size=sp(12), center=True))
-        for index, rule in enumerate(RULES, start=1):
-            rules_card.add_widget(BodyLabel(text=f"{index}. {rule}"))
-        content.add_widget(rules_card)
-
-        notes_card = RoundedPanel(
-            orientation="vertical",
-            padding=[dp(16), dp(16), dp(16), dp(16)],
-            spacing=dp(10),
-            size_hint_y=None,
-        )
-        notes_card.bind(minimum_height=notes_card.setter("height"))
-        notes_card.add_widget(PixelLabel(text="Что важно для online", font_size=sp(12), center=True))
-        for note in ONLINE_NOTES:
-            notes_card.add_widget(BodyLabel(text=f"• {note}"))
-        content.add_widget(notes_card)
+        content.add_widget(card)
+        content.add_widget(Widget(size_hint_y=None, height=dp(8)))
 
         root.add_widget(scroll)
-        self.coin_badge = CoinBadge(pos_hint={"right": 0.965, "top": 0.96})
-        root.add_widget(self.coin_badge)
         self.add_widget(root)
-
-    def on_pre_enter(self, *_):
-        self.coin_badge.refresh_from_session()

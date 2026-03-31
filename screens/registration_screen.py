@@ -171,7 +171,7 @@ class RegistrationScreen(Screen):
         top_bar.add_widget(Widget())
         content.add_widget(top_bar)
 
-        self.brand_title = BrandTitle(text="ALIAS ONLINE", height=dp(136), font_size=sp(44), shadow_step=dp(3))
+        self.brand_title = BrandTitle(text="ALIAS ONLINE", height=dp(148), font_size=sp(50), shadow_step=dp(3))
         content.add_widget(self.brand_title)
 
         self.profile_header = BoxLayout(
@@ -210,6 +210,8 @@ class RegistrationScreen(Screen):
             size_hint_y=None,
             height=dp(560),
         )
+        self.card._border_color.rgba = (1, 1, 1, 0.16)
+        self.card._border_line.width = 1.2
         self.card.pos_hint = {"center_x": 0.5}
 
         self.title_label = PixelLabel(text="\u0420\u0435\u0433\u0438\u0441\u0442\u0440\u0430\u0446\u0438\u044f", font_size=sp(18), center=True, size_hint_y=None)
@@ -305,7 +307,7 @@ class RegistrationScreen(Screen):
             center=True,
             color=COLORS["text_muted"],
             font_size=sp(11),
-            text="\u0410\u0432\u0430\u0442\u0430\u0440 \u043c\u043e\u0436\u043d\u043e \u0431\u0443\u0434\u0435\u0442 \u0434\u043e\u0431\u0430\u0432\u0438\u0442\u044c \u043f\u043e\u0437\u0436\u0435 \u0432 \u043f\u0440\u043e\u0444\u0438\u043b\u0435.",
+            text="\u0414\u043e\u0431\u0430\u0432\u044c \u0444\u043e\u0442\u043e \u0441\u0440\u0430\u0437\u0443 \u0438\u043b\u0438 \u0441\u0434\u0435\u043b\u0430\u0439 \u044d\u0442\u043e \u043f\u043e\u0437\u0436\u0435 \u0432 \u043f\u0440\u043e\u0444\u0438\u043b\u0435.",
         )
         self.avatar_mode_note_row.add_widget(self.avatar_mode_note)
         self.card.add_widget(self.avatar_mode_note_row)
@@ -532,6 +534,7 @@ class RegistrationScreen(Screen):
 
         latest_profile = app.current_profile() if app is not None and getattr(app, "authenticated", False) else None
         self._set_profile_mode(latest_profile is not None)
+        self._set_coin_badge_visible(latest_profile is not None)
 
         if latest_profile is None:
             self.name_input.text = ""
@@ -542,7 +545,7 @@ class RegistrationScreen(Screen):
             self.selected_avatar_path = None
             self.avatar_preview.set_avatar(None)
             self.avatar_status_label.color = COLORS["text_muted"]
-            self.avatar_status_label.text = ""
+            self.avatar_status_label.text = "\u0424\u043e\u0442\u043e \u043d\u0435 \u0432\u044b\u0431\u0440\u0430\u043d\u043e."
             self.coins_stat.set_value(0)
             self.games_stat.set_value(0)
             self.points_stat.set_value(0)
@@ -590,6 +593,7 @@ class RegistrationScreen(Screen):
                     email=self.email_input.text,
                     password=entered_password,
                     bio=self.bio_input.text,
+                    avatar_path=self.selected_avatar_path,
                 )
         except ValueError as error:
             self.status_label.color = COLORS["error"]
@@ -618,11 +622,6 @@ class RegistrationScreen(Screen):
         self.manager.current = "email_verification"
 
     def open_avatar_picker(self, *_):
-        if not self.profile_mode:
-            self.status_label.color = COLORS["warning"]
-            self.status_label.text = "\u0412\u044b\u0431\u043e\u0440 \u0444\u043e\u0442\u043e \u043e\u0442\u043a\u0440\u044b\u0432\u0430\u0435\u0442\u0441\u044f \u0442\u043e\u043b\u044c\u043a\u043e \u0432 \u043f\u0440\u043e\u0444\u0438\u043b\u0435 \u043f\u043e\u0441\u043b\u0435 \u0440\u0435\u0433\u0438\u0441\u0442\u0440\u0430\u0446\u0438\u0438."
-            return
-
         chooser = FileChooserListView(
             path=str(Path.home()),
             filters=["*.png", "*.jpg", "*.jpeg", "*.webp", "*.bmp"],
@@ -798,7 +797,7 @@ class RegistrationScreen(Screen):
         self.title_label.opacity = 1
         self.subtitle_label.text = "\u0421\u043e\u0437\u0434\u0430\u0439 \u043f\u0440\u043e\u0444\u0438\u043b\u044c, \u0447\u0442\u043e\u0431\u044b \u0432\u043e\u0439\u0442\u0438 \u0432 \u0438\u0433\u0440\u0443."
         self.subtitle_label.font_size = sp(12)
-        self.avatar_mode_note.text = "\u0410\u0432\u0430\u0442\u0430\u0440 \u043c\u043e\u0436\u043d\u043e \u0431\u0443\u0434\u0435\u0442 \u0434\u043e\u0431\u0430\u0432\u0438\u0442\u044c \u043f\u043e\u0437\u0436\u0435 \u0432 \u043f\u0440\u043e\u0444\u0438\u043b\u0435."
+        self.avatar_mode_note.text = "\u0424\u043e\u0442\u043e \u043c\u043e\u0436\u043d\u043e \u0434\u043e\u0431\u0430\u0432\u0438\u0442\u044c \u0441\u0440\u0430\u0437\u0443 \u0438\u043b\u0438 \u043f\u043e\u0437\u0436\u0435 \u0432 \u043f\u0440\u043e\u0444\u0438\u043b\u0435."
         self.scroll.do_scroll_y = False
         self.content.spacing = self.default_content_spacing
         self.content.padding = self.default_content_padding
@@ -840,7 +839,7 @@ class RegistrationScreen(Screen):
         self.confirm_password_input.disabled = False
         self.stats_wrap.height = 0
         self.stats_wrap.opacity = 0
-        self.avatar_mode_note_row.height = dp(22)
+        self.avatar_mode_note_row.height = dp(20)
         self.avatar_mode_note_row.opacity = 1
         self.avatar_section.spacing = dp(8)
         self.avatar_section.padding = [dp(14), dp(12), dp(14), dp(12)]
@@ -849,11 +848,11 @@ class RegistrationScreen(Screen):
         self.avatar_button_gap.height = dp(12)
         self.add_photo_row.height = dp(42)
         self.pick_avatar_btn.size = (dp(210), dp(40))
-        self.avatar_section_row.height = 0
-        self.avatar_section.height = 0
-        self.avatar_section.opacity = 0
-        self.avatar_status_row.height = 0
-        self.avatar_status_row.opacity = 0
+        self.avatar_section_row.height = dp(206)
+        self.avatar_section.height = dp(204)
+        self.avatar_section.opacity = 1
+        self.avatar_status_row.height = dp(18)
+        self.avatar_status_row.opacity = 1
         self.bio_row.height = dp(72)
         self.bio_input.height = dp(72)
         self.bio_input.font_size = sp(16)
@@ -875,24 +874,25 @@ class RegistrationScreen(Screen):
         self.current_password_input.height = 0
         self.new_password_input.height = 0
         self.password_panel_status.text = ""
-        self.pick_avatar_btn.disabled = True
-        self.clear_avatar_btn.disabled = True
-        self.clear_avatar_btn.opacity = 0
-        self.clear_avatar_btn.height = 0
-        self.clear_row.height = 0
+        self.pick_avatar_btn.disabled = False
+        self._sync_avatar_actions()
         self.save_row.height = dp(64)
         self.save_btn.height = dp(64)
         self.status_row.height = dp(36)
         self.status_row.opacity = 1
         self.forgot_password_row.height = dp(22)
         self.forgot_password_row.opacity = 0.85
-        self.card.height = dp(612)
+        self.card.height = dp(760)
         self.logout_btn.disabled = True
         self.logout_btn.opacity = 0
         self.logout_row.height = 0
         self.logout_btn.height = 0
         self.save_btn.text = "\u0421\u043e\u0437\u0434\u0430\u0442\u044c \u043f\u0440\u043e\u0444\u0438\u043b\u044c"
         self._update_form_widths()
+
+    def _set_coin_badge_visible(self, visible):
+        self.coin_badge.opacity = 1 if visible else 0
+        self.coin_badge.disabled = not visible
 
     def _update_form_widths(self, *_):
         if not getattr(self, "card", None):
@@ -948,13 +948,6 @@ class RegistrationScreen(Screen):
         return parsed.strftime("%d.%m.%Y")
 
     def _sync_avatar_actions(self):
-        if not self.profile_mode:
-            self.clear_avatar_btn.disabled = True
-            self.clear_avatar_btn.opacity = 0
-            self.clear_avatar_btn.height = 0
-            self.clear_row.height = 0
-            return
-
         has_avatar = bool(self.selected_avatar_path)
         self.clear_avatar_btn.disabled = not has_avatar
         self.clear_avatar_btn.opacity = 0.85 if has_avatar else 0

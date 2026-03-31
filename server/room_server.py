@@ -1,4 +1,7 @@
 import argparse
+import base64
+import difflib
+import io
 import json
 import os
 import random
@@ -11,6 +14,8 @@ import string
 import sys
 import threading
 import time
+import urllib.request
+import wave
 from contextlib import suppress
 from datetime import datetime, timedelta
 from email.message import EmailMessage
@@ -74,6 +79,34 @@ EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 _AUTH_LOCK = threading.Lock()
 _PENDING_REGISTRATIONS = {}
 _PENDING_PASSWORD_RESETS = {}
+
+_BOT_POOL_NAMES = (
+    "Alex",
+    "Mia",
+    "Leo",
+    "Nora",
+    "Max",
+    "Eva",
+    "Ryan",
+    "Lina",
+    "Mark",
+    "Sofi",
+    "Ivan",
+    "Sara",
+)
+_BOT_NAME_MARKER = "\u2063"
+_BOT_LOBBY_IDLE_SECONDS = 14
+_BOT_LOBBY_MAX_PER_ROOM = 4
+_BOT_TRANSCRIPT_LOOKBACK_SECONDS = 16
+_BOT_TRANSCRIPT_MIN_CHUNKS = 2
+_BOT_TRANSCRIPT_CACHE_TTL_SECONDS = 14
+_BOT_TRANSCRIPT_CACHE = {}
+_BOT_TRANSCRIPT_CACHE_LOCK = threading.Lock()
+
+_OPENAI_API_KEY_ENV = "ALIAS_OPENAI_API_KEY"
+_OPENAI_BASE_URL_ENV = "ALIAS_OPENAI_BASE_URL"
+_OPENAI_TRANSCRIBE_MODEL_ENV = "ALIAS_OPENAI_TRANSCRIBE_MODEL"
+_OPENAI_TRANSCRIBE_TIMEOUT_SEC = 12
 
 
 def _safe_int_env(name, default):
@@ -246,11 +279,12 @@ def _cleanup_auth_sessions_locked(now=None):
         _PENDING_PASSWORD_RESETS.pop(session_id, None)
 
 
-def _begin_registration_verification(name, email, password, bio=None):
+def _begin_registration_verification(name, email, password, bio=None, avatar_path=None):
     clean_name = (name or "").strip()
     clean_email = (email or "").strip().lower()
     clean_password = (password or "").strip()
     clean_bio = (bio or "").strip() or None
+    clean_avatar_path = (avatar_path or "").strip() or None
 
     if len(clean_name) < 2:
         raise ValueError("Имя должно содержать минимум 2 символа.")
@@ -268,6 +302,7 @@ def _begin_registration_verification(name, email, password, bio=None):
         "email": clean_email,
         "password": clean_password,
         "bio": clean_bio,
+        "avatar_path": clean_avatar_path,
         "code": code,
         "expires_at": now + _code_ttl_seconds(),
         "resend_available_at": now + _resend_cooldown_seconds(),
@@ -373,6 +408,7 @@ def _confirm_registration_code(session_id, code):
             "email": record["email"],
             "password": record["password"],
             "bio": record["bio"],
+            "avatar_path": record.get("avatar_path"),
         }
 
 
@@ -640,11 +676,13 @@ def _init_db():
                 current_explainer TEXT NOT NULL DEFAULT '',
                 current_word TEXT NOT NULL DEFAULT '',
                 game_phase TEXT NOT NULL DEFAULT 'lobby',
+                starts_count INTEGER NOT NULL DEFAULT 0,
                 countdown_end_at TEXT,
                 round_end_at TEXT,
                 bot_next_action_at TEXT,
                 voice_speaker TEXT,
                 voice_until TEXT,
+                explainer_mic_muted INTEGER NOT NULL DEFAULT 1,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL
             )
@@ -707,19 +745,31 @@ def _init_db():
             ("current_explainer", "TEXT NOT NULL DEFAULT ''"),
             ("current_word", "TEXT NOT NULL DEFAULT ''"),
             ("game_phase", "TEXT NOT NULL DEFAULT 'lobby'"),
+            ("starts_count", "INTEGER NOT NULL DEFAULT 0"),
             ("countdown_end_at", "TEXT"),
             ("round_end_at", "TEXT"),
             ("bot_next_action_at", "TEXT"),
             ("voice_speaker", "TEXT"),
             ("voice_until", "TEXT"),
+            ("explainer_mic_muted", "INTEGER NOT NULL DEFAULT 1"),
         ]
         for name, definition in required_columns:
             if name not in existing_columns:
                 connection.execute(f"ALTER TABLE rooms ADD COLUMN {name} {definition}")
 
+        connection.execute(
+            """
+            UPDATE rooms
+            SET explainer_mic_muted = CASE
+                WHEN explainer_mic_muted IN (0, 1) THEN explainer_mic_muted
+                ELSE 1
+            END
+            """
+        )
+
         room_rows = connection.execute(
             """
-            SELECT code, visibility, visibility_scope, host_name, difficulty, current_explainer, current_word, game_phase
+            SELECT code, visibility, visibility_scope, host_name, difficulty, current_explainer, current_word, game_phase, explainer_mic_muted
             FROM rooms
             """
         ).fetchall()
@@ -730,16 +780,18 @@ def _init_db():
             phase = (row["game_phase"] or "").strip().lower()
             if phase not in {"lobby", "countdown", "round"}:
                 phase = "lobby"
+            mic_muted = 1 if int(row["explainer_mic_muted"] or 0) not in {0, 1} else int(row["explainer_mic_muted"] or 0)
             connection.execute(
                 """
                 UPDATE rooms
                 SET visibility_scope = ?,
                     current_explainer = ?,
                     current_word = ?,
-                    game_phase = ?
+                    game_phase = ?,
+                    explainer_mic_muted = ?
                 WHERE code = ?
                 """,
-                (scope, explainer, word, phase, row["code"]),
+                (scope, explainer, word, phase, mic_muted, row["code"]),
             )
 
         players = connection.execute(
@@ -789,6 +841,17 @@ def _init_db():
         )
 
 
+def _normalize_mic_muted_flag(value, default=1):
+    fallback = 1 if int(default or 0) else 0
+    if value is None or value == "":
+        return fallback
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        return fallback
+    return 1 if parsed else 0
+
+
 def _normalize_room(row, players_count):
     return {
         "code": row["code"],
@@ -803,11 +866,13 @@ def _normalize_room(row, players_count):
         "current_explainer": row["current_explainer"],
         "current_word": row["current_word"],
         "game_phase": row["game_phase"],
+        "starts_count": int(row["starts_count"] or 0),
         "countdown_end_at": row["countdown_end_at"],
         "round_end_at": row["round_end_at"],
         "bot_next_action_at": row["bot_next_action_at"],
         "voice_speaker": row["voice_speaker"],
         "voice_until": row["voice_until"],
+        "explainer_mic_muted": bool(_normalize_mic_muted_flag(row["explainer_mic_muted"], default=1)),
         "players_count": players_count,
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
@@ -923,16 +988,386 @@ def _touch_room(connection, room_code):
 
 
 def _is_bot_player(player_name):
-    normalized = (player_name or "").strip().lower()
-    return normalized.startswith("bot ")
+    clean_name = (player_name or "").strip()
+    if not clean_name:
+        return False
+    if clean_name.startswith(_BOT_NAME_MARKER):
+        return True
+    normalized = clean_name.lower()
+    return normalized.startswith("bot ") or normalized.startswith("ai ")
+
+
+def _visible_player_name(player_name):
+    clean_name = (player_name or "").strip()
+    if clean_name.startswith(_BOT_NAME_MARKER):
+        return clean_name[len(_BOT_NAME_MARKER) :]
+    return clean_name
+
+
+def _preferred_human_player(players):
+    for player in players or []:
+        if not _is_bot_player(player):
+            return player
+    if players:
+        return players[0]
+    return ""
 
 
 def _pick_bot_delay_seconds():
     return random.uniform(1.6, 4.2)
 
 
-def _next_bot_action_at():
+def _pick_lobby_bot_delay_seconds():
+    return random.uniform(6.0, 11.5)
+
+
+def _next_bot_action_at(mode="round"):
+    if mode == "lobby":
+        return _dt_to_str(_utc_now() + timedelta(seconds=_pick_lobby_bot_delay_seconds()))
     return _dt_to_str(_utc_now() + timedelta(seconds=_pick_bot_delay_seconds()))
+
+
+def _openai_api_key():
+    return (os.getenv(_OPENAI_API_KEY_ENV) or "").strip()
+
+
+def _openai_base_url():
+    raw = (os.getenv(_OPENAI_BASE_URL_ENV) or "https://api.openai.com/v1").strip().rstrip("/")
+    return raw or "https://api.openai.com/v1"
+
+
+def _openai_transcribe_model():
+    return (os.getenv(_OPENAI_TRANSCRIBE_MODEL_ENV) or "gpt-4o-mini-transcribe").strip() or "gpt-4o-mini-transcribe"
+
+
+def _voice_rows_for_transcript(connection, room_code, speaker_name):
+    since = _dt_to_str(_utc_now() - timedelta(seconds=_BOT_TRANSCRIPT_LOOKBACK_SECONDS))
+    rows = connection.execute(
+        """
+        SELECT id, sample_rate, pcm16_b64
+        FROM room_voice_chunks
+        WHERE room_code = ? AND player_name = ? AND created_at >= ?
+        ORDER BY id ASC
+        LIMIT 120
+        """,
+        (room_code, speaker_name, since),
+    ).fetchall()
+    return rows
+
+
+def _voice_rows_to_wav(rows):
+    if not rows:
+        return None, None, None
+
+    decoded = []
+    rate_counter = {}
+    for row in rows:
+        try:
+            sample_rate = int(row["sample_rate"] or 0)
+        except (TypeError, ValueError):
+            sample_rate = 0
+        if sample_rate < 8000 or sample_rate > 48000:
+            continue
+        try:
+            pcm16_raw = base64.b64decode((row["pcm16_b64"] or "").encode("ascii"), validate=True)
+        except Exception:
+            continue
+        if len(pcm16_raw) < 2:
+            continue
+        decoded.append((int(row["id"]), sample_rate, pcm16_raw))
+        rate_counter[sample_rate] = int(rate_counter.get(sample_rate, 0)) + 1
+
+    if len(decoded) < _BOT_TRANSCRIPT_MIN_CHUNKS:
+        return None, None, None
+
+    target_rate = max(rate_counter.items(), key=lambda pair: pair[1])[0]
+    chunk_ids = []
+    buffer = bytearray()
+    for chunk_id, sample_rate, pcm16_raw in decoded:
+        if sample_rate != target_rate:
+            continue
+        chunk_ids.append(chunk_id)
+        buffer.extend(pcm16_raw)
+
+    if len(chunk_ids) < _BOT_TRANSCRIPT_MIN_CHUNKS or len(buffer) < 512:
+        return None, None, None
+
+    wav_stream = io.BytesIO()
+    with wave.open(wav_stream, "wb") as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(target_rate)
+        wav_file.writeframes(bytes(buffer))
+
+    return wav_stream.getvalue(), max(chunk_ids), target_rate
+
+
+def _build_multipart_body(*, fields, file_field, filename, content_type, file_bytes):
+    boundary = f"----AliasForm{secrets.token_hex(8)}"
+    body = bytearray()
+
+    for key, value in fields.items():
+        body.extend(f"--{boundary}\r\n".encode("utf-8"))
+        body.extend(f'Content-Disposition: form-data; name="{key}"\r\n\r\n'.encode("utf-8"))
+        body.extend(str(value).encode("utf-8"))
+        body.extend(b"\r\n")
+
+    body.extend(f"--{boundary}\r\n".encode("utf-8"))
+    body.extend(
+        (
+            f'Content-Disposition: form-data; name="{file_field}"; filename="{filename}"\r\n'
+            f"Content-Type: {content_type}\r\n\r\n"
+        ).encode("utf-8")
+    )
+    body.extend(file_bytes)
+    body.extend(b"\r\n")
+    body.extend(f"--{boundary}--\r\n".encode("utf-8"))
+    return boundary, bytes(body)
+
+
+def _transcribe_wav_with_openai(wav_bytes):
+    api_key = _openai_api_key()
+    if not api_key or not wav_bytes:
+        return ""
+
+    model = _openai_transcribe_model()
+    endpoint = f"{_openai_base_url()}/audio/transcriptions"
+    boundary, body = _build_multipart_body(
+        fields={"model": model, "temperature": "0"},
+        file_field="file",
+        filename="voice.wav",
+        content_type="audio/wav",
+        file_bytes=wav_bytes,
+    )
+    request = urllib.request.Request(
+        endpoint,
+        data=body,
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+            "Accept": "application/json",
+        },
+    )
+
+    try:
+        with urllib.request.urlopen(request, timeout=_OPENAI_TRANSCRIBE_TIMEOUT_SEC) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except Exception:
+        return ""
+
+    text = (payload.get("text") or "").strip()
+    if len(text) > 220:
+        text = text[:220].strip()
+    return text
+
+
+def _cached_bot_transcript(room_code, latest_chunk_id):
+    now_ts = time.time()
+    with _BOT_TRANSCRIPT_CACHE_LOCK:
+        cached = _BOT_TRANSCRIPT_CACHE.get(room_code)
+        if (
+            cached
+            and int(cached.get("latest_chunk_id") or 0) == int(latest_chunk_id or 0)
+            and now_ts - float(cached.get("updated_ts") or 0.0) <= _BOT_TRANSCRIPT_CACHE_TTL_SECONDS
+        ):
+            return (cached.get("transcript") or "").strip()
+    return ""
+
+
+def _store_bot_transcript(room_code, latest_chunk_id, transcript):
+    with _BOT_TRANSCRIPT_CACHE_LOCK:
+        _BOT_TRANSCRIPT_CACHE[room_code] = {
+            "latest_chunk_id": int(latest_chunk_id or 0),
+            "transcript": (transcript or "").strip(),
+            "updated_ts": time.time(),
+        }
+
+
+def _resolve_explainer_transcript(connection, room_code, explainer_name):
+    if not _openai_api_key():
+        return ""
+
+    rows = _voice_rows_for_transcript(connection, room_code, explainer_name)
+    wav_bytes, latest_chunk_id, _sample_rate = _voice_rows_to_wav(rows)
+    if not wav_bytes or latest_chunk_id is None:
+        return ""
+
+    cached = _cached_bot_transcript(room_code, latest_chunk_id)
+    if cached:
+        return cached
+
+    transcript = _transcribe_wav_with_openai(wav_bytes)
+    _store_bot_transcript(room_code, latest_chunk_id, transcript)
+    return transcript
+
+
+def _word_pool_for_difficulty(difficulty):
+    key = _difficulty_key(difficulty)
+    if key == "easy":
+        return list(WORDS["easy"])
+    if key == "medium":
+        return list(WORDS["medium"])
+    if key == "hard":
+        return list(WORDS["hard"])
+    return list(WORDS["easy"] + WORDS["medium"] + WORDS["hard"])
+
+
+def _extract_transcript_tokens(text):
+    clean = re.sub(r"[^0-9a-zA-Zа-яА-ЯёЁ]+", " ", (text or "").lower())
+    return [token for token in clean.split() if len(token) >= 3]
+
+
+def _best_transcript_match(transcript, words):
+    normalized_transcript = _normalize_guess(transcript)
+    if not normalized_transcript or not words:
+        return None, 0.0
+
+    transcript_tokens = _extract_transcript_tokens(transcript)
+    best_word = None
+    best_score = 0.0
+    for candidate in words:
+        normalized_candidate = _normalize_guess(candidate)
+        if not normalized_candidate:
+            continue
+        score = 0.0
+        if normalized_candidate in normalized_transcript:
+            score = 1.0
+        if transcript_tokens:
+            for token in transcript_tokens:
+                score = max(score, difflib.SequenceMatcher(None, normalized_candidate, _normalize_guess(token)).ratio() * 0.92)
+        score = max(score, difflib.SequenceMatcher(None, normalized_candidate, normalized_transcript).ratio() * 0.62)
+        if score > best_score:
+            best_word = candidate
+            best_score = score
+    return best_word, float(best_score)
+
+
+def _humanize_bot_guess(guess_text):
+    clean_guess = (guess_text or "").strip()
+    if not clean_guess:
+        return clean_guess
+    roll = random.random()
+    if roll < 0.12:
+        return clean_guess.lower()
+    if roll < 0.20:
+        return f"{clean_guess}?"
+    if roll < 0.24:
+        return f"мб {clean_guess.lower()}"
+    return clean_guess
+
+
+def _pick_bot_name(existing_players):
+    existing = {(name or "").strip().lower() for name in existing_players}
+    existing_visible = {_visible_player_name(name).lower() for name in existing_players}
+    pool = list(_BOT_POOL_NAMES)
+    random.shuffle(pool)
+    for candidate in pool:
+        bot_candidate = f"{_BOT_NAME_MARKER}{candidate}"
+        if bot_candidate.lower() not in existing and candidate.lower() not in existing_visible:
+            return bot_candidate
+    base_name = random.choice(_BOT_POOL_NAMES)
+    index = 2
+    while True:
+        candidate = f"{_BOT_NAME_MARKER}{base_name} {index}"
+        if candidate.lower() not in existing and _visible_player_name(candidate).lower() not in existing_visible:
+            return candidate
+        index += 1
+
+
+def _schedule_lobby_bot_join(connection, room_code, seconds):
+    seconds = max(2, int(seconds))
+    connection.execute(
+        """
+        UPDATE rooms
+        SET bot_next_action_at = ?,
+            updated_at = ?
+        WHERE code = ?
+        """,
+        (_dt_to_str(_utc_now() + timedelta(seconds=seconds)), _now(), room_code),
+    )
+
+
+def _maybe_add_lobby_bot(connection, room_code, room, players):
+    max_players = int(room.get("max_players") or 0)
+    if max_players <= 0:
+        return False
+    if len(players) >= max_players:
+        connection.execute(
+            """
+            UPDATE rooms
+            SET bot_next_action_at = NULL,
+                updated_at = ?
+            WHERE code = ?
+            """,
+            (_now(), room_code),
+        )
+        return False
+
+    human_players = [player for player in players if not _is_bot_player(player)]
+    if not human_players:
+        return False
+
+    bot_players = [player for player in players if _is_bot_player(player)]
+    if len(bot_players) >= min(_BOT_LOBBY_MAX_PER_ROOM, max(0, max_players - 1)):
+        return False
+
+    updated_dt = _str_to_dt(room.get("updated_at")) or _str_to_dt(room.get("created_at")) or _utc_now()
+    idle_seconds = max(0, int((_utc_now() - updated_dt).total_seconds()))
+    if idle_seconds < _BOT_LOBBY_IDLE_SECONDS and not bot_players:
+        _schedule_lobby_bot_join(connection, room_code, _BOT_LOBBY_IDLE_SECONDS - idle_seconds + random.randint(1, 3))
+        return False
+
+    bot_name = _pick_bot_name(players)
+    joined_at = _now()
+    connection.execute(
+        """
+        INSERT INTO room_players (room_code, player_name, joined_at)
+        VALUES (?, ?, ?)
+        """,
+        (room_code, bot_name, joined_at),
+    )
+    _ensure_score_row(connection, room_code, bot_name)
+    _insert_message(connection, room_code, "System", f"{bot_name} joined the room.", "system")
+
+    players_after = _room_players(connection, room_code)
+    should_schedule_more = len(players_after) < max_players and (
+        len([name for name in players_after if _is_bot_player(name)]) < min(_BOT_LOBBY_MAX_PER_ROOM, max(0, max_players - 1))
+    )
+    connection.execute(
+        """
+        UPDATE rooms
+        SET bot_next_action_at = ?,
+            updated_at = ?
+        WHERE code = ?
+        """,
+        (_next_bot_action_at("lobby") if should_schedule_more else None, _now(), room_code),
+    )
+    return True
+
+
+def _pick_bot_round_guess(connection, room_code, room):
+    current_word = (room.get("current_word") or "").strip()
+    difficulty = room.get("difficulty")
+    explainer_name = (room.get("current_explainer") or "").strip()
+    transcript = _resolve_explainer_transcript(connection, room_code, explainer_name)
+    word_pool = _word_pool_for_difficulty(difficulty)
+    best_match, confidence = _best_transcript_match(transcript, word_pool)
+
+    if transcript and best_match:
+        normalized_best = _normalize_guess(best_match)
+        normalized_current = _normalize_guess(current_word)
+        best_is_current = bool(normalized_best and normalized_current and normalized_best == normalized_current)
+        if best_is_current:
+            chance_to_guess = min(0.94, max(0.36, 0.22 + confidence * 0.78))
+            if random.random() <= chance_to_guess:
+                return _humanize_bot_guess(current_word)
+        elif confidence >= 0.86 and random.random() < 0.48:
+            return _humanize_bot_guess(best_match)
+        elif confidence >= 0.74 and random.random() < 0.22:
+            return _humanize_bot_guess(best_match)
+
+    return _humanize_bot_guess(_pick_wrong_bot_guess(current_word, difficulty))
 
 
 def _pick_wrong_bot_guess(current_word, difficulty):
@@ -1017,28 +1452,31 @@ def _process_room_guess(connection, room_code, player_name, guess):
 
 
 def _run_bot_activity(connection, room_code):
-    room = connection.execute("SELECT * FROM rooms WHERE code = ?", (room_code,)).fetchone()
-    if room is None:
+    room_row = connection.execute("SELECT * FROM rooms WHERE code = ?", (room_code,)).fetchone()
+    if room_row is None:
         return
+    room = dict(room_row)
 
-    phase = (room["game_phase"] or "lobby").strip().lower()
-    if phase != "round":
-        return
+    phase = (room.get("game_phase") or "lobby").strip().lower()
 
-    scheduled_at = _str_to_dt(room["bot_next_action_at"])
+    scheduled_at = _str_to_dt(room.get("bot_next_action_at"))
     if scheduled_at is not None and scheduled_at > _utc_now():
         return
 
     players = _room_players(connection, room_code)
-    bot_players = [player for player in players if _is_bot_player(player) and player != (room["current_explainer"] or "").strip()]
+    if phase == "lobby":
+        _maybe_add_lobby_bot(connection, room_code, room, players)
+        return
+
+    if phase != "round":
+        return
+
+    bot_players = [player for player in players if _is_bot_player(player) and player != (room.get("current_explainer") or "").strip()]
     if not bot_players:
         return
 
     actor = random.choice(bot_players)
-    if random.random() < 0.38:
-        guess_text = room["current_word"] or _pick_word(room["difficulty"])
-    else:
-        guess_text = _pick_wrong_bot_guess(room["current_word"], room["difficulty"])
+    guess_text = _pick_bot_round_guess(connection, room_code, room)
 
     try:
         _process_room_guess(connection, room_code, actor, guess_text)
@@ -1123,16 +1561,27 @@ def _repair_room_integrity(connection, room_code):
         _delete_room(connection, room_code)
         return {"deleted": True, "players": []}
 
-    host_name = room["host_name"] if room["host_name"] in players else players[0]
-    current_explainer = room["current_explainer"] if room["current_explainer"] in players else host_name
+    preferred_human = _preferred_human_player(players)
+    host_name = room["host_name"] if room["host_name"] in players else ""
+    if not host_name or (_is_bot_player(host_name) and preferred_human and not _is_bot_player(preferred_human)):
+        host_name = preferred_human or players[0]
+
+    current_explainer = room["current_explainer"] if room["current_explainer"] in players else ""
+    if not current_explainer or (_is_bot_player(current_explainer) and preferred_human and not _is_bot_player(preferred_human)):
+        current_explainer = preferred_human or host_name or players[0]
+
     voice_speaker = room["voice_speaker"] if room["voice_speaker"] in players else None
     voice_until = room["voice_until"] if voice_speaker else None
+    explainer_changed = current_explainer != room["current_explainer"]
+    current_mic_muted = _normalize_mic_muted_flag(room["explainer_mic_muted"], default=1)
+    explainer_mic_muted = 1 if explainer_changed else current_mic_muted
 
     if (
         host_name != room["host_name"]
         or current_explainer != room["current_explainer"]
         or voice_speaker != room["voice_speaker"]
         or voice_until != room["voice_until"]
+        or explainer_mic_muted != current_mic_muted
     ):
         connection.execute(
             """
@@ -1141,10 +1590,11 @@ def _repair_room_integrity(connection, room_code):
                 current_explainer = ?,
                 voice_speaker = ?,
                 voice_until = ?,
+                explainer_mic_muted = ?,
                 updated_at = ?
             WHERE code = ?
             """,
-            (host_name, current_explainer, voice_speaker, voice_until, _now(), room_code),
+            (host_name, current_explainer, voice_speaker, voice_until, explainer_mic_muted, _now(), room_code),
         )
     return {"deleted": False, "players": players}
 
@@ -1221,20 +1671,30 @@ def _start_game_countdown(connection, room_code, started_by, auto_start=False):
     now_dt = _utc_now()
     countdown_end = now_dt + timedelta(seconds=10)
     round_end = countdown_end + timedelta(seconds=max(20, int(room["round_timer_sec"])))
+    players = _room_players(connection, room_code)
+    preferred_human = _preferred_human_player(players)
+    current_explainer = (room["current_explainer"] or "").strip()
+    if not current_explainer or current_explainer not in players or (
+        _is_bot_player(current_explainer) and preferred_human and not _is_bot_player(preferred_human)
+    ):
+        current_explainer = preferred_human or players[0]
 
     connection.execute(
         """
         UPDATE rooms
         SET game_phase = 'countdown',
+            current_explainer = ?,
             countdown_end_at = ?,
             round_end_at = ?,
+            starts_count = starts_count + 1,
             bot_next_action_at = NULL,
             voice_speaker = NULL,
             voice_until = NULL,
+            explainer_mic_muted = 1,
             updated_at = ?
         WHERE code = ?
         """,
-        (_dt_to_str(countdown_end), _dt_to_str(round_end), _now(), room_code),
+        (current_explainer, _dt_to_str(countdown_end), _dt_to_str(round_end), _now(), room_code),
     )
 
     if auto_start:
@@ -1286,6 +1746,7 @@ def _refresh_room_phase(connection, room_code):
                     bot_next_action_at = NULL,
                     voice_speaker = NULL,
                     voice_until = NULL,
+                    explainer_mic_muted = 1,
                     updated_at = ?
                 WHERE code = ?
                 """,
@@ -1332,6 +1793,21 @@ def _room_payload(connection, room_code, player_name="", since_id=None):
     messages = [_normalize_message(row) for row in rows]
 
     can_see_word = bool(player_name) and player_name == room["current_explainer"]
+    explainer_mic_muted = bool(_normalize_mic_muted_flag(room.get("explainer_mic_muted"), default=1))
+
+    if explainer_mic_muted and (room.get("voice_speaker") or room.get("voice_until")):
+        connection.execute(
+            """
+            UPDATE rooms
+            SET voice_speaker = NULL,
+                voice_until = NULL
+            WHERE code = ?
+            """,
+            (room_code,),
+        )
+        room["voice_speaker"] = None
+        room["voice_until"] = None
+
     voice_until_dt = _str_to_dt(room.get("voice_until"))
     voice_active = bool(room.get("voice_speaker")) and voice_until_dt is not None and voice_until_dt >= _utc_now()
 
@@ -1349,6 +1825,7 @@ def _room_payload(connection, room_code, player_name="", since_id=None):
         room["voice_until"] = None
 
     room_view = dict(room)
+    room_view["explainer_mic_muted"] = explainer_mic_muted
     if not can_see_word:
         room_view["current_word"] = ""
 
@@ -1369,6 +1846,14 @@ def _room_payload(connection, room_code, player_name="", since_id=None):
     is_viewer_player = bool(player_name) and any(player_name == listed_player for listed_player in players)
     is_viewer_explainer = bool(player_name) and player_name == room.get("current_explainer")
     is_viewer_host = bool(player_name) and player_name == room.get("host_name")
+    if phase != "round":
+        explainer_mic_state = "idle"
+    elif explainer_mic_muted:
+        explainer_mic_state = "off"
+    elif voice_active and room.get("voice_speaker") == room.get("current_explainer"):
+        explainer_mic_state = "speaking"
+    else:
+        explainer_mic_state = "on"
 
     return {
         "room": room_view,
@@ -1377,6 +1862,8 @@ def _room_payload(connection, room_code, player_name="", since_id=None):
         "messages": messages,
         "voice_active": voice_active,
         "voice_speaker": room.get("voice_speaker") if voice_active else None,
+        "explainer_mic_muted": explainer_mic_muted,
+        "explainer_mic_state": explainer_mic_state,
         "can_see_word": can_see_word,
         "current_word": room.get("current_word") if can_see_word else "",
         "game_phase": phase,
@@ -1391,6 +1878,8 @@ def _room_payload(connection, room_code, player_name="", since_id=None):
             "can_start_game": bool(is_viewer_explainer and phase == "lobby" and players_count >= required_players),
             "can_send_chat": bool(is_viewer_player and not (is_viewer_explainer and phase in {"countdown", "round"})),
             "can_use_voice": bool(is_viewer_explainer and phase == "round"),
+            "can_toggle_mic": bool(is_viewer_explainer and phase == "round"),
+            "explainer_mic_state": explainer_mic_state,
             "required_players_to_start": required_players,
         },
         "server_time": _now(),
@@ -1495,6 +1984,10 @@ class RoomHandler(BaseHTTPRequestHandler):
             self._handle_voice_ping(parts[2].upper())
             return
 
+        if len(parts) == 4 and parts[0] == "api" and parts[1] == "rooms" and parts[3] == "mic-state":
+            self._handle_mic_state(parts[2].upper())
+            return
+
         if len(parts) == 4 and parts[0] == "api" and parts[1] == "rooms" and parts[3] == "voice-chunk":
             self._handle_voice_chunk(parts[2].upper())
             return
@@ -1545,6 +2038,7 @@ class RoomHandler(BaseHTTPRequestHandler):
                 email=payload.get("email"),
                 password=payload.get("password"),
                 bio=payload.get("bio"),
+                avatar_path=payload.get("avatar_path"),
             )
         except ValueError as error:
             self._json_response(400, {"error": str(error)})
@@ -2201,6 +2695,82 @@ class RoomHandler(BaseHTTPRequestHandler):
             },
         )
 
+    def _handle_mic_state(self, room_code):
+        try:
+            payload = self._parse_json_body()
+        except ValueError as error:
+            self._json_response(400, {"error": str(error)})
+            return
+
+        player_name = (payload.get("player_name") or "").strip()
+        if not player_name:
+            self._json_response(400, {"error": "Player name is required."})
+            return
+
+        muted_raw = payload.get("muted")
+        if isinstance(muted_raw, bool):
+            muted = muted_raw
+        elif isinstance(muted_raw, (int, float)):
+            muted = bool(int(muted_raw))
+        elif isinstance(muted_raw, str):
+            muted = muted_raw.strip().lower() in {"1", "true", "yes", "on", "y"}
+        else:
+            muted = bool(muted_raw)
+
+        with _connect() as connection:
+            _refresh_room_phase(connection, room_code)
+            room = connection.execute("SELECT * FROM rooms WHERE code = ?", (room_code,)).fetchone()
+            if room is None:
+                self._json_response(404, {"error": "Room not found."})
+                return
+            if not _is_room_player(connection, room_code, player_name):
+                self._json_response(403, {"error": "Player is not in this room."})
+                return
+            if player_name != room["current_explainer"]:
+                self._json_response(403, {"error": "Only current explainer can toggle microphone."})
+                return
+            if (room["game_phase"] or "lobby").strip().lower() != "round":
+                self._json_response(409, {"error": "Round has not started yet."})
+                return
+
+            if muted:
+                connection.execute(
+                    """
+                    UPDATE rooms
+                    SET explainer_mic_muted = 1,
+                        voice_speaker = NULL,
+                        voice_until = NULL,
+                        updated_at = ?
+                    WHERE code = ?
+                    """,
+                    (_now(), room_code),
+                )
+            else:
+                connection.execute(
+                    """
+                    UPDATE rooms
+                    SET explainer_mic_muted = 0,
+                        updated_at = ?
+                    WHERE code = ?
+                    """,
+                    (_now(), room_code),
+                )
+
+            payload_state = _room_payload(connection, room_code, player_name=player_name)
+
+        self._json_response(
+            200,
+            {
+                "ok": True,
+                "muted": muted,
+                "room": payload_state["room"] if payload_state else {},
+                "voice_active": payload_state.get("voice_active", False) if payload_state else False,
+                "voice_speaker": payload_state.get("voice_speaker") if payload_state else None,
+                "explainer_mic_state": payload_state.get("explainer_mic_state", "idle") if payload_state else "idle",
+                "server_time": payload_state.get("server_time") if payload_state else _now(),
+            },
+        )
+
     def _handle_voice_ping(self, room_code):
         try:
             payload = self._parse_json_body()
@@ -2241,6 +2811,7 @@ class RoomHandler(BaseHTTPRequestHandler):
                 UPDATE rooms
                 SET voice_speaker = ?,
                     voice_until = ?,
+                    explainer_mic_muted = 0,
                     updated_at = ?
                 WHERE code = ?
                 """,
