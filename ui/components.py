@@ -1005,7 +1005,6 @@ class IconMetaChip(RoundedPanel):
         self.label.unbind(width=self.label._sync_text)
         self._layout_trigger = Clock.create_trigger(self._reflow, 0)
         self.label.bind(text=lambda *_: self._layout_trigger())
-        self.label.bind(texture_size=lambda *_: self._layout_trigger())
         self.icon.bind(size=lambda *_: self._layout_trigger())
         self.add_widget(self.label)
         self._layout_trigger()

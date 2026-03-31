@@ -379,6 +379,8 @@ class CreateRoomScreen(Screen):
         self._start_room_access_watch()
         self._refresh_room_access_ui()
         app = App.get_running_app()
+        if app is not None and hasattr(app, "_start_room_server_in_background"):
+            app._start_room_server_in_background()
         player_name = app.resolve_player_name() if app is not None else None
         profile = app.current_profile() if app is not None else None
         room_access_state = app.room_access_state() if app is not None and hasattr(app, "room_access_state") else {"active": False}

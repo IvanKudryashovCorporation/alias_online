@@ -4,6 +4,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from contextlib import suppress
 from pathlib import Path
 
 from kivy.app import App
@@ -140,7 +141,7 @@ def _request_json(method, path, payload=None, timeout=7, base_url=None):
         ensure_server_ready = getattr(app, "ensure_local_room_server_ready", None) if app is not None else None
         if callable(ensure_server_ready):
             try:
-                ready = bool(ensure_server_ready(timeout=2.8))
+                ready = bool(ensure_server_ready(timeout=4.5))
             except Exception:
                 ready = False
             if not ready:
@@ -158,8 +159,8 @@ def _request_json(method, path, payload=None, timeout=7, base_url=None):
     if platform in {"android", "ios"}:
         request_timeout = max(9, int(request_timeout))
     if local_room_server:
-        attempts = 1
-        request_timeout = min(float(request_timeout), 3.0)
+        attempts = 2
+        request_timeout = min(float(request_timeout), 4.5)
 
     body = ""
     last_transport_error = None
@@ -181,6 +182,12 @@ def _request_json(method, path, payload=None, timeout=7, base_url=None):
         except (urllib.error.URLError, TimeoutError, OSError) as error:
             last_transport_error = error
             if attempt < attempts:
+                if local_room_server:
+                    app = App.get_running_app()
+                    ensure_server_ready = getattr(app, "ensure_local_room_server_ready", None) if app is not None else None
+                    if callable(ensure_server_ready):
+                        with suppress(Exception):
+                            ensure_server_ready(timeout=1.4)
                 time.sleep(0.25 * attempt)
                 continue
 
