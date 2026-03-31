@@ -1218,6 +1218,24 @@ class LoadingOverlay(FloatLayout):
         self.opacity = 0
         self.disabled = True
 
+    def _is_interactive(self):
+        return self.opacity > 0.01 and not self.disabled
+
+    def on_touch_down(self, touch):
+        if not self._is_interactive():
+            return False
+        return super().on_touch_down(touch)
+
+    def on_touch_move(self, touch):
+        if not self._is_interactive():
+            return False
+        return super().on_touch_move(touch)
+
+    def on_touch_up(self, touch):
+        if not self._is_interactive():
+            return False
+        return super().on_touch_up(touch)
+
 
 def build_scrollable_content(padding=None, spacing=16):
     scroll = ScrollView(do_scroll_x=False, bar_width=dp(4), scroll_type=["bars", "content"])
