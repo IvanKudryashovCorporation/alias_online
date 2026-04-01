@@ -19,9 +19,26 @@ PUBLIC_ROOM_SERVER_URL_ENV = "ALIAS_PUBLIC_ROOM_SERVER_URL"
 REMOTE_WAKE_CACHE_TTL_SECONDS = 45
 REMOTE_WAKE_TOTAL_TIMEOUT_SECONDS = 55
 REMOTE_WAKE_PROBE_TIMEOUT_SECONDS = 4.5
+REMOTE_GET_ATTEMPTS = 4
+REMOTE_MUTATION_ATTEMPTS = 4
+REMOTE_RETRY_BASE_DELAY_SECONDS = 0.55
 
 _cached_room_server_url = None
 _remote_wake_cache = {}
+
+
+def _is_retryable_http_status(status_code):
+    try:
+        code = int(status_code)
+    except (TypeError, ValueError):
+        return False
+    return code in {408, 425, 429, 500, 502, 503, 504}
+
+
+def _retry_sleep_delay(attempt):
+    index = max(1, int(attempt))
+    # Smooth backoff for sleeping Render instances: 0.55s, 1.1s, 1.65s, ...
+    return REMOTE_RETRY_BASE_DELAY_SECONDS * index
 
 
 def _project_root():
@@ -213,7 +230,8 @@ def _request_json(method, path, payload=None, timeout=7, base_url=None):
         data = json.dumps(payload).encode("utf-8")
         headers["Content-Type"] = "application/json; charset=utf-8"
 
-    attempts = 3 if method.upper() == "GET" else 1
+    method_name = method.upper().strip()
+    attempts = REMOTE_GET_ATTEMPTS if method_name == "GET" else REMOTE_MUTATION_ATTEMPTS
     request_timeout = timeout if timeout is not None else 7
     if platform in {"android", "ios"}:
         request_timeout = max(9, int(request_timeout))
@@ -221,7 +239,7 @@ def _request_json(method, path, payload=None, timeout=7, base_url=None):
         attempts = 2
         request_timeout = min(float(request_timeout), 4.5)
     else:
-        request_timeout = max(float(request_timeout), 24.0 if platform in {"android", "ios"} else 16.0)
+        request_timeout = max(float(request_timeout), 22.0 if platform in {"android", "ios"} else 15.0)
 
     body = ""
     last_transport_error = None
@@ -233,6 +251,13 @@ def _request_json(method, path, payload=None, timeout=7, base_url=None):
             last_transport_error = None
             break
         except urllib.error.HTTPError as error:
+            if _is_retryable_http_status(getattr(error, "code", None)):
+                last_transport_error = error
+                if attempt < attempts:
+                    time.sleep(_retry_sleep_delay(attempt))
+                    continue
+                break
+
             details = error.read().decode("utf-8", errors="ignore")
             try:
                 parsed = json.loads(details)
@@ -249,7 +274,7 @@ def _request_json(method, path, payload=None, timeout=7, base_url=None):
                     if callable(ensure_server_ready):
                         with suppress(Exception):
                             ensure_server_ready(timeout=1.4)
-                time.sleep(0.25 * attempt)
+                time.sleep(_retry_sleep_delay(attempt))
                 continue
 
     if last_transport_error is not None:
