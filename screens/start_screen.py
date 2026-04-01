@@ -1,6 +1,7 @@
 from kivy.graphics import Color, Ellipse, Line, Rectangle, RoundedRectangle, StencilPop, StencilPush, StencilUnUse, StencilUse
 from kivy.app import App
 from kivy.clock import Clock
+from kivy.core.window import Window
 from kivy.metrics import dp, sp
 from kivy.uix.behaviors import ButtonBehavior
 from kivy.uix.boxlayout import BoxLayout
@@ -191,6 +192,7 @@ class StartScreen(Screen):
         self.room_access_popup_message_label = None
         self.room_access_popup_action_label = ""
         self._room_access_event = None
+        self._window = Window
 
         root = ScreenBackground()
 
@@ -208,9 +210,12 @@ class StartScreen(Screen):
             spacing=dp(11),
             padding=[dp(18), dp(16), dp(18), dp(16)],
         )
+        self._content_layout = content
 
-        content.add_widget(Widget(size_hint_y=None, height=dp(4)))
-        content.add_widget(BrandTitle(height=dp(270), font_size=sp(76), shadow_step=dp(4)))
+        self._top_spacer = Widget(size_hint_y=None, height=dp(4))
+        content.add_widget(self._top_spacer)
+        self.brand_title = BrandTitle(height=dp(270), font_size=sp(76), shadow_step=dp(4))
+        content.add_widget(self.brand_title)
 
         subtitle_card = RoundedPanel(
             orientation="vertical",
@@ -230,14 +235,18 @@ class StartScreen(Screen):
                 text="Выбери режим и заходи в матч",
             )
         )
+        self.subtitle_card = subtitle_card
+        self.subtitle_label = subtitle_card.children[0] if subtitle_card.children else None
         content.add_widget(subtitle_card)
 
         profile_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(264))
         profile_row.add_widget(Widget())
         profile_row.add_widget(self.profile_card)
         profile_row.add_widget(Widget())
+        self.profile_row = profile_row
         content.add_widget(profile_row)
-        content.add_widget(Widget(size_hint_y=None, height=dp(6)))
+        self._profile_gap_spacer = Widget(size_hint_y=None, height=dp(6))
+        content.add_widget(self._profile_gap_spacer)
 
         menu_holder = BoxLayout(
             orientation="vertical",
@@ -245,6 +254,7 @@ class StartScreen(Screen):
             spacing=dp(13),
             padding=[0, dp(4), 0, dp(4)],
         )
+        self.menu_holder = menu_holder
 
         create_btn = AppButton(text="Создать комнату", font_size=sp(23))
         join_btn = AppButton(text="Войти в комнату", font_size=sp(23))
@@ -256,6 +266,7 @@ class StartScreen(Screen):
         for button in (create_btn, join_btn, friends_btn, rules_btn):
             button.height = dp(84)
             menu_holder.add_widget(button)
+        self._menu_buttons = (create_btn, join_btn, friends_btn, rules_btn)
 
         create_btn.bind(on_release=self._handle_create_room_press)
         join_btn.bind(on_release=self._handle_join_room_press)
@@ -279,8 +290,58 @@ class StartScreen(Screen):
         root.add_widget(self.coin_badge)
         root.add_widget(self.version_label)
         self.add_widget(root)
+        self.bind(size=self._schedule_responsive_layout)
+        if self._window is not None:
+            self._window.bind(size=self._schedule_responsive_layout)
+        Clock.schedule_once(self._apply_responsive_layout, 0)
+
+    def _schedule_responsive_layout(self, *_):
+        Clock.unschedule(self._apply_responsive_layout)
+        Clock.schedule_once(self._apply_responsive_layout, 0)
+
+    def _apply_responsive_layout(self, *_):
+        viewport_width = float(self.width or 0)
+        viewport_height = float(self.height or 0)
+        if (viewport_width <= 0 or viewport_height <= 0) and self._window is not None:
+            viewport_width, viewport_height = self._window.size
+        if viewport_width <= 0 or viewport_height <= 0:
+            return
+
+        compact = viewport_width < dp(390) or viewport_height < dp(760)
+        medium = viewport_width < dp(440) or viewport_height < dp(860)
+
+        top_padding = dp(10 if compact else 14 if medium else 16)
+        side_padding = dp(14 if compact else 18)
+        self._content_layout.padding = [side_padding, top_padding, side_padding, dp(14 if compact else 16)]
+        self._content_layout.spacing = dp(8 if compact else 10 if medium else 11)
+
+        title_height = dp(170 if compact else 220 if medium else 270)
+        title_font = sp(62 if compact else 70 if medium else 76)
+        shadow = dp(3 if compact else 4)
+        self.brand_title.height = title_height
+        self.brand_title.set_style(font_size=title_font, shadow_step=shadow)
+        self._top_spacer.height = dp(2 if compact else 4)
+
+        self.subtitle_card.height = dp(40 if compact else 44)
+        if self.subtitle_label is not None:
+            self.subtitle_label.font_size = sp(13 if compact else 14 if medium else 15)
+
+        profile_width = min(dp(330), max(dp(294), viewport_width - dp(72)))
+        self.profile_card.width = profile_width
+        self.profile_card.height = dp(236 if compact else 250 if medium else 260)
+        self.profile_row.height = self.profile_card.height + dp(8)
+        self._profile_gap_spacer.height = dp(3 if compact else 6)
+
+        self.menu_holder.spacing = dp(9 if compact else 11 if medium else 13)
+        for button in self._menu_buttons:
+            button.height = dp(66 if compact else 74 if medium else 84)
+            button.font_size = sp(19 if compact else 21 if medium else 23)
+
+        self.version_label.font_size = sp(9.8 if compact else 10.2 if medium else 10.5)
+        self.version_label.pos_hint = {"center_x": 0.5, "y": 0.001}
 
     def on_pre_enter(self, *_):
+        self._schedule_responsive_layout()
         self.refresh_profile()
         self._refresh_room_access_ui()
         self._start_room_access_watch()

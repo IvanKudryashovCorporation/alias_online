@@ -11,11 +11,17 @@ from kivy.app import App
 from kivy.utils import platform
 
 DEFAULT_LOCAL_ROOM_SERVER_URL = "http://127.0.0.1:8765"
+DEFAULT_PUBLIC_ROOM_SERVER_URL = "https://alias-online-eqqi.onrender.com"
 ROOM_SERVER_URL_ENV = "ALIAS_ROOM_SERVER_URL"
 ROOM_SERVER_URL_FILE_ENV = "ALIAS_ROOM_SERVER_URL_FILE"
 MOBILE_ROOM_SERVER_URL_ENV = "ALIAS_MOBILE_ROOM_SERVER_URL"
+PUBLIC_ROOM_SERVER_URL_ENV = "ALIAS_PUBLIC_ROOM_SERVER_URL"
+REMOTE_WAKE_CACHE_TTL_SECONDS = 45
+REMOTE_WAKE_TOTAL_TIMEOUT_SECONDS = 55
+REMOTE_WAKE_PROBE_TIMEOUT_SECONDS = 4.5
 
 _cached_room_server_url = None
+_remote_wake_cache = {}
 
 
 def _project_root():
@@ -39,6 +45,19 @@ def _normalize_room_server_url(raw_url):
     return f"{scheme}://{parsed.netloc}"
 
 
+def _is_local_url(target_url):
+    parsed = urllib.parse.urlparse(_normalize_room_server_url(target_url))
+    host = (parsed.hostname or "").strip().lower()
+    return host in {"127.0.0.1", "localhost", "::1"}
+
+
+def _public_room_server_default():
+    env_default = _normalize_room_server_url(os.environ.get(PUBLIC_ROOM_SERVER_URL_ENV, ""))
+    if env_default:
+        return env_default
+    return _normalize_room_server_url(DEFAULT_PUBLIC_ROOM_SERVER_URL)
+
+
 def _candidate_url_files():
     custom_file = (os.environ.get(ROOM_SERVER_URL_FILE_ENV) or "").strip()
     if custom_file:
@@ -53,6 +72,7 @@ def _candidate_url_files():
 
 
 def _load_url_from_file():
+    local_fallback = ""
     for config_path in _candidate_url_files():
         if not config_path.exists():
             continue
@@ -67,8 +87,11 @@ def _load_url_from_file():
                 continue
             normalized = _normalize_room_server_url(line)
             if normalized:
-                return normalized
-    return ""
+                if not _is_local_url(normalized):
+                    return normalized
+                if not local_fallback:
+                    local_fallback = normalized
+    return local_fallback
 
 
 def _resolve_room_server_url():
@@ -80,12 +103,13 @@ def _resolve_room_server_url():
     if from_file:
         return from_file
 
-    if platform in {"android", "ios"}:
-        mobile_default = _normalize_room_server_url(os.environ.get(MOBILE_ROOM_SERVER_URL_ENV, ""))
-        if mobile_default:
-            return mobile_default
-        # Fallback to embedded local room server when public backend is not configured.
-        return DEFAULT_LOCAL_ROOM_SERVER_URL
+    mobile_default = _normalize_room_server_url(os.environ.get(MOBILE_ROOM_SERVER_URL_ENV, ""))
+    if mobile_default:
+        return mobile_default
+
+    public_default = _public_room_server_default()
+    if public_default:
+        return public_default
 
     return DEFAULT_LOCAL_ROOM_SERVER_URL
 
@@ -108,9 +132,7 @@ def set_room_server_url(new_url):
 
 def is_local_room_server_url(url=None):
     target_url = _normalize_room_server_url(url or room_server_url())
-    parsed = urllib.parse.urlparse(target_url)
-    host = (parsed.hostname or "").strip().lower()
-    return host in {"127.0.0.1", "localhost", "::1"}
+    return _is_local_url(target_url)
 
 
 def room_server_bind_params(url=None):
@@ -123,6 +145,38 @@ def room_server_bind_params(url=None):
     if port is None:
         port = 443 if parsed.scheme == "https" else 80
     return host, int(port)
+
+
+def _ensure_remote_server_awake(server_url):
+    normalized = _normalize_room_server_url(server_url)
+    if not normalized or _is_local_url(normalized):
+        return True
+
+    now = time.time()
+    cached_until = float(_remote_wake_cache.get(normalized, 0.0) or 0.0)
+    if now < cached_until:
+        return True
+
+    health_url = f"{normalized}/health"
+    deadline = now + (REMOTE_WAKE_TOTAL_TIMEOUT_SECONDS if platform in {"android", "ios"} else 35)
+    last_error = None
+    while time.time() < deadline:
+        request = urllib.request.Request(health_url, headers={"Accept": "application/json"}, method="GET")
+        try:
+            with urllib.request.urlopen(request, timeout=REMOTE_WAKE_PROBE_TIMEOUT_SECONDS) as response:
+                if int(getattr(response, "status", 200)) < 500:
+                    _remote_wake_cache[normalized] = time.time() + REMOTE_WAKE_CACHE_TTL_SECONDS
+                    return True
+        except urllib.error.HTTPError as error:
+            if int(getattr(error, "code", 500)) < 500:
+                _remote_wake_cache[normalized] = time.time() + REMOTE_WAKE_CACHE_TTL_SECONDS
+                return True
+            last_error = error
+        except (urllib.error.URLError, TimeoutError, OSError) as error:
+            last_error = error
+        time.sleep(1.3)
+
+    return False if last_error is not None else False
 
 
 def generate_room_code_preview(*, base_url=None):
@@ -147,6 +201,11 @@ def _request_json(method, path, payload=None, timeout=7, base_url=None):
             if not ready:
                 raise ConnectionError("Не удалось запустить локальный сервер комнат. Перезапусти приложение.")
 
+    if not local_room_server and not _ensure_remote_server_awake(server_url):
+        raise ConnectionError(
+            "Сервер комнат пока недоступен (возможно, просыпается). Подожди 20–40 секунд и попробуй снова."
+        )
+
     url = f"{server_url}{path}"
     data = None
     headers = {"Accept": "application/json"}
@@ -161,6 +220,8 @@ def _request_json(method, path, payload=None, timeout=7, base_url=None):
     if local_room_server:
         attempts = 2
         request_timeout = min(float(request_timeout), 4.5)
+    else:
+        request_timeout = max(float(request_timeout), 18.0 if platform in {"android", "ios"} else 14.0)
 
     body = ""
     last_transport_error = None

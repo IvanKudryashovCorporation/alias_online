@@ -1,10 +1,12 @@
 import random
 import string
 from threading import Thread
+from types import SimpleNamespace
 
 from kivy.app import App
 from kivy.clock import Clock
 from kivy.core.clipboard import Clipboard
+from kivy.core.window import Window
 from kivy.metrics import dp, sp
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.gridlayout import GridLayout
@@ -137,9 +139,11 @@ class CreateRoomScreen(Screen):
         self._create_request_token = 0
         self._code_preview_token = 0
         self._code_preview_in_progress = False
+        self._window = Window
 
         root = ScreenBackground()
         scroll, content = build_scrollable_content(padding=[dp(18), dp(18), dp(18), dp(20)], spacing=12)
+        self._content_layout = content
 
         top_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(52))
         back_btn = AppButton(text="Назад", compact=True, size_hint=(None, None), size=(dp(132), dp(48)))
@@ -148,7 +152,8 @@ class CreateRoomScreen(Screen):
         top_row.add_widget(Widget())
         content.add_widget(top_row)
 
-        content.add_widget(BrandTitle(text="ALIAS ONLINE", height=dp(120), font_size=sp(42), shadow_step=dp(3)))
+        self.brand_title = BrandTitle(text="ALIAS ONLINE", height=dp(120), font_size=sp(42), shadow_step=dp(3))
+        content.add_widget(self.brand_title)
 
         intro_card = RoundedPanel(
             orientation="vertical",
@@ -157,6 +162,7 @@ class CreateRoomScreen(Screen):
             size_hint_y=None,
             bg_color=COLORS["surface_card"],
         )
+        self.intro_card = intro_card
         intro_card.bind(minimum_height=intro_card.setter("height"))
         intro_card._border_color.rgba = (1, 1, 1, 0.14)
         intro_card._border_line.width = 1.2
@@ -187,6 +193,7 @@ class CreateRoomScreen(Screen):
             size_hint_y=None,
             bg_color=COLORS["surface_card"],
         )
+        self.form_card = form_card
         form_card.bind(minimum_height=form_card.setter("height"))
         form_card._border_color.rgba = COLORS["outline_soft"] if "outline_soft" in COLORS else COLORS["outline"]
         form_card._border_line.width = 1.0
@@ -207,6 +214,10 @@ class CreateRoomScreen(Screen):
             col_default_width=dp(96),
             col_force_default=True,
         )
+        self.players_grid._preferred_cols = 3
+        self.players_grid._compact_cols = 2
+        self.players_grid._compact_breakpoint = dp(330)
+        self.players_grid._minimum_chip_width = dp(76)
         self.players_grid.bind(minimum_height=self.players_grid.setter("height"))
         for number in range(2, 13):
             chip = RoomChoiceChip(str(number), str(number), self._select_players, height=dp(46))
@@ -226,6 +237,10 @@ class CreateRoomScreen(Screen):
             col_default_width=dp(108),
             col_force_default=True,
         )
+        self.difficulty_grid._preferred_cols = 4
+        self.difficulty_grid._compact_cols = 2
+        self.difficulty_grid._compact_breakpoint = dp(340)
+        self.difficulty_grid._minimum_chip_width = dp(72)
         self.difficulty_grid.bind(minimum_height=self.difficulty_grid.setter("height"))
         for value in ["Легкие", "Средние", "Сложные", "Микс"]:
             chip = RoomChoiceChip(value, value, self._select_difficulty, height=dp(44), font_size=sp(12.4))
@@ -261,6 +276,10 @@ class CreateRoomScreen(Screen):
             col_default_width=dp(108),
             col_force_default=True,
         )
+        self.timer_grid._preferred_cols = 3
+        self.timer_grid._compact_cols = 2
+        self.timer_grid._compact_breakpoint = dp(350)
+        self.timer_grid._minimum_chip_width = dp(82)
         self.timer_grid.bind(minimum_height=self.timer_grid.setter("height"))
         for value in ["30 сек", "45 сек", "60 сек", "75 сек", "90 сек", "120 сек"]:
             chip = RoomChoiceChip(value, value, self._select_timer, height=dp(46), font_size=sp(12.3))
@@ -375,6 +394,10 @@ class CreateRoomScreen(Screen):
         Clock.schedule_once(lambda *_: self._sync_choice_grid_width(self.players_grid, min_width=dp(92)), 0)
         Clock.schedule_once(lambda *_: self._sync_choice_grid_width(self.difficulty_grid, min_width=dp(108)), 0)
         Clock.schedule_once(lambda *_: self._sync_choice_grid_width(self.timer_grid, min_width=dp(108)), 0)
+        self.bind(size=self._schedule_responsive_layout)
+        if self._window is not None:
+            self._window.bind(size=self._schedule_responsive_layout)
+        Clock.schedule_once(self._apply_responsive_layout, 0)
 
     def _room_access_message(self, remaining_seconds):
         app = App.get_running_app()
@@ -384,6 +407,7 @@ class CreateRoomScreen(Screen):
         return f"Создание комнаты сейчас недоступно. Подожди примерно {minutes} мин."
 
     def on_pre_enter(self, *_):
+        self._schedule_responsive_layout()
         self._start_room_access_watch()
         self._refresh_room_access_ui()
         app = App.get_running_app()
@@ -391,6 +415,8 @@ class CreateRoomScreen(Screen):
             app._start_room_server_in_background()
         player_name = app.resolve_player_name() if app is not None else None
         profile = app.current_profile() if app is not None else None
+        if profile is None and app is not None and getattr(app, "guest_mode", False):
+            profile = SimpleNamespace(email=None, alias_coins=self._resolve_coin_balance(app, None))
         room_access_state = app.room_access_state() if app is not None and hasattr(app, "room_access_state") else {"active": False}
         self.coin_badge.refresh_from_session()
 
@@ -451,6 +477,11 @@ class CreateRoomScreen(Screen):
                 self.balance_note.color = COLORS["accent"]
                 self.balance_note.text = f"Баланс: {profile.alias_coins} AC. Создание комнаты стоит {ROOM_CREATION_COST} AC."
                 self.coin_badge.set_value(profile.alias_coins)
+            elif app is not None and getattr(app, "guest_mode", False):
+                guest_coins = self._resolve_coin_balance(app, None)
+                self.balance_note.color = COLORS["text_soft"]
+                self.balance_note.text = f"Гостевой режим: {guest_coins} AC. Создание комнаты стоит {ROOM_CREATION_COST} AC."
+                self.coin_badge.set_value(guest_coins)
 
     def _update_room_access_popup_message(self, state=None):
         if self.room_access_popup is None or self.room_access_popup_message_label is None:
@@ -556,6 +587,49 @@ class CreateRoomScreen(Screen):
     def _timer_to_seconds(self, timer_value):
         return int((timer_value or "").split()[0])
 
+    def _resolve_coin_balance(self, app, profile):
+        if profile is not None:
+            try:
+                return int(getattr(profile, "alias_coins", 0) or 0)
+            except (TypeError, ValueError):
+                return 0
+        if app is not None and hasattr(app, "current_alias_coins"):
+            try:
+                return int(app.current_alias_coins() or 0)
+            except (TypeError, ValueError):
+                return 0
+        return 0
+
+    def _schedule_responsive_layout(self, *_):
+        Clock.unschedule(self._apply_responsive_layout)
+        Clock.schedule_once(self._apply_responsive_layout, 0)
+
+    def _apply_responsive_layout(self, *_):
+        viewport_width = float(self.width or 0)
+        viewport_height = float(self.height or 0)
+        if (viewport_width <= 0 or viewport_height <= 0) and self._window is not None:
+            viewport_width, viewport_height = self._window.size
+        if viewport_width <= 0 or viewport_height <= 0:
+            return
+
+        compact = viewport_width < dp(390) or viewport_height < dp(760)
+
+        if self._content_layout is not None:
+            side_pad = dp(14 if compact else 18)
+            self._content_layout.padding = [side_pad, dp(14 if compact else 18), side_pad, dp(18 if compact else 20)]
+            self._content_layout.spacing = dp(10 if compact else 12)
+
+        if self.intro_card is not None:
+            self.intro_card.padding = [dp(14 if compact else 18), dp(12 if compact else 16), dp(14 if compact else 18), dp(12 if compact else 16)]
+
+        if self.form_card is not None:
+            self.form_card.padding = [dp(14 if compact else 20), dp(14 if compact else 18), dp(14 if compact else 20), dp(14 if compact else 18)]
+            self.form_card.spacing = dp(11 if compact else 14)
+
+        self._sync_choice_grid_width(self.players_grid, min_width=dp(92))
+        self._sync_choice_grid_width(self.difficulty_grid, min_width=dp(108))
+        self._sync_choice_grid_width(self.timer_grid, min_width=dp(108))
+
     def _sync_choice_grid_width(self, grid, min_width):
         if grid is None:
             return
@@ -564,8 +638,26 @@ class CreateRoomScreen(Screen):
         padding = grid.padding if isinstance(grid.padding, (list, tuple)) else [grid.padding] * 4
         left_padding = padding[0] if len(padding) > 0 else 0
         right_padding = padding[2] if len(padding) > 2 else left_padding
-        available_width = max(float(min_width), grid.width - left_padding - right_padding - spacing * max(0, grid.cols - 1))
-        column_width = max(float(min_width), available_width / max(1, int(grid.cols or 1)))
+        usable_width = max(0.0, float(grid.width - left_padding - right_padding))
+        if usable_width <= 0:
+            return
+
+        preferred_cols = max(1, int(getattr(grid, "_preferred_cols", grid.cols or 1)))
+        compact_cols = max(1, int(getattr(grid, "_compact_cols", preferred_cols)))
+        compact_breakpoint = float(getattr(grid, "_compact_breakpoint", 0.0) or 0.0)
+        target_cols = compact_cols if compact_breakpoint and usable_width < compact_breakpoint else preferred_cols
+        max_cols = max(1, min(target_cols, len(getattr(grid, "children", [])) or target_cols))
+        minimum_chip_width = float(getattr(grid, "_minimum_chip_width", min_width))
+
+        while max_cols > 1:
+            needed = max_cols * minimum_chip_width + max(0, max_cols - 1) * float(spacing)
+            if needed <= usable_width + 0.5:
+                break
+            max_cols -= 1
+
+        grid.cols = max(1, max_cols)
+        available_width = max(dp(60), usable_width - float(spacing) * max(0, grid.cols - 1))
+        column_width = max(dp(60), available_width / max(1, int(grid.cols or 1)))
         grid.col_default_width = column_width
 
     def _local_code_fallback(self):
@@ -695,6 +787,8 @@ class CreateRoomScreen(Screen):
             app._start_room_server_in_background()
         player_name = app.resolve_player_name() if app is not None else None
         profile = app.current_profile() if app is not None else None
+        if profile is None and app is not None and getattr(app, "guest_mode", False):
+            profile = SimpleNamespace(email=None, alias_coins=self._resolve_coin_balance(app, None))
         room_access_state = app.room_access_state() if app is not None and hasattr(app, "room_access_state") else {"active": False}
         room_name = self.room_name_input.text.strip()
         players = self.players_value
@@ -717,7 +811,7 @@ class CreateRoomScreen(Screen):
             self.status_label.text = f"Гостевой режим не может создавать комнаты. Для создания нужно {ROOM_CREATION_COST} AC."
             return
 
-        if profile.alias_coins < ROOM_CREATION_COST:
+        if int(getattr(profile, "alias_coins", 0) or 0) < ROOM_CREATION_COST:
             self.status_label.color = COLORS["warning"]
             self.status_label.text = f"Недостаточно AC. Нужно {ROOM_CREATION_COST}, а у тебя сейчас {profile.alias_coins}."
             return
@@ -796,8 +890,9 @@ class CreateRoomScreen(Screen):
             "visibility_scope": self.visibility_scope,
             "round_timer_sec": self._timer_to_seconds(round_timer),
             "requested_code": requested_code,
-            "profile_email": profile.email,
+            "profile_email": getattr(profile, "email", None),
             "profile_fallback": profile,
+            "is_guest": not bool(getattr(profile, "email", None)),
         }
         worker = Thread(target=self._create_room_worker_async, args=(request_token, payload), daemon=True)
         worker.start()
@@ -831,10 +926,12 @@ class CreateRoomScreen(Screen):
                 except (ConnectionError, ValueError):
                     active_room = latest_room or room
 
-            try:
-                updated_profile = spend_alias_coins(email=payload["profile_email"], amount=ROOM_CREATION_COST)
-            except ValueError:
-                updated_profile = payload["profile_fallback"]
+            updated_profile = None
+            if payload.get("profile_email"):
+                try:
+                    updated_profile = spend_alias_coins(email=payload["profile_email"], amount=ROOM_CREATION_COST)
+                except ValueError:
+                    updated_profile = payload["profile_fallback"]
 
             result = {
                 "status": "success",
@@ -844,6 +941,7 @@ class CreateRoomScreen(Screen):
                 "spawned_bots": int(spawned_bots),
                 "updated_profile": updated_profile,
                 "room_name": payload["room_name"],
+                "is_guest": bool(payload.get("is_guest")),
             }
         except ConnectionError as error:
             result = {"status": "error", "message": str(error), "tone": "error"}
@@ -873,6 +971,8 @@ class CreateRoomScreen(Screen):
         room_code = result.get("room_code")
         updated_profile = result.get("updated_profile")
         spawned_bots = int(result.get("spawned_bots", 0))
+        is_guest = bool(result.get("is_guest"))
+        app = App.get_running_app()
 
         if self.visibility_scope == "private" and room_code:
             self.private_room_code = room_code
@@ -883,6 +983,15 @@ class CreateRoomScreen(Screen):
         if updated_profile is not None:
             self.coin_badge.set_value(updated_profile.alias_coins)
             current_coins = updated_profile.alias_coins
+        elif is_guest and app is not None and hasattr(app, "try_spend_guest_alias_coins"):
+            spent_ok, remaining = app.try_spend_guest_alias_coins(ROOM_CREATION_COST)
+            current_coins = remaining
+            self.coin_badge.set_value(remaining)
+            if not spent_ok:
+                self.status_label.color = COLORS["warning"]
+                self.status_label.text = (
+                    f"Комната создана (код {room_code or '----'}), но не удалось списать {ROOM_CREATION_COST} AC."
+                )
 
         self.status_label.color = COLORS["success"]
         self.status_label.text = (
@@ -890,7 +999,6 @@ class CreateRoomScreen(Screen):
             f"Код: {room_code or '----'}. Осталось {current_coins} AC. Ботов подключено: {spawned_bots}."
         )
 
-        app = App.get_running_app()
         if app is not None:
             app.set_active_room(active_room)
             if hasattr(app, "ensure_screen"):

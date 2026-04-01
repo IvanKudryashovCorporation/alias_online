@@ -19,6 +19,7 @@ from kivy.graphics import (
     Triangle,
 )
 from kivy.metrics import dp, sp
+from kivy.utils import platform
 from kivy.uix.behaviors import ButtonBehavior
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.floatlayout import FloatLayout
@@ -406,6 +407,12 @@ class AppTextInput(TextInput):
         register_game_font()
         multiline = kwargs.pop("multiline", False)
         height = kwargs.pop("height", dp(58 if not multiline else 144))
+        input_type = kwargs.pop("input_type", "text")
+        input_filter = kwargs.pop("input_filter", None)
+        keyboard_suggestions = kwargs.pop("keyboard_suggestions", None)
+        password_mode = bool(kwargs.get("password", False))
+        if keyboard_suggestions is None:
+            keyboard_suggestions = not password_mode
         super().__init__(
             multiline=multiline,
             font_name="GameFont",
@@ -425,6 +432,9 @@ class AppTextInput(TextInput):
             use_bubble=False,
             use_handles=False,
             write_tab=False,
+            input_type=input_type,
+            input_filter=input_filter,
+            keyboard_suggestions=keyboard_suggestions,
             **kwargs,
         )
 
@@ -451,8 +461,12 @@ class AppTextInput(TextInput):
         self.bind(focus=self._apply_surface_palette)
         self.bind(readonly=self._refresh_text_colors)
         self.bind(disabled=self._refresh_text_colors)
+        self.bind(focus=self._refresh_text_colors)
+        self.bind(text=self._refresh_text_colors)
+        self.bind(focus=self._enforce_mobile_text_input_mode)
         self._apply_surface_palette()
         self._refresh_text_colors()
+        self._enforce_mobile_text_input_mode()
 
     def _apply_surface_palette(self, *_):
         if self.readonly:
@@ -488,6 +502,20 @@ class AppTextInput(TextInput):
         self._bg_rect.pos = self.pos
         self._bg_rect.size = self.size
         self._border_line.rounded_rectangle = (self.x, self.y, self.width, self.height, self._corner_radius)
+
+    def _enforce_mobile_text_input_mode(self, *_):
+        if platform not in {"android", "ios"}:
+            return
+
+        # Keep locale keyboard available (RU/EN switch) and avoid sticky ASCII-only mode.
+        if self.input_type != "text":
+            self.input_type = "text"
+        self.input_filter = None
+
+    def insert_text(self, substring, from_undo=False):
+        # Keep dark text enforced on each keystroke to avoid platform-specific color resets.
+        self._refresh_text_colors()
+        return super().insert_text(substring, from_undo=from_undo)
 
 
 class BrandTitle(Widget):

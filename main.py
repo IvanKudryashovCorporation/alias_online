@@ -419,6 +419,18 @@ class AliasApp(App):
 
         return 0
 
+    def try_spend_guest_alias_coins(self, amount):
+        charge = max(0, int(amount or 0))
+        current = self.current_alias_coins()
+        if not self.guest_mode:
+            return False, current
+        if charge == 0:
+            return True, current
+        if current < charge:
+            return False, current
+        self.guest_alias_coins = max(0, current - charge)
+        return True, int(self.guest_alias_coins)
+
     def sign_in(self, profile=None):
         self.authenticated = profile is not None
         self.guest_mode = False
