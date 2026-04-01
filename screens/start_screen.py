@@ -93,31 +93,53 @@ class LegacyCoinBadge(RoundedPanel):
 
 class StatTile(RoundedPanel):
     def __init__(self, title, **kwargs):
+        self._base_size = (dp(126), dp(42))
+        self._base_padding = [dp(8), dp(5), dp(8), dp(5)]
+        self._base_spacing = dp(2)
+        self._base_title_font_size = sp(9.2)
+        self._base_value_font_size = sp(14)
         super().__init__(
             orientation="vertical",
-            spacing=dp(2),
-            padding=[dp(8), dp(5), dp(8), dp(5)],
+            spacing=self._base_spacing,
+            padding=list(self._base_padding),
             size_hint=(None, None),
-            size=(dp(126), dp(42)),
+            size=self._base_size,
             bg_color=COLORS["surface_panel"],
             shadow_alpha=0.14,
             **kwargs,
         )
-        self.title_label = BodyLabel(center=True, color=COLORS["text_muted"], font_size=sp(9.2), text=title)
-        self.value_label = PixelLabel(center=True, font_size=sp(14), text="0")
+        self.title_label = BodyLabel(center=True, color=COLORS["text_muted"], font_size=self._base_title_font_size, text=title)
+        self.value_label = PixelLabel(center=True, font_size=self._base_value_font_size, text="0")
         self.add_widget(self.title_label)
         self.add_widget(self.value_label)
+        self.set_density(1.0)
 
     def set_value(self, value):
         self.value_label.text = str(value)
 
+    def set_density(self, scale):
+        density = max(0.72, min(1.0, float(scale)))
+        self.size = (self._base_size[0] * density, self._base_size[1] * density)
+        self.padding = [part * density for part in self._base_padding]
+        self.spacing = self._base_spacing * density
+        self.title_label.font_size = self._base_title_font_size * density
+        self.value_label.font_size = self._base_value_font_size * density
+
 
 class ProfileSummaryCard(ButtonBehavior, RoundedPanel):
     def __init__(self, **kwargs):
+        self._base_padding = [dp(16), dp(10), dp(16), dp(10)]
+        self._base_spacing = dp(6)
+        self._base_avatar_row_height = dp(62)
+        self._base_avatar_size = dp(58)
+        self._base_name_font_size = sp(20)
+        self._base_meta_font_size = sp(11.5)
+        self._base_stats_row_height = dp(42)
+        self._base_stats_row_spacing = dp(8)
         super().__init__(
             orientation="vertical",
-            spacing=dp(6),
-            padding=[dp(16), dp(10), dp(16), dp(10)],
+            spacing=self._base_spacing,
+            padding=list(self._base_padding),
             size_hint=(None, None),
             size=(dp(330), dp(260)),
             bg_color=COLORS["surface"],
@@ -125,13 +147,14 @@ class ProfileSummaryCard(ButtonBehavior, RoundedPanel):
             **kwargs,
         )
 
-        avatar_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(62))
+        avatar_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=self._base_avatar_row_height)
         avatar_row.add_widget(Widget())
         self.avatar_button = AvatarButton()
-        self.avatar_button.size = (dp(58), dp(58))
+        self.avatar_button.size = (self._base_avatar_size, self._base_avatar_size)
         avatar_row.add_widget(self.avatar_button)
         avatar_row.add_widget(Widget())
         self.add_widget(avatar_row)
+        self._avatar_row = avatar_row
 
         self.name_label = PixelLabel(center=True, font_size=sp(20), text="Профиль", size_hint_y=None)
         self.add_widget(self.name_label)
@@ -145,6 +168,7 @@ class ProfileSummaryCard(ButtonBehavior, RoundedPanel):
         first_row.add_widget(self.games_tile)
         first_row.add_widget(self.earned_tile)
         self.add_widget(first_row)
+        self._first_stats_row = first_row
 
         second_row = BoxLayout(orientation="horizontal", spacing=dp(8), size_hint_y=None, height=dp(42))
         self.guessed_tile = StatTile("Отгадано")
@@ -152,12 +176,30 @@ class ProfileSummaryCard(ButtonBehavior, RoundedPanel):
         second_row.add_widget(self.guessed_tile)
         second_row.add_widget(self.explained_tile)
         self.add_widget(second_row)
+        self._second_stats_row = second_row
+        self.set_density(1.0)
 
     def on_press(self):
         self.opacity = 0.9
 
     def on_release(self):
         self.opacity = 1
+
+    def set_density(self, scale):
+        density = max(0.72, min(1.0, float(scale)))
+        self.padding = [part * density for part in self._base_padding]
+        self.spacing = self._base_spacing * density
+        self._avatar_row.height = self._base_avatar_row_height * density
+        avatar_side = self._base_avatar_size * density
+        self.avatar_button.size = (avatar_side, avatar_side)
+        self.name_label.font_size = self._base_name_font_size * density
+        self.meta_label.font_size = self._base_meta_font_size * density
+        self._first_stats_row.height = self._base_stats_row_height * density
+        self._first_stats_row.spacing = self._base_stats_row_spacing * density
+        self._second_stats_row.height = self._base_stats_row_height * density
+        self._second_stats_row.spacing = self._base_stats_row_spacing * density
+        for tile in (self.games_tile, self.earned_tile, self.guessed_tile, self.explained_tile):
+            tile.set_density(density)
 
     def set_guest(self, guest_name):
         self.avatar_button.set_profile(None)
@@ -250,7 +292,7 @@ class StartScreen(Screen):
 
         menu_holder = BoxLayout(
             orientation="vertical",
-            size_hint_y=1,
+            size_hint_y=None,
             spacing=dp(13),
             padding=[0, dp(4), 0, dp(4)],
         )
@@ -267,6 +309,7 @@ class StartScreen(Screen):
             button.height = dp(84)
             menu_holder.add_widget(button)
         self._menu_buttons = (create_btn, join_btn, friends_btn, rules_btn)
+        self.menu_holder.height = sum(button.height for button in self._menu_buttons) + menu_holder.spacing * (len(self._menu_buttons) - 1) + menu_holder.padding[1] + menu_holder.padding[3]
 
         create_btn.bind(on_release=self._handle_create_room_press)
         join_btn.bind(on_release=self._handle_join_room_press)
@@ -310,34 +353,95 @@ class StartScreen(Screen):
         compact = viewport_width < dp(390) or viewport_height < dp(760)
         medium = viewport_width < dp(440) or viewport_height < dp(860)
 
-        top_padding = dp(10 if compact else 14 if medium else 16)
+        base_top_padding = dp(10 if compact else 14 if medium else 16)
+        base_bottom_padding = dp(16 if compact else 18 if medium else 20)
         side_padding = dp(14 if compact else 18)
-        self._content_layout.padding = [side_padding, top_padding, side_padding, dp(14 if compact else 16)]
-        self._content_layout.spacing = dp(8 if compact else 10 if medium else 11)
+        base_spacing = dp(8 if compact else 10 if medium else 11)
+        base_title_height = dp(170 if compact else 220 if medium else 270)
+        base_title_font = sp(62 if compact else 70 if medium else 76)
+        base_shadow = dp(3 if compact else 4)
+        base_top_spacer = dp(2 if compact else 4)
+        base_subtitle_height = dp(40 if compact else 44)
+        base_subtitle_font = sp(13 if compact else 14 if medium else 15)
+        base_profile_height = dp(236 if compact else 250 if medium else 260)
+        base_profile_gap = dp(3 if compact else 6)
+        base_menu_spacing = dp(9 if compact else 11 if medium else 13)
+        base_button_height = dp(66 if compact else 74 if medium else 84)
+        base_button_font = sp(19 if compact else 21 if medium else 23)
+        base_menu_padding_vertical = dp(4)
 
-        title_height = dp(170 if compact else 220 if medium else 270)
-        title_font = sp(62 if compact else 70 if medium else 76)
-        shadow = dp(3 if compact else 4)
+        menu_count = len(self._menu_buttons)
+        menu_height_base = (
+            base_button_height * menu_count
+            + base_menu_spacing * max(0, menu_count - 1)
+            + base_menu_padding_vertical * 2
+        )
+        base_required_height = (
+            base_top_padding
+            + base_bottom_padding
+            + base_top_spacer
+            + base_title_height
+            + base_subtitle_height
+            + (base_profile_height + dp(8))
+            + base_profile_gap
+            + menu_height_base
+            + base_spacing * 5
+        )
+        usable_height = max(dp(560), viewport_height - dp(22))
+        vertical_scale = max(0.72, min(1.0, usable_height / max(base_required_height, 1)))
+
+        top_padding = base_top_padding * vertical_scale
+        bottom_padding = base_bottom_padding * vertical_scale
+        spacing = max(dp(6), base_spacing * vertical_scale)
+        self._content_layout.padding = [side_padding, top_padding, side_padding, bottom_padding]
+        self._content_layout.spacing = spacing
+
+        title_height = base_title_height * vertical_scale
+        title_font = max(sp(42), base_title_font * vertical_scale)
+        shadow = max(dp(2.4), base_shadow * vertical_scale)
         self.brand_title.height = title_height
         self.brand_title.set_style(font_size=title_font, shadow_step=shadow)
-        self._top_spacer.height = dp(2 if compact else 4)
+        self._top_spacer.height = base_top_spacer * vertical_scale
 
-        self.subtitle_card.height = dp(40 if compact else 44)
+        self.subtitle_card.height = base_subtitle_height * vertical_scale
         if self.subtitle_label is not None:
-            self.subtitle_label.font_size = sp(13 if compact else 14 if medium else 15)
+            self.subtitle_label.font_size = max(sp(11.8), base_subtitle_font * vertical_scale)
 
-        profile_width = min(dp(330), max(dp(294), viewport_width - dp(72)))
+        available_profile_width = max(dp(236), viewport_width - side_padding * 2 - dp(14))
+        profile_width = min(dp(330), available_profile_width)
+        width_density = max(0.72, min(1.0, profile_width / dp(330)))
+        card_density = min(width_density, vertical_scale)
+        self.profile_card.set_density(card_density)
         self.profile_card.width = profile_width
-        self.profile_card.height = dp(236 if compact else 250 if medium else 260)
-        self.profile_row.height = self.profile_card.height + dp(8)
-        self._profile_gap_spacer.height = dp(3 if compact else 6)
+        self.profile_card.height = base_profile_height * vertical_scale
+        self.profile_row.height = self.profile_card.height + dp(8) * vertical_scale
+        self._profile_gap_spacer.height = base_profile_gap * vertical_scale
 
-        self.menu_holder.spacing = dp(9 if compact else 11 if medium else 13)
+        menu_spacing = base_menu_spacing * vertical_scale
+        menu_padding_vertical = base_menu_padding_vertical * vertical_scale
+        self.menu_holder.spacing = menu_spacing
+        self.menu_holder.padding = [0, menu_padding_vertical, 0, menu_padding_vertical]
+
         for button in self._menu_buttons:
-            button.height = dp(66 if compact else 74 if medium else 84)
-            button.font_size = sp(19 if compact else 21 if medium else 23)
+            button.height = base_button_height * vertical_scale
+            button.font_size = max(sp(17), base_button_font * vertical_scale)
 
-        self.version_label.font_size = sp(9.8 if compact else 10.2 if medium else 10.5)
+        self.menu_holder.height = (
+            sum(button.height for button in self._menu_buttons)
+            + self.menu_holder.spacing * max(0, menu_count - 1)
+            + self.menu_holder.padding[1]
+            + self.menu_holder.padding[3]
+        )
+
+        support_size = dp(48 if compact else 52)
+        badge_scale = 0.92 if compact else 1.0
+        overlay_top = 0.968 if compact else 0.96
+        self.support_button.size = (support_size, support_size)
+        self.support_button.pos_hint = {"x": 0.03 if compact else 0.04, "top": overlay_top}
+        self.coin_badge.size = (dp(122) * badge_scale, dp(52) * badge_scale)
+        self.coin_badge.pos_hint = {"right": 0.968, "top": overlay_top}
+
+        self.version_label.font_size = max(sp(9.6), sp(9.8 if compact else 10.2 if medium else 10.5) * vertical_scale)
         self.version_label.pos_hint = {"center_x": 0.5, "y": 0.001}
 
     def on_pre_enter(self, *_):
