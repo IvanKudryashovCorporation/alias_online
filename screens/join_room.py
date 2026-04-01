@@ -483,7 +483,12 @@ class JoinRoomScreen(Screen):
             self._set_status("Введи корректный код комнаты.", COLORS["warning"], "warning")
             return
 
-        self._start_join_request(code=code, player_name=player_name)
+        self._start_join_request(
+            code=code,
+            player_name=player_name,
+            is_guest=bool(app is not None and getattr(app, "guest_mode", False)),
+            client_id=(app.resolve_client_id() if app is not None and hasattr(app, "resolve_client_id") else ""),
+        )
         return
 
         self._join_in_progress = True
@@ -520,7 +525,7 @@ class JoinRoomScreen(Screen):
                 app.ensure_screen("room")
         self.manager.current = "room"
 
-    def _start_join_request(self, *, code, player_name):
+    def _start_join_request(self, *, code, player_name, is_guest, client_id):
         self._join_in_progress = True
         self._join_request_token += 1
         request_token = self._join_request_token
@@ -529,14 +534,19 @@ class JoinRoomScreen(Screen):
 
         worker = Thread(
             target=self._join_by_code_worker,
-            args=(request_token, code, player_name),
+            args=(request_token, code, player_name, bool(is_guest), (client_id or "").strip()),
             daemon=True,
         )
         worker.start()
 
-    def _join_by_code_worker(self, request_token, room_code, player_name):
+    def _join_by_code_worker(self, request_token, room_code, player_name, is_guest, client_id):
         try:
-            joined_room = join_online_room(room_code=room_code, player_name=player_name)
+            joined_room = join_online_room(
+                room_code=room_code,
+                player_name=player_name,
+                is_guest=is_guest,
+                client_id=client_id,
+            )
             payload = {"status": "success", "room": joined_room, "room_code": room_code}
         except ConnectionError as error:
             payload = {"status": "error", "tone": "error", "message": str(error)}
@@ -573,6 +583,9 @@ class JoinRoomScreen(Screen):
 
         app = App.get_running_app()
         if app is not None:
+            joined_as = (joined_room.get("_joined_as") or "").strip()
+            if joined_as and hasattr(app, "adopt_room_player_name"):
+                app.adopt_room_player_name(joined_as)
             app.set_active_room(joined_room)
             if hasattr(app, "ensure_screen"):
                 app.ensure_screen("room")

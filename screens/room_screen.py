@@ -1,5 +1,7 @@
 import time
 from pathlib import Path
+from threading import Thread
+from types import SimpleNamespace
 
 from kivy.app import App
 from kivy.animation import Animation
@@ -751,6 +753,21 @@ class RoomScreen(Screen):
         self._last_start_attempt_ts = 0.0
         self._start_game_request_in_flight = False
         self._local_starts_count = 0
+        self._last_players_signature = None
+        self._last_chat_mount_signature = None
+        self._last_progress_signature = None
+        self._last_overlay_geometry_signature = None
+        self._profile_cache = {}
+        self._profile_cache_ts = 0.0
+        self._poll_in_flight = False
+        self._poll_token = 0
+        self._poll_reschedule = False
+        self._chat_request_in_flight = False
+        self._skip_request_in_flight = False
+        self._chat_request_token = 0
+        self._skip_request_token = 0
+        self._message_history = []
+        self._last_message_id = 0
 
         root = ScreenBackground(variant="game")
         content = BoxLayout(
@@ -978,23 +995,6 @@ class RoomScreen(Screen):
         root.add_widget(self.loading_overlay)
         self.add_widget(root)
 
-    def _start_button_hit(self, touch):
-        return (
-            self.manager is not None
-            and self.manager.current == self.name
-            and self._current_phase() == "lobby"
-            and self._can_control_start()
-            and not self.start_game_btn.disabled
-            and self.start_game_btn.opacity > 0
-            and self.start_game_btn.collide_point(*touch.pos)
-        )
-
-    def on_touch_down(self, touch):
-        if self._start_button_hit(touch):
-            self._queue_start_game()
-            return True
-        return super().on_touch_down(touch)
-
     def on_pre_enter(self, *_):
         self.disabled = False
         app = App.get_running_app()
@@ -1004,10 +1004,25 @@ class RoomScreen(Screen):
         self._last_voice_ping_ts = 0.0
         self._smoothed_voice_level = 0.0
         self._last_chat_signature = None
+        self._last_players_signature = None
+        self._last_chat_mount_signature = None
+        self._last_progress_signature = None
+        self._last_overlay_geometry_signature = None
         self._leave_sent = False
         self._last_start_attempt_ts = 0.0
         self._start_game_request_in_flight = False
         self._local_starts_count = 0
+        self._profile_cache = {}
+        self._profile_cache_ts = 0.0
+        self._poll_in_flight = False
+        self._poll_reschedule = False
+        self._poll_token = 0
+        self._chat_request_in_flight = False
+        self._skip_request_in_flight = False
+        self._chat_request_token = 0
+        self._skip_request_token = 0
+        self._message_history = []
+        self._last_message_id = 0
         self._set_mic_muted(True)
         self._set_mic_level(0.0)
         self.loading_overlay.hide()
@@ -1015,8 +1030,16 @@ class RoomScreen(Screen):
         self.countdown_overlay.hide()
         if self.room_code and player_name:
             try:
-                joined_room = join_online_room(room_code=self.room_code, player_name=player_name)
+                joined_room = join_online_room(
+                    room_code=self.room_code,
+                    player_name=player_name,
+                    is_guest=bool(app is not None and getattr(app, "guest_mode", False)),
+                    client_id=(app.resolve_client_id() if app is not None and hasattr(app, "resolve_client_id") else ""),
+                )
                 if app is not None:
+                    joined_as = (joined_room.get("_joined_as") or "").strip()
+                    if joined_as and hasattr(app, "adopt_room_player_name"):
+                        app.adopt_room_player_name(joined_as)
                     app.set_active_room(joined_room)
             except (ConnectionError, ValueError):
                 pass
@@ -1032,6 +1055,19 @@ class RoomScreen(Screen):
         self.loading_overlay.hide()
         self.countdown_overlay.hide()
         self._dismiss_leave_popup()
+        self._last_players_signature = None
+        self._last_chat_mount_signature = None
+        self._last_progress_signature = None
+        self._last_overlay_geometry_signature = None
+        self._poll_in_flight = False
+        self._poll_reschedule = False
+        self._poll_token += 1
+        self._chat_request_in_flight = False
+        self._skip_request_in_flight = False
+        self._chat_request_token += 1
+        self._skip_request_token += 1
+        self._message_history = []
+        self._last_message_id = 0
         self.disabled = True
 
     def _go_back_to_menu(self, *_):
@@ -1188,16 +1224,26 @@ class RoomScreen(Screen):
         self._leave_sent = True
 
         if room_code and player_name:
-            try:
-                leave_online_room(room_code=room_code, player_name=player_name)
-            except (ConnectionError, ValueError):
-                pass
+            Thread(
+                target=self._leave_room_worker,
+                args=(room_code, player_name),
+                daemon=True,
+            ).start()
 
         self.room_code = ""
         self.room_state = {}
         self._last_chat_signature = None
+        self._last_players_signature = None
+        self._last_chat_mount_signature = None
+        self._last_progress_signature = None
         if app is not None:
             app.clear_active_room()
+
+    def _leave_room_worker(self, room_code, player_name):
+        try:
+            leave_online_room(room_code=room_code, player_name=player_name)
+        except (ConnectionError, ValueError):
+            return
 
     def _sync_word_label(self, *_):
         self.word_label.text_size = (max(0, self.word_label.width - dp(12)), max(0, self.word_label.height - dp(12)))
@@ -1248,7 +1294,7 @@ class RoomScreen(Screen):
         return app.resolve_player_name() if app is not None else None
 
     def _normalized_player_name(self, value):
-        return (value or "").strip().lower()
+        return (value or "").strip().casefold()
 
     def _same_player(self, left, right):
         return bool(self._normalized_player_name(left) and self._normalized_player_name(left) == self._normalized_player_name(right))
@@ -1289,13 +1335,13 @@ class RoomScreen(Screen):
         viewer = self._viewer_state()
         if viewer and "can_control_start" in viewer:
             return bool(viewer.get("can_control_start"))
-        return bool(self._player_name()) and self._is_explainer() and self._current_phase() == "lobby"
+        return bool(self._player_name()) and self._is_host() and self._current_phase() == "lobby"
 
     def _can_start_game(self):
         viewer = self._viewer_state()
         if viewer:
             return bool(viewer.get("can_start_game"))
-        return bool(self._player_name()) and self._is_explainer()
+        return bool(self._player_name()) and self._is_host()
 
     def _explainer_chat_locked(self):
         return self._is_explainer() and self._current_phase() in {"countdown", "round"}
@@ -1335,10 +1381,16 @@ class RoomScreen(Screen):
         return 1
 
     def _profile_map(self):
+        now_ts = time.time()
+        if self._profile_cache and now_ts - self._profile_cache_ts < 2.0:
+            return self._profile_cache
         try:
-            return {profile.name.strip().lower(): profile for profile in list_profiles()}
+            cache = {profile.name.strip().lower(): profile for profile in list_profiles()}
+            self._profile_cache = cache
+            self._profile_cache_ts = now_ts
+            return cache
         except Exception:
-            return {}
+            return self._profile_cache or {}
 
     def _sync_players_grid_width(self, *_):
         cols = max(1, int(getattr(self.players_box, "cols", 1) or 1))
@@ -1350,9 +1402,48 @@ class RoomScreen(Screen):
         self.players_box.col_default_width = column_width
         self.players_box.width = column_width * cols + total_spacing + total_padding
 
+    def _normalize_message_rows(self, messages):
+        normalized = []
+        for message in messages or []:
+            if not isinstance(message, dict):
+                continue
+            try:
+                message_id = int(message.get("id"))
+            except (TypeError, ValueError):
+                continue
+            entry = dict(message)
+            entry["id"] = message_id
+            normalized.append(entry)
+        normalized.sort(key=lambda item: int(item.get("id", 0)))
+        return normalized
+
+    def _merge_message_history(self, incoming_messages, since_id):
+        normalized_incoming = self._normalize_message_rows(incoming_messages)
+        if since_id <= 0 or not self._message_history:
+            merged = normalized_incoming
+        else:
+            merged_map = {}
+            for item in self._message_history:
+                if isinstance(item, dict):
+                    try:
+                        merged_map[int(item.get("id"))] = item
+                    except (TypeError, ValueError):
+                        continue
+            for item in normalized_incoming:
+                merged_map[int(item["id"])] = item
+            merged_ids = sorted(merged_map.keys())
+            merged = [merged_map[message_id] for message_id in merged_ids]
+
+        if len(merged) > 180:
+            merged = merged[-180:]
+
+        self._message_history = list(merged)
+        self._last_message_id = int(merged[-1]["id"]) if merged else 0
+        return list(merged)
+
     def _start_polling(self):
         self._stop_polling()
-        self._poll_event = Clock.schedule_interval(lambda _dt: self._poll_state(), 1.0)
+        self._poll_event = Clock.schedule_interval(lambda _dt: self._poll_state(), 0.65)
 
     def _stop_polling(self):
         if self._poll_event is not None:
@@ -1438,6 +1529,11 @@ class RoomScreen(Screen):
         target_parent.add_widget(self.chat_card)
 
     def _mount_chat_in_column(self):
+        signature = ("column",)
+        if self._last_chat_mount_signature == signature and self.chat_card.parent is self.chat_host:
+            return
+        self._last_chat_mount_signature = signature
+        self._last_overlay_geometry_signature = None
         self.chat_overlay_layer.clear_widgets()
         self.score_chat_layer.clear_widgets()
         self.chat_overlay_layer.opacity = 0
@@ -1457,6 +1553,12 @@ class RoomScreen(Screen):
         self.word_push_spacer.height = dp(0)
 
     def _mount_chat_overlay(self, can_chat, is_explainer=False):
+        signature = ("overlay", bool(can_chat), bool(is_explainer))
+        if self._last_chat_mount_signature == signature and self.chat_card.parent is self.chat_overlay_layer:
+            self._sync_overlay_chat_geometry(can_chat, is_explainer)
+            return
+        self._last_chat_mount_signature = signature
+        self._last_overlay_geometry_signature = None
         overlay_height = dp(238 if is_explainer else (214 if can_chat else 182))
         self.chat_host.size_hint_y = None if is_explainer else 1
         self.chat_host.height = dp(0)
@@ -1478,6 +1580,32 @@ class RoomScreen(Screen):
     def _sync_overlay_chat_geometry(self, can_chat, is_explainer):
         if self.chat_card.parent is not self.chat_overlay_layer:
             return
+
+        if is_explainer:
+            layout_signature = (
+                bool(can_chat),
+                True,
+                round(float(self.word_stage.x), 1),
+                round(float(self.word_stage.y), 1),
+                round(float(self.word_stage.width), 1),
+                round(float(self.word_stage.height), 1),
+                round(float(self.scores_wrap.y), 1),
+                round(float(self.phase_wrap.y), 1),
+                round(float(self.phase_wrap.height), 1),
+                int(self.phase_wrap.opacity > 0),
+            )
+        else:
+            layout_signature = (
+                bool(can_chat),
+                False,
+                round(float(self.chat_overlay_layer.x), 1),
+                round(float(self.chat_overlay_layer.y), 1),
+                round(float(self.chat_overlay_layer.width), 1),
+                round(float(self.chat_overlay_layer.height), 1),
+            )
+        if layout_signature == self._last_overlay_geometry_signature:
+            return
+        self._last_overlay_geometry_signature = layout_signature
 
         overlay_height = dp(238 if is_explainer else (214 if can_chat else 182))
         if is_explainer:
@@ -1515,6 +1643,20 @@ class RoomScreen(Screen):
         self.chat_card.pos = (left, bottom)
 
     def _render_player_cards(self, players, explainer_name, profile_map=None, score_map=None, phase="lobby"):
+        profile_map = profile_map or self._profile_map()
+        score_map = score_map or {}
+        current_player_name = self._player_name()
+        signature = (
+            phase,
+            tuple(players or []),
+            (explainer_name or "").strip().lower(),
+            (current_player_name or "").strip().lower(),
+            tuple(sorted(((key or "").strip().lower(), int(value or 0)) for key, value in (score_map or {}).items())),
+        )
+        if signature == self._last_players_signature:
+            return
+        self._last_players_signature = signature
+
         self.players_box.clear_widgets()
         is_round = phase == "round"
         self.players_box.cols = 1 if is_round or not players else 3
@@ -1532,10 +1674,6 @@ class RoomScreen(Screen):
             )
             return
 
-        profile_map = profile_map or self._profile_map()
-        score_map = score_map or {}
-        current_player_name = self._player_name()
-
         for listed_player in players:
             card = ClickableRoundPlayerRow() if is_round else ClickableLobbyPlayerCard()
             card.width = self.players_box.col_default_width
@@ -1552,25 +1690,101 @@ class RoomScreen(Screen):
             self.players_box.add_widget(card)
 
     def _poll_state(self):
-        if not self.room_code:
+        if self._poll_in_flight:
+            self._poll_reschedule = True
+            return
+
+        room_code = (self.room_code or "").strip().upper()
+        if not room_code:
             self.status_label.color = COLORS["warning"]
             self.status_label.text = "Комната не выбрана. Создай комнату или зайди в существующую."
             return
 
-        player_name = self._player_name()
+        player_name = (self._player_name() or "").strip()
         if not player_name:
             self.status_label.color = COLORS["error"]
-            self.status_label.text = "Сессия не найдена. Войди в аккаунт заново."
+            self.status_label.text = "Сессия игрока не найдена. Войди в аккаунт снова."
             return
 
+        self._poll_in_flight = True
+        self._poll_token += 1
+        request_token = self._poll_token
+        since_id = int(self._last_message_id or 0)
+        worker = Thread(
+            target=self._poll_state_worker,
+            args=(request_token, room_code, player_name, since_id),
+            daemon=True,
+        )
+        worker.start()
+
+    def _poll_state_worker(self, request_token, room_code, player_name, since_id):
+        result = {
+            "token": request_token,
+            "room_code": room_code,
+            "player_name": player_name,
+            "since_id": int(since_id or 0),
+            "status": "error",
+            "message": "Unexpected polling error.",
+        }
         try:
-            state = get_online_room_state(room_code=self.room_code, player_name=player_name)
+            request_since_id = int(since_id or 0)
+            state = get_online_room_state(
+                room_code=room_code,
+                player_name=player_name,
+                since_id=request_since_id if request_since_id > 0 else None,
+                timeout=4,
+            )
+            result = {
+                "token": request_token,
+                "room_code": room_code,
+                "player_name": player_name,
+                "since_id": request_since_id,
+                "status": "success",
+                "state": state,
+            }
         except ConnectionError as error:
-            self.status_label.color = COLORS["error"]
-            self.status_label.text = str(error)
-            return
+            result["status"] = "connection_error"
+            result["message"] = str(error)
         except ValueError as error:
-            message = str(error)
+            result["status"] = "value_error"
+            result["message"] = str(error)
+        except Exception as error:
+            result["status"] = "error"
+            result["message"] = str(error)
+
+        Clock.schedule_once(lambda _dt, payload=result: self._finish_poll_state(payload), 0)
+
+    def _finish_poll_state(self, payload):
+        token = int(payload.get("token") or 0)
+        if token != self._poll_token:
+            return
+
+        self._poll_in_flight = False
+        if self.manager is None or self.manager.current != self.name:
+            return
+
+        if (payload.get("room_code") or "").strip().upper() != (self.room_code or "").strip().upper():
+            return
+
+        status = payload.get("status")
+        if status == "success":
+            state = dict(payload.get("state") or {})
+            incoming_messages = state.get("messages") if isinstance(state.get("messages"), list) else []
+            used_since = int(payload.get("since_id") or 0)
+            state["messages"] = self._merge_message_history(incoming_messages, used_since)
+            self.room_state = state
+            app = App.get_running_app()
+            if app is not None:
+                viewer_name = ((state.get("viewer") or {}).get("player_name") or "").strip()
+                if viewer_name and hasattr(app, "adopt_room_player_name"):
+                    app.adopt_room_player_name(viewer_name)
+                app.set_active_room(state.get("room", {}))
+            self._apply_state()
+        elif status == "connection_error":
+            self.status_label.color = COLORS["error"]
+            self.status_label.text = payload.get("message") or "Не удалось обновить комнату."
+        elif status == "value_error":
+            message = payload.get("message") or "Ошибка обновления комнаты."
             if "Player is not in this room." in message:
                 app = App.get_running_app()
                 if app is not None:
@@ -1580,18 +1794,18 @@ class RoomScreen(Screen):
                 self.room_code = ""
                 self.room_state = {}
                 self.status_label.color = COLORS["warning"]
-                self.status_label.text = "Ты больше не в этой комнате. Зайди в нее заново."
+                self.status_label.text = "Ты больше не в этой комнате. Зайди в нее снова."
                 Clock.schedule_once(lambda *_: setattr(self.manager, "current", "join_room"), 0)
-                return
-            self.status_label.color = COLORS["warning"]
-            self.status_label.text = message
-            return
+            else:
+                self.status_label.color = COLORS["warning"]
+                self.status_label.text = message
+        else:
+            self.status_label.color = COLORS["error"]
+            self.status_label.text = payload.get("message") or "Не удалось обновить состояние комнаты."
 
-        self.room_state = state
-        app = App.get_running_app()
-        if app is not None:
-            app.set_active_room(state.get("room", {}))
-        self._apply_state()
+        if self._poll_reschedule:
+            self._poll_reschedule = False
+            Clock.schedule_once(lambda *_: self._poll_state(), 0)
 
     def _apply_state(self):
         room = self.room_state.get("room", {})
@@ -1752,7 +1966,6 @@ class RoomScreen(Screen):
         self._render_player_cards(players, explainer_name, profile_map, score_map, phase)
         if phase == "round" and is_explainer:
             self._sync_word_stage_layout()
-            Clock.schedule_once(lambda *_: self._sync_overlay_chat_geometry(can_chat, is_explainer), 0)
 
         current_player_score = 0
         for score_entry in scores:
@@ -1781,6 +1994,17 @@ class RoomScreen(Screen):
         if profile is None:
             return
 
+        sync_signature = (
+            (profile.email or "").strip().lower(),
+            (self.room_code or "").strip().upper(),
+            int(current_score or 0),
+            (phase or "").strip().lower(),
+            (role or "").strip().lower(),
+        )
+        if sync_signature == self._last_progress_signature:
+            return
+        self._last_progress_signature = sync_signature
+
         sync_room_progress(
             email=profile.email,
             room_code=self.room_code,
@@ -1790,9 +2014,10 @@ class RoomScreen(Screen):
         )
 
     def _render_messages(self, messages):
+        messages = list(messages or [])
         signature = tuple(
             (message.get("id"), message.get("message_type"), message.get("player_name"), message.get("message"))
-            for message in messages
+            for message in messages[-100:]
         )
         if signature == self._last_chat_signature:
             return
@@ -1800,7 +2025,7 @@ class RoomScreen(Screen):
 
         phase = self._current_phase()
         is_explainer = self._is_explainer()
-        display_messages = list(messages[-14:]) if phase == "round" else list(messages[-26:])
+        display_messages = list(messages[-22:]) if phase == "round" else list(messages[-30:])
         self.chat_box.clear_widgets()
 
         if not display_messages:
@@ -1851,36 +2076,55 @@ class RoomScreen(Screen):
 
     def _charge_start_cost(self):
         app = App.get_running_app()
-        if app is None or not getattr(app, "authenticated", False):
+        if app is None:
             return True, None
 
-        profile = app.current_profile()
-        if profile is None:
-            return True, None
+        if getattr(app, "authenticated", False):
+            profile = app.current_profile()
+            if profile is None:
+                return True, None
 
-        try:
-            current_coins = int(getattr(profile, "alias_coins", 0) or 0)
-        except (TypeError, ValueError):
-            current_coins = 0
+            try:
+                current_coins = int(getattr(profile, "alias_coins", 0) or 0)
+            except (TypeError, ValueError):
+                current_coins = 0
 
-        if current_coins < ROOM_CREATION_COST:
-            return (
-                False,
-                f"Нужно минимум {ROOM_CREATION_COST} AC для запуска игры. Сейчас: {current_coins} AC.",
-            )
+            if current_coins < ROOM_CREATION_COST:
+                return (
+                    False,
+                    f"Нужно минимум {ROOM_CREATION_COST} AC для запуска игры. Сейчас: {current_coins} AC.",
+                )
 
-        try:
-            updated_profile = spend_alias_coins(
-                email=profile.email,
-                amount=ROOM_CREATION_COST,
-                increment_rooms_created=False,
-                reason_label="запуск игры",
-            )
-        except ValueError as error:
-            return False, str(error)
+            try:
+                updated_profile = spend_alias_coins(
+                    email=profile.email,
+                    amount=ROOM_CREATION_COST,
+                    increment_rooms_created=False,
+                    reason_label="запуск игры",
+                )
+            except ValueError as error:
+                return False, str(error)
 
-        self.coin_badge.set_value(updated_profile.alias_coins)
-        return True, updated_profile
+            self.coin_badge.set_value(updated_profile.alias_coins)
+            return True, updated_profile
+
+        if getattr(app, "guest_mode", False):
+            current_coins = int(app.current_alias_coins() or 0)
+            if current_coins < ROOM_CREATION_COST:
+                return (
+                    False,
+                    f"Нужно минимум {ROOM_CREATION_COST} AC для запуска игры. Сейчас: {current_coins} AC.",
+                )
+            spent_ok, remaining = app.try_spend_guest_alias_coins(ROOM_CREATION_COST)
+            if not spent_ok:
+                return (
+                    False,
+                    f"Нужно минимум {ROOM_CREATION_COST} AC для запуска игры. Сейчас: {current_coins} AC.",
+                )
+            self.coin_badge.set_value(int(remaining))
+            return True, SimpleNamespace(alias_coins=int(remaining))
+
+        return True, None
 
     def _start_game(self, *_):
         if self._current_phase() != "lobby":
@@ -1889,7 +2133,7 @@ class RoomScreen(Screen):
             return
         if not self._can_control_start():
             self.status_label.color = COLORS["warning"]
-            self.status_label.text = "Начать игру может только объясняющий."
+            self.status_label.text = "Начать игру может только создатель комнаты."
             return
 
         player_name = self._player_name()
@@ -1908,17 +2152,26 @@ class RoomScreen(Screen):
 
         app = App.get_running_app()
         profile = app.current_profile() if app is not None and getattr(app, "authenticated", False) else None
-        if should_charge_by_local_state and profile is not None:
-            try:
-                current_coins = int(getattr(profile, "alias_coins", 0) or 0)
-            except (TypeError, ValueError):
-                current_coins = 0
-            if current_coins < ROOM_CREATION_COST:
-                self.status_label.color = COLORS["warning"]
-                self.status_label.text = (
-                    f"Нужно минимум {ROOM_CREATION_COST} AC для запуска игры. Сейчас: {current_coins} AC."
-                )
-                return
+        if should_charge_by_local_state:
+            if profile is not None:
+                try:
+                    current_coins = int(getattr(profile, "alias_coins", 0) or 0)
+                except (TypeError, ValueError):
+                    current_coins = 0
+                if current_coins < ROOM_CREATION_COST:
+                    self.status_label.color = COLORS["warning"]
+                    self.status_label.text = (
+                        f"Нужно минимум {ROOM_CREATION_COST} AC для запуска игры. Сейчас: {current_coins} AC."
+                    )
+                    return
+            elif app is not None and getattr(app, "guest_mode", False):
+                current_coins = int(app.current_alias_coins() or 0)
+                if current_coins < ROOM_CREATION_COST:
+                    self.status_label.color = COLORS["warning"]
+                    self.status_label.text = (
+                        f"Нужно минимум {ROOM_CREATION_COST} AC для запуска игры. Сейчас: {current_coins} AC."
+                    )
+                    return
 
         self._start_game_request_in_flight = True
         self.start_game_btn.disabled = True
@@ -2000,6 +2253,8 @@ class RoomScreen(Screen):
         self._poll_state()
 
     def _send_chat_message(self, *_):
+        if self._chat_request_in_flight:
+            return
         if not self._can_send_chat():
             self.status_label.color = COLORS["warning"]
             self.status_label.text = "Объясняющий не может писать в чат. Только объяснять голосом."
@@ -2018,34 +2273,104 @@ class RoomScreen(Screen):
             return
 
         phase = self._current_phase()
+        self._chat_request_in_flight = True
+        self._chat_request_token += 1
+        request_token = self._chat_request_token
+        self.send_btn.disabled = True
+
+        worker = Thread(
+            target=self._send_chat_worker,
+            args=(request_token, phase, self.room_code, player_name, text),
+            daemon=True,
+        )
+        worker.start()
+
+    def _send_chat_worker(self, request_token, phase, room_code, player_name, text):
+        payload = {
+            "token": request_token,
+            "phase": phase,
+            "status": "error",
+            "tone": "error",
+            "message": "Не удалось отправить сообщение.",
+        }
         try:
             if phase == "round":
-                result = send_room_guess(room_code=self.room_code, player_name=player_name, guess=text)
-                if result.get("correct"):
-                    awarded_player = result.get("awarded_player") or "объясняющий"
-                    guesser_player = result.get("guesser_player") or player_name
-                    self.status_label.color = COLORS["success"]
-                    self.status_label.text = f"Верно! {awarded_player} +1 и {guesser_player} +1."
-                else:
-                    self.status_label.color = COLORS["text_muted"]
-                    self.status_label.text = "Догадка отправлена."
+                result = send_room_guess(room_code=room_code, player_name=player_name, guess=text)
+                payload = {
+                    "token": request_token,
+                    "phase": phase,
+                    "status": "success",
+                    "result": result,
+                }
             else:
-                send_room_chat(room_code=self.room_code, player_name=player_name, message=text)
-                self.status_label.color = COLORS["success"]
-                self.status_label.text = "Сообщение отправлено."
+                send_room_chat(room_code=room_code, player_name=player_name, message=text)
+                payload = {
+                    "token": request_token,
+                    "phase": phase,
+                    "status": "success",
+                    "result": None,
+                }
         except ConnectionError as error:
-            self.status_label.color = COLORS["error"]
-            self.status_label.text = str(error)
-            return
+            payload["status"] = "error"
+            payload["tone"] = "error"
+            payload["message"] = str(error)
         except ValueError as error:
-            self.status_label.color = COLORS["warning"]
-            self.status_label.text = str(error)
+            payload["status"] = "error"
+            payload["tone"] = "warning"
+            payload["message"] = str(error)
+        except Exception as error:
+            payload["status"] = "error"
+            payload["tone"] = "error"
+            payload["message"] = str(error)
+
+        Clock.schedule_once(lambda _dt, data=payload: self._finish_send_chat(data), 0)
+
+    def _finish_send_chat(self, payload):
+        token = int(payload.get("token") or 0)
+        if token != self._chat_request_token:
             return
+
+        self._chat_request_in_flight = False
+        self.send_btn.disabled = False
+
+        if payload.get("status") != "success":
+            tone = payload.get("tone", "error")
+            self.status_label.color = COLORS["warning"] if tone == "warning" else COLORS["error"]
+            self.status_label.text = payload.get("message") or "Не удалось отправить сообщение."
+            return
+
+        phase = payload.get("phase")
+        result = payload.get("result") or {}
+        if phase == "round":
+            if result.get("correct"):
+                awarded_player = result.get("awarded_player") or "объясняющий"
+                guesser_player = result.get("guesser_player") or (self._player_name() or "игрок")
+                self.status_label.color = COLORS["success"]
+                self.status_label.text = f"Верно! {awarded_player} +1 и {guesser_player} +1."
+            else:
+                self.status_label.color = COLORS["text_muted"]
+                self.status_label.text = "Догадка отправлена."
+        else:
+            self.status_label.color = COLORS["success"]
+            self.status_label.text = "Сообщение отправлено."
+
+        if isinstance(result, dict) and result:
+            updated_state = dict(self.room_state or {})
+            if "room" in result:
+                updated_state["room"] = result.get("room") or {}
+            if "scores" in result:
+                updated_state["scores"] = result.get("scores") or []
+            if "current_word" in result:
+                updated_state["current_word"] = result.get("current_word") or ""
+            self.room_state = updated_state
+            self._apply_state()
 
         self.chat_input.text = ""
         self._poll_state()
 
     def _skip_word(self, *_):
+        if self._skip_request_in_flight:
+            return
         if not self._is_explainer():
             self.status_label.color = COLORS["warning"]
             self.status_label.text = "Скипать слова может только объясняющий."
@@ -2055,18 +2380,60 @@ class RoomScreen(Screen):
             self.status_label.text = "Скип доступен только во время раунда."
             return
 
-        player_name = self._player_name()
-        try:
-            response = skip_room_word(room_code=self.room_code, player_name=player_name)
-        except ConnectionError as error:
+        player_name = (self._player_name() or "").strip()
+        if not player_name:
             self.status_label.color = COLORS["error"]
-            self.status_label.text = str(error)
-            return
-        except ValueError as error:
-            self.status_label.color = COLORS["warning"]
-            self.status_label.text = str(error)
+            self.status_label.text = "Сессия игрока не найдена."
             return
 
+        self._skip_request_in_flight = True
+        self._skip_request_token += 1
+        request_token = self._skip_request_token
+        worker = Thread(
+            target=self._skip_word_worker,
+            args=(request_token, self.room_code, player_name),
+            daemon=True,
+        )
+        worker.start()
+
+    def _skip_word_worker(self, request_token, room_code, player_name):
+        payload = {
+            "token": request_token,
+            "status": "error",
+            "tone": "error",
+            "message": "Не удалось скипнуть слово.",
+        }
+        try:
+            response = skip_room_word(room_code=room_code, player_name=player_name)
+            payload = {"token": request_token, "status": "success", "response": response}
+        except ConnectionError as error:
+            payload["status"] = "error"
+            payload["tone"] = "error"
+            payload["message"] = str(error)
+        except ValueError as error:
+            payload["status"] = "error"
+            payload["tone"] = "warning"
+            payload["message"] = str(error)
+        except Exception as error:
+            payload["status"] = "error"
+            payload["tone"] = "error"
+            payload["message"] = str(error)
+
+        Clock.schedule_once(lambda _dt, data=payload: self._finish_skip_word(data), 0)
+
+    def _finish_skip_word(self, payload):
+        token = int(payload.get("token") or 0)
+        if token != self._skip_request_token:
+            return
+
+        self._skip_request_in_flight = False
+        if payload.get("status") != "success":
+            tone = payload.get("tone", "error")
+            self.status_label.color = COLORS["warning"] if tone == "warning" else COLORS["error"]
+            self.status_label.text = payload.get("message") or "Не удалось скипнуть слово."
+            return
+
+        response = payload.get("response") or {}
         self.status_label.color = COLORS["warning"]
         self.status_label.text = f"Слово скипнуто. Штраф {response.get('delta', -1)}."
         if isinstance(response, dict):
@@ -2157,7 +2524,7 @@ class RoomScreen(Screen):
             return
 
         raw_level = self.voice_engine.level() if self.voice_engine.active() else 0.0
-        raw_level = max(0.0, min(1.0, raw_level * 4.2))
+        raw_level = max(0.0, min(1.0, raw_level * 6.2))
         if self._mic_is_muted():
             raw_level = 0.0
 
@@ -2171,11 +2538,11 @@ class RoomScreen(Screen):
         if not self._can_use_voice() or self._mic_is_muted():
             return
 
-        if raw_level < 0.04:
+        if raw_level < 0.005:
             return
 
         now_ts = time.time()
-        if now_ts - self._last_voice_ping_ts < 0.7:
+        if now_ts - self._last_voice_ping_ts < 0.2:
             return
 
         self._last_voice_ping_ts = now_ts

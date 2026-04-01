@@ -363,6 +363,7 @@ def create_online_room(
     visibility,
     visibility_scope,
     round_timer_sec,
+    client_id=None,
     requested_code=None,
     base_url=None,
 ):
@@ -375,6 +376,8 @@ def create_online_room(
         "visibility_scope": visibility_scope,
         "round_timer_sec": int(round_timer_sec),
     }
+    if client_id:
+        payload["client_id"] = str(client_id).strip()
     if requested_code:
         payload["requested_code"] = str(requested_code).strip().upper()
     response = _request_json("POST", "/api/rooms", payload=payload, base_url=base_url)
@@ -387,15 +390,21 @@ def list_online_rooms(*, public_only=True, base_url=None):
     return response.get("rooms", [])
 
 
-def join_online_room(*, room_code, player_name, base_url=None):
-    payload = {"player_name": player_name}
+def join_online_room(*, room_code, player_name, is_guest=False, client_id=None, base_url=None):
+    payload = {"player_name": player_name, "is_guest": bool(is_guest)}
+    if client_id:
+        payload["client_id"] = str(client_id).strip()
     response = _request_json(
         "POST",
         f"/api/rooms/{urllib.parse.quote(room_code)}/join",
         payload=payload,
         base_url=base_url,
     )
-    return response.get("room", {})
+    room = dict(response.get("room", {}) or {})
+    joined_as = (response.get("joined_as") or "").strip()
+    if joined_as:
+        room["_joined_as"] = joined_as
+    return room
 
 
 def leave_online_room(*, room_code, player_name, base_url=None):
@@ -413,7 +422,7 @@ def get_online_room(*, room_code, base_url=None):
     return response.get("room", {})
 
 
-def get_online_room_state(*, room_code, player_name, since_id=None, base_url=None):
+def get_online_room_state(*, room_code, player_name, since_id=None, timeout=6, base_url=None):
     query_payload = {"player_name": player_name}
     if since_id is not None:
         query_payload["since_id"] = str(int(since_id))
@@ -422,6 +431,7 @@ def get_online_room_state(*, room_code, player_name, since_id=None, base_url=Non
     response = _request_json(
         "GET",
         f"/api/rooms/{urllib.parse.quote(room_code)}/state?{query}",
+        timeout=timeout,
         base_url=base_url,
     )
     return response

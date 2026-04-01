@@ -8,6 +8,7 @@ import time
 import traceback
 import urllib.error
 import urllib.request
+import uuid
 from contextlib import suppress
 from pathlib import Path
 
@@ -177,6 +178,7 @@ class AliasApp(App):
         self.guest_mode = False
         self.guest_counter = 0
         self.guest_alias_coins = 0
+        self.client_id = uuid.uuid4().hex
         self.pending_registration_session_id = None
         self.active_room = {}
         self._room_server_process = None
@@ -400,6 +402,17 @@ class AliasApp(App):
 
         profile = self.current_profile()
         return profile.name if profile is not None else None
+
+    def resolve_client_id(self):
+        return (self.client_id or "").strip()
+
+    def adopt_room_player_name(self, player_name):
+        """Sync local guest alias with server-assigned player name."""
+        if not self.guest_mode:
+            return
+        clean_name = (player_name or "").strip()
+        if clean_name:
+            self.guest_name = clean_name
 
     def current_alias_coins(self):
         if self.authenticated:

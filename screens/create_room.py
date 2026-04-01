@@ -123,7 +123,7 @@ class CreateRoomScreen(Screen):
         super().__init__(**kwargs)
         register_game_font()
         self.pending_room_config = None
-        self._autofill_bots_on_next_create = 4
+        self._autofill_bots_on_next_create = 0
         self.visibility_scope = "public"
         self.private_room_code = ""
         self.players_value = "6"
@@ -760,24 +760,7 @@ class CreateRoomScreen(Screen):
         self.status_label.text = f"Код {self.private_room_code} скопирован. Теперь его можно отправить друзьям."
 
     def _spawn_test_bots(self, room_code, max_players):
-        bots_to_add = max(0, int(self._autofill_bots_on_next_create or 0))
-        free_slots = max(0, int(max_players) - 1)
-        target_count = min(bots_to_add, free_slots)
-        latest_room = None
-        spawned = 0
-
-        for index in range(1, target_count + 1):
-            bot_name = f"Bot {index}"
-            try:
-                latest_room = join_online_room(room_code=room_code, player_name=bot_name)
-                spawned += 1
-            except (ConnectionError, ValueError):
-                break
-
-        if spawned:
-            self._autofill_bots_on_next_create = 0
-
-        return spawned, latest_room
+        return 0, None
 
     def prepare_room(self, *_):
         if self._create_in_progress:
@@ -842,8 +825,6 @@ class CreateRoomScreen(Screen):
             return
 
         requested_players = int(players)
-        if self._autofill_bots_on_next_create:
-            requested_players = max(requested_players, 1 + int(self._autofill_bots_on_next_create))
 
         requested_code = None
         visibility_label = "Публичная" if self.visibility_scope == "public" else "Закрытая"
@@ -879,6 +860,8 @@ class CreateRoomScreen(Screen):
         self._create_request_token += 1
         request_token = self._create_request_token
         self.create_btn.disabled = True
+        app = App.get_running_app()
+        client_id = app.resolve_client_id() if app is not None and hasattr(app, "resolve_client_id") else ""
         self.loading_overlay.show("Создаем комнату...")
 
         payload = {
@@ -893,6 +876,7 @@ class CreateRoomScreen(Screen):
             "profile_email": getattr(profile, "email", None),
             "profile_fallback": profile,
             "is_guest": not bool(getattr(profile, "email", None)),
+            "client_id": client_id,
         }
         worker = Thread(target=self._create_room_worker_async, args=(request_token, payload), daemon=True)
         worker.start()
@@ -908,23 +892,22 @@ class CreateRoomScreen(Screen):
                 visibility=payload["visibility_label"],
                 visibility_scope=payload["visibility_scope"],
                 round_timer_sec=payload["round_timer_sec"],
+                client_id=payload.get("client_id"),
                 requested_code=payload["requested_code"],
             )
 
-            spawned_bots = 0
-            latest_room = None
             room_code = room.get("code")
-            if room_code:
-                spawned_bots, latest_room = self._spawn_test_bots(
-                    room_code, room.get("max_players", payload["requested_players"])
-                )
-
-            active_room = latest_room or room
+            active_room = room
             if room_code:
                 try:
-                    active_room = join_online_room(room_code=room_code, player_name=payload["player_name"])
+                    active_room = join_online_room(
+                        room_code=room_code,
+                        player_name=payload["player_name"],
+                        is_guest=bool(payload.get("is_guest")),
+                        client_id=payload.get("client_id"),
+                    )
                 except (ConnectionError, ValueError):
-                    active_room = latest_room or room
+                    active_room = room
 
             updated_profile = None
             if payload.get("profile_email"):
@@ -938,7 +921,7 @@ class CreateRoomScreen(Screen):
                 "room": room,
                 "active_room": active_room,
                 "room_code": room_code,
-                "spawned_bots": int(spawned_bots),
+                "joined_as": (active_room.get("_joined_as") or "").strip(),
                 "updated_profile": updated_profile,
                 "room_name": payload["room_name"],
                 "is_guest": bool(payload.get("is_guest")),
@@ -970,9 +953,11 @@ class CreateRoomScreen(Screen):
         active_room = result.get("active_room") or room
         room_code = result.get("room_code")
         updated_profile = result.get("updated_profile")
-        spawned_bots = int(result.get("spawned_bots", 0))
+        joined_as = (result.get("joined_as") or "").strip()
         is_guest = bool(result.get("is_guest"))
         app = App.get_running_app()
+        if joined_as and app is not None and hasattr(app, "adopt_room_player_name"):
+            app.adopt_room_player_name(joined_as)
 
         if self.visibility_scope == "private" and room_code:
             self.private_room_code = room_code
@@ -996,9 +981,8 @@ class CreateRoomScreen(Screen):
         self.status_label.color = COLORS["success"]
         self.status_label.text = (
             f"Комната «{room.get('room_name', result.get('room_name', 'Комната'))}» готова. "
-            f"Код: {room_code or '----'}. Осталось {current_coins} AC. Ботов подключено: {spawned_bots}."
+            f"Код: {room_code or '----'}. Осталось {current_coins} AC."
         )
-
         if app is not None:
             app.set_active_room(active_room)
             if hasattr(app, "ensure_screen"):
