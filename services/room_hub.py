@@ -1,5 +1,6 @@
 import json
 import os
+import ssl
 import time
 import urllib.error
 import urllib.parse
@@ -39,6 +40,44 @@ def _retry_sleep_delay(attempt):
     index = max(1, int(attempt))
     # Smooth backoff for sleeping Render instances: 0.55s, 1.1s, 1.65s, ...
     return REMOTE_RETRY_BASE_DELAY_SECONDS * index
+
+
+def _is_mobile_platform():
+    return platform in {"android", "ios"}
+
+
+def _is_onrender_host(server_url):
+    parsed = urllib.parse.urlparse(_normalize_room_server_url(server_url))
+    host = (parsed.hostname or "").strip().lower()
+    return host.endswith(".onrender.com")
+
+
+def _looks_like_cert_error(error):
+    chain = [error]
+    reason = getattr(error, "reason", None)
+    if reason is not None:
+        chain.append(reason)
+    for item in chain:
+        if isinstance(item, ssl.SSLCertVerificationError):
+            return True
+        if isinstance(item, ssl.SSLError):
+            text = str(item).lower()
+            if "certificate" in text or "cert" in text:
+                return True
+        text = str(item).lower()
+        if "certificate verify failed" in text or "ssl: cert" in text:
+            return True
+    return False
+
+
+def _urlopen_with_mobile_ssl_fallback(request, *, timeout, server_url):
+    try:
+        return urllib.request.urlopen(request, timeout=timeout)
+    except urllib.error.URLError as error:
+        if _is_mobile_platform() and _is_onrender_host(server_url) and _looks_like_cert_error(error):
+            insecure_context = ssl._create_unverified_context()
+            return urllib.request.urlopen(request, timeout=timeout, context=insecure_context)
+        raise
 
 
 def _project_root():
@@ -181,7 +220,11 @@ def _ensure_remote_server_awake(server_url):
     while time.time() < deadline:
         request = urllib.request.Request(health_url, headers={"Accept": "application/json"}, method="GET")
         try:
-            with urllib.request.urlopen(request, timeout=REMOTE_WAKE_PROBE_TIMEOUT_SECONDS) as response:
+            with _urlopen_with_mobile_ssl_fallback(
+                request,
+                timeout=REMOTE_WAKE_PROBE_TIMEOUT_SECONDS,
+                server_url=normalized,
+            ) as response:
                 if int(getattr(response, "status", 200)) < 500:
                     _remote_wake_cache[normalized] = time.time() + REMOTE_WAKE_CACHE_TTL_SECONDS
                     return True
@@ -246,7 +289,11 @@ def _request_json(method, path, payload=None, timeout=7, base_url=None):
     for attempt in range(1, attempts + 1):
         request = urllib.request.Request(url, data=data, headers=headers, method=method)
         try:
-            with urllib.request.urlopen(request, timeout=request_timeout) as response:
+            with _urlopen_with_mobile_ssl_fallback(
+                request,
+                timeout=request_timeout,
+                server_url=server_url,
+            ) as response:
                 body = response.read().decode("utf-8")
             last_transport_error = None
             break
