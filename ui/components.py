@@ -407,15 +407,17 @@ class AppTextInput(TextInput):
         register_game_font()
         multiline = kwargs.pop("multiline", False)
         height = kwargs.pop("height", dp(58 if not multiline else 144))
+        input_font_name = kwargs.pop("font_name", "Roboto")
         input_type = kwargs.pop("input_type", "text")
         input_filter = kwargs.pop("input_filter", None)
         keyboard_suggestions = kwargs.pop("keyboard_suggestions", None)
         password_mode = bool(kwargs.get("password", False))
         if keyboard_suggestions is None:
-            keyboard_suggestions = not password_mode
+            # Keep typing predictable on mobile keyboards (no unexpected auto-replacements).
+            keyboard_suggestions = False if platform in {"android", "ios"} else not password_mode
         super().__init__(
             multiline=multiline,
-            font_name="GameFont",
+            font_name=input_font_name,
             font_size=sp(16),
             size_hint_y=None,
             height=height,
@@ -426,7 +428,7 @@ class AppTextInput(TextInput):
             background_color=(0, 0, 0, 0),
             foreground_color=COLORS["input_text"],
             disabled_foreground_color=COLORS["input_text"],
-            hint_text_color=(0.29, 0.32, 0.38, 1),
+            hint_text_color=(0.20, 0.24, 0.30, 0.96),
             cursor_color=COLORS["input_text"],
             selection_color=(0.18, 0.22, 0.3, 0.22),
             use_bubble=False,
@@ -462,7 +464,6 @@ class AppTextInput(TextInput):
         self.bind(readonly=self._refresh_text_colors)
         self.bind(disabled=self._refresh_text_colors)
         self.bind(focus=self._refresh_text_colors)
-        self.bind(text=self._refresh_text_colors)
         self.bind(focus=self._enforce_mobile_text_input_mode)
         self._apply_surface_palette()
         self._refresh_text_colors()
@@ -511,11 +512,6 @@ class AppTextInput(TextInput):
         if self.input_type != "text":
             self.input_type = "text"
         self.input_filter = None
-
-    def insert_text(self, substring, from_undo=False):
-        # Keep dark text enforced on each keystroke to avoid platform-specific color resets.
-        self._refresh_text_colors()
-        return super().insert_text(substring, from_undo=from_undo)
 
 
 class BrandTitle(Widget):

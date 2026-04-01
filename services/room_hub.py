@@ -63,12 +63,13 @@ def _candidate_url_files():
     if custom_file:
         yield Path(custom_file).expanduser()
 
+    # Prefer bundled/project config first: it ships with each release.
+    yield _project_root() / "data" / "room_server_url.txt"
+
     app = App.get_running_app()
     user_data_dir = getattr(app, "user_data_dir", None) if app is not None else None
     if user_data_dir:
         yield Path(user_data_dir) / "room_server_url.txt"
-
-    yield _project_root() / "data" / "room_server_url.txt"
 
 
 def _load_url_from_file():
@@ -201,10 +202,9 @@ def _request_json(method, path, payload=None, timeout=7, base_url=None):
             if not ready:
                 raise ConnectionError("Не удалось запустить локальный сервер комнат. Перезапусти приложение.")
 
-    if not local_room_server and not _ensure_remote_server_awake(server_url):
-        raise ConnectionError(
-            "Сервер комнат пока недоступен (возможно, просыпается). Подожди 20–40 секунд и попробуй снова."
-        )
+    if not local_room_server:
+        # Warm-up is best effort: do not block requests only by health probe.
+        _ensure_remote_server_awake(server_url)
 
     url = f"{server_url}{path}"
     data = None
@@ -221,7 +221,7 @@ def _request_json(method, path, payload=None, timeout=7, base_url=None):
         attempts = 2
         request_timeout = min(float(request_timeout), 4.5)
     else:
-        request_timeout = max(float(request_timeout), 18.0 if platform in {"android", "ios"} else 14.0)
+        request_timeout = max(float(request_timeout), 24.0 if platform in {"android", "ios"} else 16.0)
 
     body = ""
     last_transport_error = None
@@ -253,6 +253,22 @@ def _request_json(method, path, payload=None, timeout=7, base_url=None):
                 continue
 
     if last_transport_error is not None:
+        if base_url is None and not local_room_server:
+            fallback_url = _public_room_server_default()
+            if fallback_url and fallback_url != server_url:
+                try:
+                    response = _request_json(
+                        method,
+                        path,
+                        payload=payload,
+                        timeout=timeout,
+                        base_url=fallback_url,
+                    )
+                    set_room_server_url(fallback_url)
+                    return response
+                except Exception:
+                    pass
+
         if platform in ("android", "ios"):
             if is_local_room_server_url(server_url):
                 raise ConnectionError(
