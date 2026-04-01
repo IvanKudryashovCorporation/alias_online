@@ -122,11 +122,6 @@ def _candidate_url_files():
     # Prefer bundled/project config first: it ships with each release.
     yield _project_root() / "data" / "room_server_url.txt"
 
-    app = App.get_running_app()
-    user_data_dir = getattr(app, "user_data_dir", None) if app is not None else None
-    if user_data_dir:
-        yield Path(user_data_dir) / "room_server_url.txt"
-
 
 def _load_url_from_file():
     local_fallback = ""
