@@ -95,7 +95,7 @@ _BOT_POOL_NAMES = (
     "Sara",
 )
 _BOT_NAME_MARKER = "\u2063"
-_BOT_LOBBY_IDLE_SECONDS = 14
+_BOT_LOBBY_IDLE_SECONDS = 6
 _BOT_LOBBY_MAX_PER_ROOM = 4
 _BOT_TRANSCRIPT_LOOKBACK_SECONDS = 16
 _BOT_TRANSCRIPT_MIN_CHUNKS = 2
@@ -1018,7 +1018,7 @@ def _pick_bot_delay_seconds():
 
 
 def _pick_lobby_bot_delay_seconds():
-    return random.uniform(6.0, 11.5)
+    return random.uniform(2.5, 4.5)
 
 
 def _next_bot_action_at(mode="round"):
@@ -1029,6 +1029,10 @@ def _next_bot_action_at(mode="round"):
 
 def _openai_api_key():
     return (os.getenv(_OPENAI_API_KEY_ENV) or "").strip()
+
+
+def _ai_bots_enabled():
+    return bool(_openai_api_key())
 
 
 def _openai_base_url():
@@ -1288,7 +1292,58 @@ def _schedule_lobby_bot_join(connection, room_code, seconds):
     )
 
 
+def _purge_bots_if_ai_disabled(connection, room_code, players):
+    if _ai_bots_enabled():
+        return False
+    room_row = connection.execute(
+        """
+        SELECT bot_next_action_at
+        FROM rooms
+        WHERE code = ?
+        """,
+        (room_code,),
+    ).fetchone()
+    has_scheduled_bot_action = bool(room_row and room_row["bot_next_action_at"])
+    bot_players = [player for player in (players or []) if _is_bot_player(player)]
+    if not bot_players and not has_scheduled_bot_action:
+        return False
+
+    if bot_players:
+        for bot_name in bot_players:
+            connection.execute(
+                """
+                DELETE FROM room_players
+                WHERE room_code = ? AND player_name = ?
+                """,
+                (room_code, bot_name),
+            )
+            connection.execute(
+                """
+                DELETE FROM room_scores
+                WHERE room_code = ? AND player_name = ?
+                """,
+                (room_code, bot_name),
+            )
+    connection.execute(
+        """
+        UPDATE rooms
+        SET bot_next_action_at = NULL,
+            updated_at = ?
+        WHERE code = ?
+        """,
+        (_now(), room_code),
+    )
+    if bot_players:
+        _repair_room_integrity(connection, room_code)
+    return True
+
+
 def _maybe_add_lobby_bot(connection, room_code, room, players):
+    if _purge_bots_if_ai_disabled(connection, room_code, players):
+        return False
+    if not _ai_bots_enabled():
+        return False
+
     max_players = int(room.get("max_players") or 0)
     if max_players <= 0:
         return False
@@ -1315,7 +1370,7 @@ def _maybe_add_lobby_bot(connection, room_code, room, players):
     updated_dt = _str_to_dt(room.get("updated_at")) or _str_to_dt(room.get("created_at")) or _utc_now()
     idle_seconds = max(0, int((_utc_now() - updated_dt).total_seconds()))
     if idle_seconds < _BOT_LOBBY_IDLE_SECONDS and not bot_players:
-        _schedule_lobby_bot_join(connection, room_code, _BOT_LOBBY_IDLE_SECONDS - idle_seconds + random.randint(1, 3))
+        _schedule_lobby_bot_join(connection, room_code, max(1, _BOT_LOBBY_IDLE_SECONDS - idle_seconds))
         return False
 
     bot_name = _pick_bot_name(players)
@@ -1351,10 +1406,12 @@ def _pick_bot_round_guess(connection, room_code, room):
     difficulty = room.get("difficulty")
     explainer_name = (room.get("current_explainer") or "").strip()
     transcript = _resolve_explainer_transcript(connection, room_code, explainer_name)
+    if not transcript:
+        return None
     word_pool = _word_pool_for_difficulty(difficulty)
     best_match, confidence = _best_transcript_match(transcript, word_pool)
 
-    if transcript and best_match:
+    if best_match:
         normalized_best = _normalize_guess(best_match)
         normalized_current = _normalize_guess(current_word)
         best_is_current = bool(normalized_best and normalized_current and normalized_best == normalized_current)
@@ -1367,7 +1424,10 @@ def _pick_bot_round_guess(connection, room_code, room):
         elif confidence >= 0.74 and random.random() < 0.22:
             return _humanize_bot_guess(best_match)
 
-    return _humanize_bot_guess(_pick_wrong_bot_guess(current_word, difficulty))
+    transcript_tokens = _extract_transcript_tokens(transcript)
+    if transcript_tokens and random.random() < 0.22:
+        return _humanize_bot_guess(random.choice(transcript_tokens))
+    return None
 
 
 def _pick_wrong_bot_guess(current_word, difficulty):
@@ -1464,6 +1524,11 @@ def _run_bot_activity(connection, room_code):
         return
 
     players = _room_players(connection, room_code)
+    if _purge_bots_if_ai_disabled(connection, room_code, players):
+        return
+    if not _ai_bots_enabled():
+        return
+
     if phase == "lobby":
         _maybe_add_lobby_bot(connection, room_code, room, players)
         return
@@ -1477,6 +1542,17 @@ def _run_bot_activity(connection, room_code):
 
     actor = random.choice(bot_players)
     guess_text = _pick_bot_round_guess(connection, room_code, room)
+    if not guess_text:
+        connection.execute(
+            """
+            UPDATE rooms
+            SET bot_next_action_at = ?,
+                updated_at = ?
+            WHERE code = ?
+            """,
+            (_next_bot_action_at(), _now(), room_code),
+        )
+        return
 
     try:
         _process_room_guess(connection, room_code, actor, guess_text)
