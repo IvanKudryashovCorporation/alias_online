@@ -62,8 +62,11 @@ class ScreenBackground(FloatLayout):
 
         self._scene = Widget()
         with self._scene.canvas.before:
+            sky_color = COLORS["game_sky"] if self.variant == "game" else COLORS["lobby_sky"]
+            self._sky_color = Color(*sky_color)
+            self._sky_rect = Rectangle(pos=self.pos, size=self.size)
             if self.variant == "game":
-                self._scene_shadow_color = Color(0.03, 0.08, 0.12, 0.22)
+                self._scene_shadow_color = Color(0.04, 0.10, 0.16, 0.08)
                 self._scene_shadow = Rectangle(pos=self.pos, size=self.size)
 
                 self._spotlight_color = Color(*COLORS["game_spotlight"])
@@ -178,6 +181,8 @@ class ScreenBackground(FloatLayout):
         x = self._scene.x
         y = self._scene.y
 
+        self._sky_rect.pos = (x, y)
+        self._sky_rect.size = (width, height)
         self._scene_shadow.pos = (x, y)
         self._scene_shadow.size = (width, height * 0.22)
 
@@ -253,8 +258,10 @@ class ScreenBackground(FloatLayout):
         x = self._scene.x
         y = self._scene.y
 
+        self._sky_rect.pos = (x, y)
+        self._sky_rect.size = (width, height)
         self._scene_shadow.pos = (x, y)
-        self._scene_shadow.size = (width, height * 0.34)
+        self._scene_shadow.size = (width, height * 0.24)
 
         top_y = y + height
         beam_bottom_y = y + height * 0.34
