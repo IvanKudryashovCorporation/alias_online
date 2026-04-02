@@ -464,9 +464,11 @@ class AppTextInput(TextInput):
         self.bind(readonly=self._refresh_text_colors)
         self.bind(disabled=self._refresh_text_colors)
         self.bind(focus=self._refresh_text_colors)
+        self.bind(text=self._ensure_visible_text)
         self.bind(focus=self._enforce_mobile_text_input_mode)
         self._apply_surface_palette()
         self._refresh_text_colors()
+        self._ensure_visible_text()
         self._enforce_mobile_text_input_mode()
 
     def _apply_surface_palette(self, *_):
@@ -494,6 +496,16 @@ class AppTextInput(TextInput):
         self.disabled_foreground_color = text_color
         self.cursor_color = (0, 0, 0, 0) if self.readonly or self.disabled else COLORS["input_text"]
         self.hint_text_color = hint_color
+
+    def _ensure_visible_text(self, *_):
+        # Mobile keyboards sometimes reset TextInput foreground color dynamically.
+        # Force the expected high-contrast palette each time text changes.
+        if self.readonly or self.disabled:
+            target_color = COLORS["input_readonly_text"]
+        else:
+            target_color = COLORS["input_text"]
+        self.foreground_color = target_color
+        self.disabled_foreground_color = target_color
 
     def _sync_canvas(self, *_):
         self._stencil_mask.pos = self.pos

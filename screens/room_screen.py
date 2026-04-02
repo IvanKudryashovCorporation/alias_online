@@ -717,19 +717,13 @@ class FullscreenCountdownOverlay(FloatLayout):
         self._label.text = ""
 
     def on_touch_down(self, touch):
-        if not self._active:
-            return False
-        return True
+        return False
 
     def on_touch_move(self, touch):
-        if not self._active:
-            return False
-        return True
+        return False
 
     def on_touch_up(self, touch):
-        if not self._active:
-            return False
-        return True
+        return False
 
 
 class RoomScreen(Screen):
@@ -1071,7 +1065,7 @@ class RoomScreen(Screen):
         self.disabled = True
 
     def _go_back_to_menu(self, *_):
-        if self._is_match_active():
+        if self._current_phase() == "round":
             self._open_leave_popup()
             return
         self._leave_room()

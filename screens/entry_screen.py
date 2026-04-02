@@ -78,15 +78,17 @@ class EntryScreen(Screen):
         register_btn.height = dp(80)
         self.menu_card.add_widget(login_btn)
         self.menu_card.add_widget(register_btn)
+        self._guest_offset_spacer = Widget(size_hint_y=None, height=dp(10))
+        self.menu_card.add_widget(self._guest_offset_spacer)
 
-        guest_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(42))
+        guest_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(46))
         guest_row.add_widget(Widget())
         guest_btn = AppButton(
             text="Играть как гость",
             compact=True,
             font_size=sp(13),
             size_hint=(None, None),
-            size=(dp(188), dp(34)),
+            size=(dp(192), dp(36)),
             button_color=(0.10, 0.16, 0.26, 0.62),
             pressed_color=(0.09, 0.14, 0.23, 0.76),
         )
@@ -165,13 +167,14 @@ class EntryScreen(Screen):
         self.mode_hint_label.font_size = sp(15.5 if compact else 17 if medium else 18)
         self._sync_mode_hint_text()
 
-        self.menu_card.height = dp(294 if compact else 304 if medium else 316)
+        self.menu_card.height = dp(308 if compact else 322 if medium else 336)
         self.menu_card.padding = [
             dp(14 if compact else 18),
             dp(14 if compact else 18),
             dp(14 if compact else 18),
             dp(14 if compact else 18),
         ]
+        self._guest_offset_spacer.height = dp(8 if compact else 10 if medium else 12)
 
     def _go_to_registration(self, *_):
         app = App.get_running_app()

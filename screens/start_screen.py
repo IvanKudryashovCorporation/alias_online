@@ -162,20 +162,30 @@ class ProfileSummaryCard(ButtonBehavior, RoundedPanel):
         self.meta_label = BodyLabel(center=True, color=COLORS["text_muted"], font_size=sp(11.5), text="", size_hint_y=None)
         self.add_widget(self.meta_label)
 
-        first_row = BoxLayout(orientation="horizontal", spacing=dp(8), size_hint_y=None, height=dp(42))
+        first_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(42))
+        first_row.add_widget(Widget())
+        first_row_inner = BoxLayout(orientation="horizontal", spacing=dp(8), size_hint=(None, 1))
         self.games_tile = StatTile("Игр")
         self.earned_tile = StatTile("Заработано")
-        first_row.add_widget(self.games_tile)
-        first_row.add_widget(self.earned_tile)
+        first_row_inner.add_widget(self.games_tile)
+        first_row_inner.add_widget(self.earned_tile)
+        first_row.add_widget(first_row_inner)
+        first_row.add_widget(Widget())
         self.add_widget(first_row)
+        self._first_stats_row_inner = first_row_inner
         self._first_stats_row = first_row
 
-        second_row = BoxLayout(orientation="horizontal", spacing=dp(8), size_hint_y=None, height=dp(42))
+        second_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(42))
+        second_row.add_widget(Widget())
+        second_row_inner = BoxLayout(orientation="horizontal", spacing=dp(8), size_hint=(None, 1))
         self.guessed_tile = StatTile("Отгадано")
         self.explained_tile = StatTile("Объяснено")
-        second_row.add_widget(self.guessed_tile)
-        second_row.add_widget(self.explained_tile)
+        second_row_inner.add_widget(self.guessed_tile)
+        second_row_inner.add_widget(self.explained_tile)
+        second_row.add_widget(second_row_inner)
+        second_row.add_widget(Widget())
         self.add_widget(second_row)
+        self._second_stats_row_inner = second_row_inner
         self._second_stats_row = second_row
         self.set_density(1.0)
 
@@ -195,11 +205,15 @@ class ProfileSummaryCard(ButtonBehavior, RoundedPanel):
         self.name_label.font_size = self._base_name_font_size * density
         self.meta_label.font_size = self._base_meta_font_size * density
         self._first_stats_row.height = self._base_stats_row_height * density
-        self._first_stats_row.spacing = self._base_stats_row_spacing * density
         self._second_stats_row.height = self._base_stats_row_height * density
-        self._second_stats_row.spacing = self._base_stats_row_spacing * density
+        row_spacing = self._base_stats_row_spacing * density
+        self._first_stats_row_inner.spacing = row_spacing
+        self._second_stats_row_inner.spacing = row_spacing
         for tile in (self.games_tile, self.earned_tile, self.guessed_tile, self.explained_tile):
             tile.set_density(density)
+        inner_width = self.games_tile.width + self.earned_tile.width + row_spacing
+        self._first_stats_row_inner.width = inner_width
+        self._second_stats_row_inner.width = inner_width
 
     def set_guest(self, guest_name):
         self.avatar_button.set_profile(None)
@@ -513,7 +527,13 @@ class StartScreen(Screen):
         register_btn.bind(on_release=self._go_to_registration)
         panel.add_widget(register_btn)
 
-        close_btn = AppButton(text="Закрыть", compact=True, font_size=sp(14))
+        close_btn = AppButton(
+            text="Закрыть",
+            compact=True,
+            font_size=sp(14),
+            button_color=(0.19, 0.23, 0.31, 0.92),
+            pressed_color=(0.14, 0.18, 0.25, 0.98),
+        )
         close_btn.height = dp(44)
         close_btn.bind(on_release=lambda *_: self._dismiss_guest_access_popup())
         panel.add_widget(close_btn)
@@ -525,6 +545,7 @@ class StartScreen(Screen):
             separator_height=0,
             auto_dismiss=True,
             background="atlas://data/images/defaulttheme/modalview-background",
+            background_color=(0, 0, 0, 0),
             content=body,
             size_hint=(0.82, None),
             height=dp(320),
