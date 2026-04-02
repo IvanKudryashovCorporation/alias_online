@@ -443,6 +443,7 @@ class AppTextInput(TextInput):
         self._corner_radius = dp(22)
         self._base_hint_color = (0.29, 0.32, 0.38, 1)
         self._muted_hint_color = (0.35, 0.40, 0.48, 1)
+        self._color_guard_events = []
 
         with self.canvas.before:
             self._stencil_push = StencilPush()
@@ -465,11 +466,15 @@ class AppTextInput(TextInput):
         self.bind(disabled=self._refresh_text_colors)
         self.bind(focus=self._refresh_text_colors)
         self.bind(text=self._ensure_visible_text)
+        self.bind(text=self._schedule_color_guard)
+        self.bind(focus=self._schedule_color_guard)
         self.bind(focus=self._enforce_mobile_text_input_mode)
+        self.bind(parent=self._schedule_color_guard)
         self._apply_surface_palette()
         self._refresh_text_colors()
         self._ensure_visible_text()
         self._enforce_mobile_text_input_mode()
+        self._schedule_color_guard()
 
     def _apply_surface_palette(self, *_):
         if self.readonly:
@@ -506,6 +511,22 @@ class AppTextInput(TextInput):
             target_color = COLORS["input_text"]
         self.foreground_color = target_color
         self.disabled_foreground_color = target_color
+
+    def _schedule_color_guard(self, *_):
+        # On some Android keyboards, TextInput color may reset after focus/keyboard transitions.
+        # Re-apply palette a few ticks later to keep text readable.
+        for event in self._color_guard_events:
+            try:
+                event.cancel()
+            except Exception:
+                pass
+        self._color_guard_events = []
+        for delay in (0, 0.04, 0.12):
+            self._color_guard_events.append(Clock.schedule_once(self._enforce_text_palette, delay))
+
+    def _enforce_text_palette(self, *_):
+        self._refresh_text_colors()
+        self._ensure_visible_text()
 
     def _sync_canvas(self, *_):
         self._stencil_mask.pos = self.pos

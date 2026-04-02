@@ -289,9 +289,10 @@ class CreateRoomScreen(Screen):
         form_card.add_widget(self.timer_grid)
         content.add_widget(form_card)
 
-        self.code_card_height = dp(188)
+        self.code_card_height = dp(0)
         self.code_card_host = BoxLayout(
             orientation="vertical",
+            padding=[dp(0), dp(0), dp(0), dp(0)],
             size_hint_y=None,
             height=dp(0),
             opacity=0,
@@ -307,6 +308,7 @@ class CreateRoomScreen(Screen):
             disabled=True,
             bg_color=(0.08, 0.14, 0.24, 0.92),
         )
+        self.code_card.bind(minimum_height=self._sync_code_card_height)
         self.code_card.add_widget(PixelLabel(text="Код комнаты", font_size=sp(15), center=True, size_hint_y=None))
         self.code_card.add_widget(
             BodyLabel(
@@ -346,25 +348,29 @@ class CreateRoomScreen(Screen):
             size_hint_y=None,
             bg_color=COLORS["surface_card"],
         )
+        self.actions_card = actions_card
         actions_card.bind(minimum_height=actions_card.setter("height"))
         actions_card._border_color.rgba = (1, 1, 1, 0.14)
         actions_card._border_line.width = 1.2
-        create_row = BoxLayout(orientation="horizontal", spacing=dp(10), size_hint_y=None, height=dp(74))
+        create_row = BoxLayout(orientation="horizontal", spacing=dp(12), size_hint_y=None, height=dp(62))
+        self.create_row = create_row
         self.create_btn = AppButton(text="Создать комнату", font_size=sp(18))
+        self.create_btn.size_hint_y = 1
         self.create_btn.bind(on_release=self.prepare_room)
         create_row.add_widget(self.create_btn)
         cost_chip = RoundedPanel(
             orientation="vertical",
-            size_hint=(None, None),
-            size=(dp(102), dp(58)),
+            size_hint=(None, 1),
+            width=dp(112),
             padding=[dp(8), dp(8), dp(8), dp(8)],
-            bg_color=COLORS["surface_panel"],
-            shadow_alpha=0.18,
+            bg_color=(0.11, 0.18, 0.30, 0.92),
+            shadow_alpha=0.16,
         )
+        self.cost_chip = cost_chip
         cost_chip.add_widget(
             PixelLabel(
                 text=f"(-{ROOM_CREATION_COST} AC)",
-                font_size=sp(12.5),
+                font_size=sp(12.8),
                 center=True,
                 size_hint_y=None,
             )
@@ -392,8 +398,8 @@ class CreateRoomScreen(Screen):
         self._select_difficulty(self.difficulty_value)
         self._select_timer(self.timer_value)
         Clock.schedule_once(lambda *_: self._sync_choice_grid_width(self.players_grid, min_width=dp(92)), 0)
-        Clock.schedule_once(lambda *_: self._sync_choice_grid_width(self.difficulty_grid, min_width=dp(108)), 0)
-        Clock.schedule_once(lambda *_: self._sync_choice_grid_width(self.timer_grid, min_width=dp(108)), 0)
+        Clock.schedule_once(lambda *_: self._sync_choice_grid_width(self.difficulty_grid, min_width=dp(104)), 0)
+        Clock.schedule_once(lambda *_: self._sync_choice_grid_width(self.timer_grid, min_width=dp(104)), 0)
         self.bind(size=self._schedule_responsive_layout)
         if self._window is not None:
             self._window.bind(size=self._schedule_responsive_layout)
@@ -624,11 +630,35 @@ class CreateRoomScreen(Screen):
 
         if self.form_card is not None:
             self.form_card.padding = [dp(14 if compact else 20), dp(14 if compact else 18), dp(14 if compact else 20), dp(14 if compact else 18)]
-            self.form_card.spacing = dp(11 if compact else 14)
+            self.form_card.spacing = dp(12 if compact else 14)
+
+        if self.players_grid is not None:
+            self.players_grid.spacing = [dp(12 if compact else 14), dp(10 if compact else 12)]
+            self.players_grid.padding = [dp(8), dp(4), dp(8), dp(6)]
+            self.players_grid.row_default_height = dp(46 if compact else 48)
+        if self.difficulty_grid is not None:
+            self.difficulty_grid.spacing = [dp(12), dp(10 if compact else 12)]
+            self.difficulty_grid.padding = [dp(8), dp(4), dp(8), dp(6)]
+            self.difficulty_grid.row_default_height = dp(44 if compact else 46)
+        if self.timer_grid is not None:
+            self.timer_grid.spacing = [dp(14 if compact else 18), dp(12 if compact else 14)]
+            self.timer_grid.padding = [dp(8), dp(4), dp(8), dp(8)]
+            self.timer_grid.row_default_height = dp(48 if compact else 50)
+
+        if self.actions_card is not None:
+            self.actions_card.padding = [dp(14 if compact else 18), dp(14 if compact else 16), dp(14 if compact else 18), dp(14 if compact else 16)]
+            self.actions_card.spacing = dp(9 if compact else 10)
+        if self.create_row is not None:
+            self.create_row.height = dp(60 if compact else 62)
+            self.create_row.spacing = dp(10 if compact else 12)
+        if self.cost_chip is not None:
+            self.cost_chip.width = dp(104 if compact else 112)
 
         self._sync_choice_grid_width(self.players_grid, min_width=dp(92))
-        self._sync_choice_grid_width(self.difficulty_grid, min_width=dp(108))
-        self._sync_choice_grid_width(self.timer_grid, min_width=dp(108))
+        self._sync_choice_grid_width(self.difficulty_grid, min_width=dp(104))
+        self._sync_choice_grid_width(self.timer_grid, min_width=dp(104))
+        if self.visibility_scope == "private":
+            self._sync_code_card_height()
 
     def _sync_choice_grid_width(self, grid, min_width):
         if grid is None:
@@ -664,20 +694,39 @@ class CreateRoomScreen(Screen):
         alphabet = string.ascii_uppercase + string.digits
         return "".join(random.choice(alphabet) for _ in range(6))
 
+    def _sync_code_card_height(self, *_):
+        if self.code_card is None or self.code_card_host is None:
+            return
+        if self.code_card.parent is not self.code_card_host or self.code_card.disabled:
+            return
+
+        target_height = max(dp(190), float(self.code_card.minimum_height or 0))
+        self.code_card_height = target_height
+        if abs(float(self.code_card.height) - target_height) > 0.5:
+            self.code_card.height = target_height
+        if abs(float(self.code_card_host.height) - target_height) > 0.5:
+            self.code_card_host.height = target_height
+
     def _set_code_card_visibility(self, visible):
-        self.code_card.disabled = not visible
-        self.code_card.opacity = 1 if visible else 0
-        self.code_card.height = self.code_card_height if visible else dp(0)
-        self.code_card_host.disabled = not visible
-        self.code_card_host.opacity = 1 if visible else 0
-        self.code_card_host.height = self.code_card_height if visible else dp(0)
-        if visible:
+        is_visible = bool(visible)
+        self.code_card.disabled = not is_visible
+        self.code_card.opacity = 1 if is_visible else 0
+        self.code_card_host.disabled = not is_visible
+        self.code_card_host.opacity = 1 if is_visible else 0
+
+        if is_visible:
             if self.code_card.parent is not self.code_card_host:
                 if self.code_card.parent is not None:
                     self.code_card.parent.remove_widget(self.code_card)
                 self.code_card_host.add_widget(self.code_card)
-        elif self.code_card.parent is self.code_card_host:
-            self.code_card_host.remove_widget(self.code_card)
+            self._sync_code_card_height()
+            Clock.schedule_once(self._sync_code_card_height, 0)
+            Clock.schedule_once(self._sync_code_card_height, 0.05)
+        else:
+            self.code_card.height = dp(0)
+            self.code_card_host.height = dp(0)
+            if self.code_card.parent is self.code_card_host:
+                self.code_card_host.remove_widget(self.code_card)
 
     def _select_visibility(self, scope):
         self.visibility_scope = "private" if scope == "private" else "public"
@@ -685,8 +734,8 @@ class CreateRoomScreen(Screen):
         self.private_chip.set_active(self.visibility_scope == "private")
         self._set_code_card_visibility(self.visibility_scope == "private")
         Clock.schedule_once(lambda *_: self._sync_choice_grid_width(self.players_grid, min_width=dp(92)), 0)
-        Clock.schedule_once(lambda *_: self._sync_choice_grid_width(self.difficulty_grid, min_width=dp(108)), 0)
-        Clock.schedule_once(lambda *_: self._sync_choice_grid_width(self.timer_grid, min_width=dp(108)), 0)
+        Clock.schedule_once(lambda *_: self._sync_choice_grid_width(self.difficulty_grid, min_width=dp(104)), 0)
+        Clock.schedule_once(lambda *_: self._sync_choice_grid_width(self.timer_grid, min_width=dp(104)), 0)
         if self.visibility_scope == "private":
             self.type_hint_label.text = "Закрытая комната не попадет в список. Друзья смогут войти по коду ниже."
             self._ensure_private_code_preview(force=not bool(self.private_room_code))
