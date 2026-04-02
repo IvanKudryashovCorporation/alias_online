@@ -994,6 +994,7 @@ class RoomScreen(Screen):
         app = App.get_running_app()
         room_data = app.get_active_room() if app is not None else {}
         self.room_code = (room_data or {}).get("code", "")
+        self.room_state = {}
         player_name = self._player_name()
         self._last_voice_ping_ts = 0.0
         self._smoothed_voice_level = 0.0
@@ -1034,7 +1035,16 @@ class RoomScreen(Screen):
                     joined_as = (joined_room.get("_joined_as") or "").strip()
                     if joined_as and hasattr(app, "adopt_room_player_name"):
                         app.adopt_room_player_name(joined_as)
-                    app.set_active_room(joined_room)
+                    server_state = joined_room.get("_server_state")
+                    if isinstance(server_state, dict):
+                        initial_state = dict(server_state)
+                        incoming_messages = initial_state.get("messages") if isinstance(initial_state.get("messages"), list) else []
+                        initial_state["messages"] = self._merge_message_history(incoming_messages, since_id=0)
+                        self.room_state = initial_state
+                        app.set_active_room(initial_state.get("room", joined_room))
+                        self._apply_state()
+                    else:
+                        app.set_active_room(joined_room)
             except (ConnectionError, ValueError):
                 pass
         self._start_polling()
@@ -1316,26 +1326,27 @@ class RoomScreen(Screen):
 
     def _is_explainer(self):
         viewer = self._viewer_state()
-        if viewer:
+        if viewer and "is_explainer" in viewer:
             return bool(viewer.get("is_explainer"))
-        room = self.room_state.get("room", {})
-        return self._same_player(self._player_name(), room.get("current_explainer"))
+        return False
 
     def _is_host(self):
-        room = self.room_state.get("room", {})
-        return self._same_player(self._player_name(), room.get("host_name"))
+        viewer = self._viewer_state()
+        if viewer and "is_host" in viewer:
+            return bool(viewer.get("is_host"))
+        return False
 
     def _can_control_start(self):
         viewer = self._viewer_state()
         if viewer and "can_control_start" in viewer:
             return bool(viewer.get("can_control_start"))
-        return bool(self._player_name()) and self._is_host() and self._current_phase() == "lobby"
+        return False
 
     def _can_start_game(self):
         viewer = self._viewer_state()
-        if viewer:
+        if viewer and "can_start_game" in viewer:
             return bool(viewer.get("can_start_game"))
-        return bool(self._player_name()) and self._is_host()
+        return False
 
     def _explainer_chat_locked(self):
         return self._is_explainer() and self._current_phase() in {"countdown", "round"}
@@ -1344,15 +1355,13 @@ class RoomScreen(Screen):
         if self._explainer_chat_locked():
             return False
         viewer = self._viewer_state()
-        if viewer:
+        if viewer and "can_send_chat" in viewer:
             return bool(viewer.get("can_send_chat"))
-        return bool(self._player_name())
+        return False
 
     def _can_use_voice(self):
         if self._current_phase() != "round":
             return False
-        if self._is_explainer():
-            return True
         viewer = self._viewer_state()
         if viewer and "can_use_voice" in viewer:
             return bool(viewer.get("can_use_voice"))
@@ -1362,14 +1371,9 @@ class RoomScreen(Screen):
         if self._current_phase() != "round":
             return False
         viewer = self._viewer_state()
-        if viewer:
-            if "can_toggle_mic" in viewer:
-                return bool(viewer.get("can_toggle_mic"))
-            if "can_use_voice" in viewer:
-                return bool(viewer.get("can_use_voice"))
-            if "is_explainer" in viewer:
-                return bool(viewer.get("is_explainer"))
-        return self._is_explainer()
+        if viewer and "can_toggle_mic" in viewer:
+            return bool(viewer.get("can_toggle_mic"))
+        return False
 
     def _required_players_to_start(self, room):
         return 1
@@ -1766,6 +1770,26 @@ class RoomScreen(Screen):
             incoming_messages = state.get("messages") if isinstance(state.get("messages"), list) else []
             used_since = int(payload.get("since_id") or 0)
             state["messages"] = self._merge_message_history(incoming_messages, used_since)
+            viewer_state = state.get("viewer") if isinstance(state.get("viewer"), dict) else {}
+            if not viewer_state or "is_player" not in viewer_state:
+                self.status_label.color = COLORS["warning"]
+                self.status_label.text = "Сервер не прислал состояние игрока. Повтори вход в комнату."
+                if self._poll_reschedule:
+                    self._poll_reschedule = False
+                    Clock.schedule_once(lambda *_: self._poll_state(), 0)
+                return
+            if not bool(viewer_state.get("is_player")):
+                app = App.get_running_app()
+                if app is not None:
+                    app.clear_active_room()
+                    if hasattr(app, "ensure_screen"):
+                        app.ensure_screen("join_room")
+                self.room_code = ""
+                self.room_state = {}
+                self.status_label.color = COLORS["warning"]
+                self.status_label.text = "Ты больше не состоишь в этой комнате."
+                Clock.schedule_once(lambda *_: setattr(self.manager, "current", "join_room"), 0)
+                return
             self.room_state = state
             app = App.get_running_app()
             if app is not None:
@@ -1809,7 +1833,7 @@ class RoomScreen(Screen):
         viewer = self._viewer_state()
 
         player_name = self._player_name() or ""
-        is_explainer = bool(viewer.get("is_explainer")) if viewer else self._same_player(player_name, room.get("current_explainer"))
+        is_explainer = self._is_explainer()
         phase = self._current_phase()
         self._set_room_exit_button(self._is_match_active())
         countdown_left = int(self.room_state.get("countdown_left_sec") or 0)

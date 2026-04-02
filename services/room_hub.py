@@ -404,6 +404,31 @@ def join_online_room(*, room_code, player_name, is_guest=False, client_id=None, 
     joined_as = (response.get("joined_as") or "").strip()
     if joined_as:
         room["_joined_as"] = joined_as
+    state_keys = (
+        "room",
+        "players",
+        "scores",
+        "messages",
+        "viewer",
+        "voice_active",
+        "voice_speaker",
+        "explainer_mic_muted",
+        "explainer_mic_state",
+        "can_see_word",
+        "current_word",
+        "game_phase",
+        "countdown_left_sec",
+        "round_left_sec",
+        "server_time",
+    )
+    server_state = {}
+    for key in state_keys:
+        if key in response:
+            server_state[key] = response.get(key)
+    if server_state:
+        if not isinstance(server_state.get("room"), dict):
+            server_state["room"] = dict(room)
+        room["_server_state"] = server_state
     return room
 
 

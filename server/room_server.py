@@ -2559,10 +2559,69 @@ class RoomHandler(BaseHTTPRequestHandler):
                 _insert_message(connection, room_code, "System", f"{player_name} joined the room.", "system")
 
             _touch_room(connection, room_code)
+            payload_state = _room_payload(connection, room_code, player_name=player_name)
             room_data = _room_with_count(connection, room_code)
 
-        room_data["current_word"] = ""
-        self._json_response(200, {"room": room_data, "joined_as": player_name})
+        if room_data:
+            room_data["current_word"] = ""
+
+        if payload_state is None:
+            self._json_response(
+                200,
+                {
+                    "room": room_data or {},
+                    "players": [],
+                    "scores": [],
+                    "messages": [],
+                    "viewer": {
+                        "player_name": player_name,
+                        "is_player": True,
+                        "is_explainer": False,
+                        "is_host": False,
+                        "can_control_start": False,
+                        "can_start_game": False,
+                        "can_send_chat": True,
+                        "can_use_voice": False,
+                        "can_toggle_mic": False,
+                        "explainer_mic_state": "idle",
+                        "required_players_to_start": 1,
+                    },
+                    "voice_active": False,
+                    "voice_speaker": None,
+                    "explainer_mic_muted": True,
+                    "explainer_mic_state": "idle",
+                    "can_see_word": False,
+                    "current_word": "",
+                    "game_phase": "lobby",
+                    "countdown_left_sec": 0,
+                    "round_left_sec": 0,
+                    "server_time": _now(),
+                    "joined_as": player_name,
+                },
+            )
+            return
+
+        self._json_response(
+            200,
+            {
+                "room": payload_state.get("room", room_data or {}),
+                "players": payload_state.get("players", []),
+                "scores": payload_state.get("scores", []),
+                "messages": payload_state.get("messages", []),
+                "viewer": payload_state.get("viewer", {}),
+                "voice_active": payload_state.get("voice_active", False),
+                "voice_speaker": payload_state.get("voice_speaker"),
+                "explainer_mic_muted": payload_state.get("explainer_mic_muted", True),
+                "explainer_mic_state": payload_state.get("explainer_mic_state", "idle"),
+                "can_see_word": payload_state.get("can_see_word", False),
+                "current_word": payload_state.get("current_word", ""),
+                "game_phase": payload_state.get("game_phase", "lobby"),
+                "countdown_left_sec": payload_state.get("countdown_left_sec", 0),
+                "round_left_sec": payload_state.get("round_left_sec", 0),
+                "server_time": payload_state.get("server_time", _now()),
+                "joined_as": player_name,
+            },
+        )
 
     def _handle_leave_room(self, room_code):
         try:
