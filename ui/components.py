@@ -441,8 +441,8 @@ class AppTextInput(TextInput):
         )
 
         self._corner_radius = dp(22)
-        self._base_hint_color = (0.29, 0.32, 0.38, 1)
-        self._muted_hint_color = (0.35, 0.40, 0.48, 1)
+        self._base_hint_color = (0.22, 0.26, 0.32, 1)
+        self._muted_hint_color = (0.28, 0.33, 0.40, 1)
         self._color_guard_events = []
 
         with self.canvas.before:
@@ -511,6 +511,7 @@ class AppTextInput(TextInput):
             target_color = COLORS["input_text"]
         self.foreground_color = target_color
         self.disabled_foreground_color = target_color
+        self._force_internal_line_palette(target_color)
 
     def _schedule_color_guard(self, *_):
         # On some Android keyboards, TextInput color may reset after focus/keyboard transitions.
@@ -521,12 +522,26 @@ class AppTextInput(TextInput):
             except Exception:
                 pass
         self._color_guard_events = []
-        for delay in (0, 0.04, 0.12):
+        for delay in (0, 0.04, 0.12, 0.24, 0.42, 0.75):
             self._color_guard_events.append(Clock.schedule_once(self._enforce_text_palette, delay))
 
     def _enforce_text_palette(self, *_):
         self._refresh_text_colors()
         self._ensure_visible_text()
+
+    def _force_internal_line_palette(self, rgba):
+        # Some mobile keyboards repaint internal line labels with a default color.
+        # Keep rendered text labels in sync with foreground_color.
+        for line_label in getattr(self, "_lines_labels", []) or []:
+            if line_label is None:
+                continue
+            try:
+                line_label.color = rgba
+            except Exception:
+                pass
+            options = getattr(line_label, "options", None)
+            if isinstance(options, dict):
+                options["color"] = rgba
 
     def _sync_canvas(self, *_):
         self._stencil_mask.pos = self.pos

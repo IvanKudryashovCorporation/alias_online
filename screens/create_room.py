@@ -238,15 +238,15 @@ class CreateRoomScreen(Screen):
             col_force_default=True,
         )
         self.difficulty_grid._preferred_cols = 4
-        self.difficulty_grid._compact_cols = 2
-        self.difficulty_grid._compact_breakpoint = dp(340)
+        self.difficulty_grid._compact_cols = 4
+        self.difficulty_grid._compact_breakpoint = 0
         self.difficulty_grid._minimum_chip_width = dp(72)
         self.difficulty_grid.bind(minimum_height=self.difficulty_grid.setter("height"))
         for value in ["Легкие", "Средние", "Сложные", "Микс"]:
             chip = RoomChoiceChip(value, value, self._select_difficulty, height=dp(44), font_size=sp(12.4))
             self.difficulty_choice_chips.append(chip)
             self.difficulty_grid.add_widget(chip)
-        self.difficulty_grid.bind(width=lambda *_args, grid=self.difficulty_grid: self._sync_choice_grid_width(grid, min_width=dp(108)))
+        self.difficulty_grid.bind(width=lambda *_args, grid=self.difficulty_grid: self._sync_choice_grid_width(grid, min_width=dp(72)))
         form_card.add_widget(self.difficulty_grid)
 
         form_card.add_widget(BodyLabel(text="Тип комнаты"))
@@ -267,25 +267,25 @@ class CreateRoomScreen(Screen):
 
         form_card.add_widget(BodyLabel(text="Таймер раунда"))
         self.timer_grid = GridLayout(
-            cols=3,
-            spacing=[dp(18), dp(12)],
+            cols=2,
+            spacing=[dp(16), dp(12)],
             padding=[dp(8), dp(2), dp(8), dp(8)],
             size_hint_y=None,
             row_default_height=dp(50),
             row_force_default=True,
-            col_default_width=dp(108),
+            col_default_width=dp(116),
             col_force_default=True,
         )
-        self.timer_grid._preferred_cols = 3
+        self.timer_grid._preferred_cols = 2
         self.timer_grid._compact_cols = 2
-        self.timer_grid._compact_breakpoint = dp(350)
-        self.timer_grid._minimum_chip_width = dp(82)
+        self.timer_grid._compact_breakpoint = 0
+        self.timer_grid._minimum_chip_width = dp(112)
         self.timer_grid.bind(minimum_height=self.timer_grid.setter("height"))
         for value in ["30 сек", "45 сек", "60 сек", "75 сек", "90 сек", "120 сек"]:
             chip = RoomChoiceChip(value, value, self._select_timer, height=dp(46), font_size=sp(12.3))
             self.timer_choice_chips.append(chip)
             self.timer_grid.add_widget(chip)
-        self.timer_grid.bind(width=lambda *_args, grid=self.timer_grid: self._sync_choice_grid_width(grid, min_width=dp(108)))
+        self.timer_grid.bind(width=lambda *_args, grid=self.timer_grid: self._sync_choice_grid_width(grid, min_width=dp(112)))
         form_card.add_widget(self.timer_grid)
         content.add_widget(form_card)
 
@@ -309,7 +309,7 @@ class CreateRoomScreen(Screen):
             bg_color=(0.08, 0.14, 0.24, 0.92),
         )
         self.code_card.bind(minimum_height=self._sync_code_card_height)
-        self.code_card.add_widget(PixelLabel(text="Код комнаты", font_size=sp(15), center=True, size_hint_y=None))
+        self.code_card.add_widget(PixelLabel(text="Код комнаты", font_size=sp(15), center=True, size_hint_y=None, height=dp(24)))
         self.code_card.add_widget(
             BodyLabel(
                 center=True,
@@ -317,6 +317,7 @@ class CreateRoomScreen(Screen):
                 font_size=sp(11),
                 text="Этот код можно отправить друзьям, чтобы они вошли именно в твою комнату.",
                 size_hint_y=None,
+                height=dp(52),
             )
         )
 
@@ -352,7 +353,13 @@ class CreateRoomScreen(Screen):
         actions_card.bind(minimum_height=actions_card.setter("height"))
         actions_card._border_color.rgba = (1, 1, 1, 0.14)
         actions_card._border_line.width = 1.2
-        create_row = BoxLayout(orientation="horizontal", spacing=dp(12), size_hint_y=None, height=dp(62))
+        create_row = BoxLayout(
+            orientation="horizontal",
+            spacing=dp(12),
+            padding=[dp(4), 0, dp(4), 0],
+            size_hint_y=None,
+            height=dp(62),
+        )
         self.create_row = create_row
         self.create_btn = AppButton(text="Создать комнату", font_size=sp(18))
         self.create_btn.size_hint_y = 1
@@ -361,7 +368,7 @@ class CreateRoomScreen(Screen):
         cost_chip = RoundedPanel(
             orientation="vertical",
             size_hint=(None, 1),
-            width=dp(112),
+            width=dp(102),
             padding=[dp(8), dp(8), dp(8), dp(8)],
             bg_color=(0.11, 0.18, 0.30, 0.92),
             shadow_alpha=0.16,
@@ -369,10 +376,11 @@ class CreateRoomScreen(Screen):
         self.cost_chip = cost_chip
         cost_chip.add_widget(
             PixelLabel(
-                text=f"(-{ROOM_CREATION_COST} AC)",
-                font_size=sp(12.8),
+                text=f"-{ROOM_CREATION_COST} AC",
+                font_size=sp(13.4),
                 center=True,
                 size_hint_y=None,
+                height=dp(24),
             )
         )
         create_row.add_widget(cost_chip)
@@ -398,8 +406,8 @@ class CreateRoomScreen(Screen):
         self._select_difficulty(self.difficulty_value)
         self._select_timer(self.timer_value)
         Clock.schedule_once(lambda *_: self._sync_choice_grid_width(self.players_grid, min_width=dp(92)), 0)
-        Clock.schedule_once(lambda *_: self._sync_choice_grid_width(self.difficulty_grid, min_width=dp(104)), 0)
-        Clock.schedule_once(lambda *_: self._sync_choice_grid_width(self.timer_grid, min_width=dp(104)), 0)
+        Clock.schedule_once(lambda *_: self._sync_choice_grid_width(self.difficulty_grid, min_width=dp(72)), 0)
+        Clock.schedule_once(lambda *_: self._sync_choice_grid_width(self.timer_grid, min_width=dp(112)), 0)
         self.bind(size=self._schedule_responsive_layout)
         if self._window is not None:
             self._window.bind(size=self._schedule_responsive_layout)
@@ -439,7 +447,7 @@ class CreateRoomScreen(Screen):
 
         if profile is None:
             self.balance_note.color = COLORS["warning"]
-            self.balance_note.text = f"Гость может только присоединяться к комнатам. Для создания нужно {ROOM_CREATION_COST} AC."
+            self.balance_note.text = "Не удалось определить баланс сессии. Перезапусти вход или гостевой режим."
             self.create_btn.disabled = True
             return
 
@@ -570,7 +578,8 @@ class CreateRoomScreen(Screen):
             title="",
             separator_height=0,
             auto_dismiss=True,
-            background="atlas://data/images/defaulttheme/modalview-background",
+            background="",
+            background_color=(0, 0, 0, 0),
             content=body,
             size_hint=(0.82, None),
             height=dp(320),
@@ -621,8 +630,8 @@ class CreateRoomScreen(Screen):
         compact = viewport_width < dp(390) or viewport_height < dp(760)
 
         if self._content_layout is not None:
-            side_pad = dp(14 if compact else 18)
-            self._content_layout.padding = [side_pad, dp(14 if compact else 18), side_pad, dp(18 if compact else 20)]
+            side_pad = dp(16 if compact else 20)
+            self._content_layout.padding = [side_pad, dp(14 if compact else 18), side_pad, dp(20 if compact else 24)]
             self._content_layout.spacing = dp(10 if compact else 12)
 
         if self.intro_card is not None:
@@ -637,11 +646,11 @@ class CreateRoomScreen(Screen):
             self.players_grid.padding = [dp(8), dp(4), dp(8), dp(6)]
             self.players_grid.row_default_height = dp(46 if compact else 48)
         if self.difficulty_grid is not None:
-            self.difficulty_grid.spacing = [dp(12), dp(10 if compact else 12)]
+            self.difficulty_grid.spacing = [dp(10 if compact else 12), dp(10 if compact else 12)]
             self.difficulty_grid.padding = [dp(8), dp(4), dp(8), dp(6)]
             self.difficulty_grid.row_default_height = dp(44 if compact else 46)
         if self.timer_grid is not None:
-            self.timer_grid.spacing = [dp(14 if compact else 18), dp(12 if compact else 14)]
+            self.timer_grid.spacing = [dp(18 if compact else 22), dp(12 if compact else 14)]
             self.timer_grid.padding = [dp(8), dp(4), dp(8), dp(8)]
             self.timer_grid.row_default_height = dp(48 if compact else 50)
 
@@ -650,13 +659,14 @@ class CreateRoomScreen(Screen):
             self.actions_card.spacing = dp(9 if compact else 10)
         if self.create_row is not None:
             self.create_row.height = dp(60 if compact else 62)
-            self.create_row.spacing = dp(10 if compact else 12)
+            self.create_row.spacing = dp(12 if compact else 14)
+            self.create_row.padding = [dp(2 if compact else 4), 0, dp(2 if compact else 4), 0]
         if self.cost_chip is not None:
-            self.cost_chip.width = dp(104 if compact else 112)
+            self.cost_chip.width = dp(98 if compact else 102)
 
         self._sync_choice_grid_width(self.players_grid, min_width=dp(92))
-        self._sync_choice_grid_width(self.difficulty_grid, min_width=dp(104))
-        self._sync_choice_grid_width(self.timer_grid, min_width=dp(104))
+        self._sync_choice_grid_width(self.difficulty_grid, min_width=dp(72))
+        self._sync_choice_grid_width(self.timer_grid, min_width=dp(112))
         if self.visibility_scope == "private":
             self._sync_code_card_height()
 
@@ -734,8 +744,8 @@ class CreateRoomScreen(Screen):
         self.private_chip.set_active(self.visibility_scope == "private")
         self._set_code_card_visibility(self.visibility_scope == "private")
         Clock.schedule_once(lambda *_: self._sync_choice_grid_width(self.players_grid, min_width=dp(92)), 0)
-        Clock.schedule_once(lambda *_: self._sync_choice_grid_width(self.difficulty_grid, min_width=dp(104)), 0)
-        Clock.schedule_once(lambda *_: self._sync_choice_grid_width(self.timer_grid, min_width=dp(104)), 0)
+        Clock.schedule_once(lambda *_: self._sync_choice_grid_width(self.difficulty_grid, min_width=dp(72)), 0)
+        Clock.schedule_once(lambda *_: self._sync_choice_grid_width(self.timer_grid, min_width=dp(112)), 0)
         if self.visibility_scope == "private":
             self.type_hint_label.text = "Закрытая комната не попадет в список. Друзья смогут войти по коду ниже."
             self._ensure_private_code_preview(force=not bool(self.private_room_code))
@@ -840,7 +850,7 @@ class CreateRoomScreen(Screen):
 
         if profile is None:
             self.status_label.color = COLORS["warning"]
-            self.status_label.text = f"Гостевой режим не может создавать комнаты. Для создания нужно {ROOM_CREATION_COST} AC."
+            self.status_label.text = "Не удалось определить баланс сессии. Перезапусти вход или гостевой режим."
             return
 
         if int(getattr(profile, "alias_coins", 0) or 0) < ROOM_CREATION_COST:

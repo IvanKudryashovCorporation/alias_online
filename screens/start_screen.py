@@ -496,10 +496,9 @@ class StartScreen(Screen):
 
         body = BoxLayout(
             orientation="vertical",
-            spacing=dp(10),
-            padding=[dp(14), dp(14), dp(14), dp(14)],
+            spacing=dp(8),
+            padding=[dp(12), dp(12), dp(12), dp(12)],
         )
-        body.add_widget(Widget())
 
         panel = RoundedPanel(
             orientation="vertical",
@@ -508,6 +507,7 @@ class StartScreen(Screen):
             size_hint_y=None,
             shadow_alpha=0.2,
         )
+        panel.height = dp(328)
         panel.bind(minimum_height=panel.setter("height"))
         panel.add_widget(PixelLabel(text="Гостевой режим", font_size=sp(18), center=True, size_hint_y=None))
         panel.add_widget(
@@ -533,15 +533,14 @@ class StartScreen(Screen):
             text="Закрыть",
             compact=True,
             font_size=sp(14),
-            button_color=(0.23, 0.27, 0.37, 0.96),
-            pressed_color=(0.18, 0.22, 0.31, 0.98),
+            button_color=(0.17, 0.22, 0.34, 0.88),
+            pressed_color=(0.15, 0.19, 0.30, 0.94),
         )
         close_btn.height = dp(44)
         close_btn.bind(on_release=lambda *_: self._dismiss_guest_access_popup())
         panel.add_widget(close_btn)
 
         body.add_widget(panel)
-        body.add_widget(Widget())
 
         self.guest_access_popup = Popup(
             title="",
@@ -549,10 +548,10 @@ class StartScreen(Screen):
             separator_height=0,
             auto_dismiss=True,
             background="",
-            background_color=(0.02, 0.06, 0.11, 0.74),
+            background_color=(0, 0, 0, 0),
             content=body,
             size_hint=(0.84, None),
-            height=dp(360),
+            height=dp(352),
         )
         self.guest_access_popup.bind(on_dismiss=lambda *_: setattr(self, "guest_access_popup", None))
         self.guest_access_popup.open()
@@ -568,10 +567,9 @@ class StartScreen(Screen):
 
         body = BoxLayout(
             orientation="vertical",
-            spacing=dp(10),
-            padding=[dp(14), dp(14), dp(14), dp(14)],
+            spacing=dp(8),
+            padding=[dp(12), dp(12), dp(12), dp(12)],
         )
-        body.add_widget(Widget())
 
         panel = RoundedPanel(
             orientation="vertical",
@@ -580,6 +578,7 @@ class StartScreen(Screen):
             size_hint_y=None,
             shadow_alpha=0.2,
         )
+        panel.height = dp(232)
         panel.bind(minimum_height=panel.setter("height"))
         panel.add_widget(PixelLabel(text="Поддержка", font_size=sp(18), center=True, size_hint_y=None))
         panel.add_widget(
@@ -597,7 +596,6 @@ class StartScreen(Screen):
         panel.add_widget(close_btn)
 
         body.add_widget(panel)
-        body.add_widget(Widget())
 
         self.support_popup = Popup(
             title="",
@@ -605,10 +603,10 @@ class StartScreen(Screen):
             separator_height=0,
             auto_dismiss=True,
             background="",
-            background_color=(0.02, 0.06, 0.11, 0.74),
+            background_color=(0, 0, 0, 0),
             content=body,
             size_hint=(0.78, None),
-            height=dp(260),
+            height=dp(248),
         )
         self.support_popup.bind(on_dismiss=lambda *_: setattr(self, "support_popup", None))
         self.support_popup.open()
@@ -729,7 +727,8 @@ class StartScreen(Screen):
             title="",
             separator_height=0,
             auto_dismiss=True,
-            background="atlas://data/images/defaulttheme/modalview-background",
+            background="",
+            background_color=(0, 0, 0, 0),
             content=body,
             size_hint=(0.82, None),
             height=dp(320),

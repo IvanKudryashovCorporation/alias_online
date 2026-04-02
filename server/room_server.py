@@ -1897,6 +1897,10 @@ def _refresh_room_phase(connection, room_code):
 
 
 def _room_payload(connection, room_code, player_name="", since_id=None):
+    repair_state = _repair_room_integrity(connection, room_code)
+    if repair_state["deleted"]:
+        return None
+
     _refresh_room_phase(connection, room_code)
     room = _room_with_count(connection, room_code)
     if room is None:

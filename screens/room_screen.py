@@ -1089,11 +1089,12 @@ class RoomScreen(Screen):
         self.disabled = True
 
     def _go_back_to_menu(self, *_):
-        if self._current_phase() == "round":
+        if self._is_match_active():
             self._open_leave_popup()
             return
-        self._leave_room()
-        self.manager.current = "start"
+        if self.manager is not None:
+            self.manager.current = "start"
+        Clock.schedule_once(lambda *_: self._leave_room(), 0)
 
     def _open_player_profile(self, player_name):
         clean_name = (player_name or "").strip()
@@ -1390,6 +1391,13 @@ class RoomScreen(Screen):
         return False
 
     def _required_players_to_start(self, room):
+        viewer = self._viewer_state()
+        if isinstance(viewer, dict):
+            try:
+                required = int(viewer.get("required_players_to_start") or 1)
+            except (TypeError, ValueError):
+                required = 1
+            return max(1, required)
         return 1
 
     def _profile_map(self):
@@ -1617,9 +1625,6 @@ class RoomScreen(Screen):
                 round(float(self.word_stage.width), 1),
                 round(float(self.word_stage.height), 1),
                 round(float(self.scores_wrap.y), 1),
-                round(float(self.phase_wrap.y), 1),
-                round(float(self.phase_wrap.height), 1),
-                int(self.phase_wrap.opacity > 0),
             )
         else:
             layout_signature = (
@@ -1639,26 +1644,12 @@ class RoomScreen(Screen):
             word_x, word_y = self._widget_screen_pos(self.word_stage)
             _score_panel_x, score_panel_y = self._widget_screen_pos(self.scores_wrap)
             word_top = word_y + self.word_stage.height
-            score_panel_bottom = score_panel_y - dp(14)
+            score_limit = score_panel_y - dp(14)
 
-            phase_limit = score_panel_bottom
-            if self.phase_wrap.opacity > 0 and self.phase_wrap.height > dp(0):
-                _phase_x, phase_y = self._widget_screen_pos(self.phase_wrap)
-                phase_limit = min(phase_limit, phase_y - dp(10))
-
-            base_bottom = word_top + dp(10)
-            max_available = phase_limit - base_bottom
-            max_available = max(dp(56), max_available)
-            overlay_height = min(overlay_height, max_available)
-            overlay_height = max(dp(36), overlay_height)
+            overlay_height = min(dp(232 if can_chat else 198), max(dp(74), score_limit - word_top - dp(12)))
             overlay_width = min(max(dp(300), self.word_stage.width - dp(18)), dp(430))
             left = word_x + max(0, (self.word_stage.width - overlay_width) / 2)
-            bottom = base_bottom
-            if bottom + overlay_height > phase_limit:
-                bottom = phase_limit - overlay_height
-            bottom = max(word_top + dp(2), bottom)
-            if bottom + overlay_height > phase_limit:
-                overlay_height = max(dp(42), phase_limit - bottom)
+            bottom = max(word_top + dp(8), score_limit - overlay_height)
             self.chat_card.size = (overlay_width, overlay_height)
             self.chat_card.pos = (left, bottom)
             return

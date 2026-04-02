@@ -69,6 +69,34 @@ def run_smoke(project_root: Path, room_port: int) -> None:
         _assert(int(room_state.get("players_count") or 0) >= 3, "Players did not join the room.")
         _print_ok("join flow")
 
+        guest_room = create_online_room(
+            host_name="Гость1",
+            room_name="Guest Naming Room",
+            max_players=4,
+            difficulty="Легкие",
+            visibility="Публичная",
+            visibility_scope="public",
+            round_timer_sec=45,
+            client_id="guest-client-a",
+            base_url=base_url,
+        )
+        guest_room_code = guest_room.get("code", "")
+        _assert(bool(guest_room_code), "Guest room code is empty.")
+        joined_guest = join_online_room(
+            room_code=guest_room_code,
+            player_name="Гость1",
+            is_guest=True,
+            client_id="guest-client-b",
+            base_url=base_url,
+        )
+        joined_as = (joined_guest.get("_joined_as") or "").strip()
+        _assert(joined_as and joined_as != "Гость1", "Guest duplicate name was not remapped by server.")
+        host_state = get_online_room_state(room_code=guest_room_code, player_name="Гость1", base_url=base_url)
+        join_state = get_online_room_state(room_code=guest_room_code, player_name=joined_as, base_url=base_url)
+        _assert(bool((host_state.get("viewer") or {}).get("is_host")), "Host viewer role mismatch.")
+        _assert(not bool((join_state.get("viewer") or {}).get("is_host")), "Joiner should not become host.")
+        _print_ok("guest naming + role sync")
+
         start_room_game(room_code=room_code, player_name="SmokeHost", base_url=base_url)
         _print_ok("start game request")
 
