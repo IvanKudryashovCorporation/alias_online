@@ -454,12 +454,14 @@ class LobbyPlayerCard(RoundedPanel):
         text_col.add_widget(self.earned_label)
         self.add_widget(text_col)
 
-    def set_player(self, player_name, profile, is_explainer=False, is_self=False, room_score=0, phase="lobby"):
+    def set_player(self, player_name, profile, is_explainer=False, is_self=False, is_host=False, room_score=0, phase="lobby"):
         self.avatar.set_profile(profile)
         games_played = getattr(profile, "games_played", 0) if profile is not None else 0
         total_earned = getattr(profile, "total_points", 0) if profile is not None else 0
         display_name = player_name or "Игрок"
         role_tags = []
+        if is_host:
+            role_tags.append("ХОСТ")
         if is_explainer:
             role_tags.append("ОБЪЯСНЯЕТ")
         if is_self:
@@ -539,9 +541,11 @@ class RoundPlayerRow(RoundedPanel):
         )
         self.add_widget(self.score_label)
 
-    def set_player(self, player_name, profile, room_score=0, is_explainer=False, is_self=False, phase="round"):
+    def set_player(self, player_name, profile, room_score=0, is_explainer=False, is_self=False, is_host=False, phase="round"):
         self.avatar.set_profile(profile)
         badges = []
+        if is_host:
+            badges.append("ХОСТ")
         if is_explainer:
             badges.append("ОБЪЯСН.")
         if is_self:
@@ -863,6 +867,16 @@ class RoomScreen(Screen):
         )
         self.start_game_btn.bind(on_release=self._queue_start_game)
         self.lobby_start_row.add_widget(self.start_game_btn)
+        self.wait_host_btn = AppButton(
+            text="Ожидание старта от хоста",
+            compact=True,
+            font_size=sp(13),
+            size_hint=(None, None),
+            size=(dp(228), dp(46)),
+        )
+        self.wait_host_btn.disabled = True
+        self.wait_host_btn.opacity = 0
+        self.lobby_start_row.add_widget(self.wait_host_btn)
         self.lobby_start_row.add_widget(Widget())
         content.add_widget(self.lobby_start_row)
 
@@ -1482,8 +1496,23 @@ class RoomScreen(Screen):
         panel.opacity = 1 if visible else 0
         panel.height = shown_height if visible else dp(0)
 
+    def _can_wait_for_host_in_lobby(self):
+        viewer = self._viewer_state()
+        if viewer and "is_player" in viewer:
+            return bool(viewer.get("is_player")) and not self._can_control_start()
+        return bool(self._player_name()) and not self._can_control_start()
+
+    def _show_lobby_action_row(self, phase):
+        if phase != "lobby":
+            return False
+        return self._can_control_start() or self._can_wait_for_host_in_lobby()
+
     def _show_explainer_controls(self, is_explainer, phase):
-        self._set_button_visibility(self.start_game_btn, phase == "lobby" and self._can_control_start())
+        can_start = phase == "lobby" and self._can_control_start()
+        waiting_for_host = phase == "lobby" and self._can_wait_for_host_in_lobby() and not can_start
+        self._set_button_visibility(self.start_game_btn, can_start)
+        self.wait_host_btn.disabled = True
+        self.wait_host_btn.opacity = 1 if waiting_for_host else 0
 
     def _set_mic_muted(self, muted):
         self._mic_muted_state = bool(muted)
@@ -1640,7 +1669,7 @@ class RoomScreen(Screen):
         self.chat_card.size = (overlay_width, overlay_height)
         self.chat_card.pos = (left, bottom)
 
-    def _render_player_cards(self, players, explainer_name, profile_map=None, score_map=None, phase="lobby"):
+    def _render_player_cards(self, players, explainer_name, host_name="", profile_map=None, score_map=None, phase="lobby"):
         profile_map = profile_map or self._profile_map()
         score_map = score_map or {}
         current_player_name = self._player_name()
@@ -1648,6 +1677,7 @@ class RoomScreen(Screen):
             phase,
             tuple(players or []),
             (explainer_name or "").strip().lower(),
+            (host_name or "").strip().lower(),
             (current_player_name or "").strip().lower(),
             tuple(sorted(((key or "").strip().lower(), int(value or 0)) for key, value in (score_map or {}).items())),
         )
@@ -1681,6 +1711,7 @@ class RoomScreen(Screen):
                 profile,
                 is_explainer=self._same_player(listed_player, explainer_name),
                 is_self=self._same_player(listed_player, current_player_name),
+                is_host=self._same_player(listed_player, host_name),
                 room_score=score_map.get((listed_player or "").strip().lower(), 0),
                 phase=phase,
             )
@@ -1849,6 +1880,7 @@ class RoomScreen(Screen):
 
         room_name = room.get("room_name", "Комната")
         code = room.get("code", self.room_code)
+        host_name = room.get("host_name") or ""
         players_count = int(room.get("players_count") or len(players) or 0)
         max_players = int(room.get("max_players") or max(players_count, 1))
         players_text = f"{players_count}/{max_players}"
@@ -1936,7 +1968,11 @@ class RoomScreen(Screen):
         else:
             self.voice_status.text = "Включен"
         if phase == "lobby":
-            self.explainer_status_label.text = f"Объясняет слова: {explainer_name}"
+            if self._can_control_start():
+                self.explainer_status_label.text = f"Объясняет слова: {explainer_name} | Ты: хост"
+            else:
+                self.explainer_status_label.text = f"Объясняет слова: {explainer_name} | Ты: отгадывающий"
+            self.wait_host_btn.text = f"Ожидание: {explainer_name} запускает игру"
         else:
             self.explainer_status_label.text = f"Объясняет слова: {explainer_name} | Микрофон: {mic_state_text}"
 
@@ -1949,7 +1985,7 @@ class RoomScreen(Screen):
         self._set_panel_visibility(self.players_summary_wrap, False, self.players_summary_wrap_height)
         self._set_panel_visibility(
             self.lobby_start_row,
-            phase == "lobby" and self._can_control_start(),
+            self._show_lobby_action_row(phase),
             self.lobby_start_height,
         )
         self._set_panel_visibility(self.explainer_card, phase in {"countdown", "round"} and not is_explainer, self.explainer_card_height)
@@ -1981,7 +2017,7 @@ class RoomScreen(Screen):
             self.phase_label.text = f"ОСТАЛОСЬ {round_left} СЕК"
             self.countdown_overlay.hide()
 
-        self._render_player_cards(players, explainer_name, profile_map, score_map, phase)
+        self._render_player_cards(players, explainer_name, host_name, profile_map, score_map, phase)
         if phase == "round" and is_explainer:
             self._sync_word_stage_layout()
 
