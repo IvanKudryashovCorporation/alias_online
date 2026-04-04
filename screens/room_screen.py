@@ -1037,6 +1037,13 @@ class RoomScreen(Screen):
         self.loading_overlay.hide()
         self.coin_badge.refresh_from_session()
         self.countdown_overlay.hide()
+        # Safe defaults before server state arrives: hide start button, show wait label.
+        self._set_button_visibility(self.start_game_btn, False)
+        self.wait_host_btn.disabled = True
+        self.wait_host_btn.opacity = 1
+        self.wait_host_btn.text = "Ожидайте, пока объясняющий начнёт игру"
+        self.explainer_status_label.text = "Загрузка комнаты..."
+        self.players_label.text = ""
         if self.room_code and player_name:
             try:
                 joined_room = join_online_room(
@@ -1960,10 +1967,10 @@ class RoomScreen(Screen):
             self.voice_status.text = "Включен"
         if phase == "lobby":
             if self._can_control_start():
-                self.explainer_status_label.text = f"Объясняет слова: {explainer_name} | Ты: хост"
+                self.explainer_status_label.text = f"Ты — объясняющий | Нажми «Начать игру»"
             else:
-                self.explainer_status_label.text = f"Объясняет слова: {explainer_name} | Ты: отгадывающий"
-            self.wait_host_btn.text = f"Ожидание: {explainer_name} запускает игру"
+                self.explainer_status_label.text = f"Ты — угадывающий | Объясняет: {explainer_name}"
+            self.wait_host_btn.text = f"Ожидайте, пока {explainer_name} начнёт игру"
         else:
             self.explainer_status_label.text = f"Объясняет слова: {explainer_name} | Микрофон: {mic_state_text}"
 

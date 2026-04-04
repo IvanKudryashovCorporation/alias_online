@@ -470,6 +470,7 @@ class AppTextInput(TextInput):
         self.bind(focus=self._schedule_color_guard)
         self.bind(focus=self._enforce_mobile_text_input_mode)
         self.bind(parent=self._schedule_color_guard)
+        self.bind(on_text_validate=self._schedule_color_guard)
         self._apply_surface_palette()
         self._refresh_text_colors()
         self._ensure_visible_text()
@@ -522,12 +523,19 @@ class AppTextInput(TextInput):
             except Exception:
                 pass
         self._color_guard_events = []
-        for delay in (0, 0.04, 0.12, 0.24, 0.42, 0.75):
+        for delay in (0, 0.04, 0.12, 0.24, 0.42, 0.75, 1.0, 1.5, 2.0):
             self._color_guard_events.append(Clock.schedule_once(self._enforce_text_palette, delay))
 
     def _enforce_text_palette(self, *_):
         self._refresh_text_colors()
         self._ensure_visible_text()
+
+    def on_foreground_color(self, instance, value):
+        """Intercept any runtime reset of foreground_color by Android IME or Kivy internals."""
+        desired = COLORS["input_readonly_text"] if (self.readonly or self.disabled) else COLORS["input_text"]
+        if list(value) != list(desired):
+            Clock.schedule_once(lambda dt: setattr(self, "foreground_color", desired), 0)
+            Clock.schedule_once(lambda dt: self._force_internal_line_palette(desired), 0)
 
     def _force_internal_line_palette(self, rgba):
         # Some mobile keyboards repaint internal line labels with a default color.
