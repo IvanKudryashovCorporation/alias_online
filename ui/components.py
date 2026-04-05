@@ -532,10 +532,25 @@ class AppTextInput(TextInput):
 
     def on_foreground_color(self, instance, value):
         """Intercept any runtime reset of foreground_color by Android IME or Kivy internals."""
+        if getattr(self, "_color_fix_in_progress", False):
+            return
         desired = COLORS["input_readonly_text"] if (self.readonly or self.disabled) else COLORS["input_text"]
         if list(value) != list(desired):
-            Clock.schedule_once(lambda dt: setattr(self, "foreground_color", desired), 0)
-            Clock.schedule_once(lambda dt: self._force_internal_line_palette(desired), 0)
+            self._color_fix_in_progress = True
+
+            def _apply_fix(dt):
+                self.foreground_color = desired
+                self._force_internal_line_palette(desired)
+                self._color_fix_in_progress = False
+
+            Clock.schedule_once(_apply_fix, 0)
+
+    def _get_line_options(self):
+        """Override Kivy internal method to force correct text color in rendered labels."""
+        opts = super()._get_line_options()
+        desired = COLORS["input_readonly_text"] if (self.readonly or self.disabled) else COLORS["input_text"]
+        opts["color"] = desired
+        return opts
 
     def _force_internal_line_palette(self, rgba):
         # Some mobile keyboards repaint internal line labels with a default color.
@@ -550,6 +565,11 @@ class AppTextInput(TextInput):
             options = getattr(line_label, "options", None)
             if isinstance(options, dict):
                 options["color"] = rgba
+        # Also force refresh the texture so new color takes effect immediately
+        try:
+            self._trigger_refresh_text()
+        except Exception:
+            pass
 
     def _sync_canvas(self, *_):
         self._stencil_mask.pos = self.pos
