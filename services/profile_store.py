@@ -17,6 +17,8 @@ GUEST_NAME_PATTERN = re.compile(r"^гость\s*\d+$", re.IGNORECASE)
 DEFAULT_DB_PATH = Path(__file__).resolve().parents[1] / "data" / "alias_online.db"
 ROOM_CREATION_COST = 25
 STARTER_ALIAS_COINS = 100
+GUESSER_COIN_REWARD = 5
+EXPLAINER_COIN_REWARD = 3
 PROFILE_COLUMNS = (
     "id, name, email, avatar_path, bio, alias_coins, games_played, total_points, rooms_created, "
     "guessed_words, explained_words, match_penalty_until, match_penalty_reason, "
@@ -1453,9 +1455,15 @@ def sync_room_progress(email, room_code, current_score, round_started=False, rol
                 (clean_email, clean_room_code, score_value, round_flag),
             )
             if round_flag:
-                coins_awarded = max(0, score_value)
-                guessed_words_awarded = coins_awarded if role_name == "guesser" else 0
-                explained_words_awarded = coins_awarded if role_name == "explainer" else 0
+                score_delta = max(0, score_value)
+                if role_name == "guesser":
+                    coins_awarded = score_delta * GUESSER_COIN_REWARD
+                elif role_name == "explainer":
+                    coins_awarded = score_delta * EXPLAINER_COIN_REWARD
+                else:
+                    coins_awarded = score_delta
+                guessed_words_awarded = score_delta if role_name == "guesser" else 0
+                explained_words_awarded = score_delta if role_name == "explainer" else 0
                 connection.execute(
                     """
                     UPDATE profiles
@@ -1473,10 +1481,16 @@ def sync_room_progress(email, room_code, current_score, round_started=False, rol
         else:
             previous_score = int(claim["last_score_seen"] or 0)
             previous_game_counted = int(claim["game_counted"] or 0)
-            coins_awarded = max(0, score_value - previous_score)
+            score_delta = max(0, score_value - previous_score)
+            if role_name == "guesser":
+                coins_awarded = score_delta * GUESSER_COIN_REWARD
+            elif role_name == "explainer":
+                coins_awarded = score_delta * EXPLAINER_COIN_REWARD
+            else:
+                coins_awarded = score_delta
             game_counted = bool(round_flag and not previous_game_counted)
-            guessed_words_awarded = coins_awarded if role_name == "guesser" else 0
-            explained_words_awarded = coins_awarded if role_name == "explainer" else 0
+            guessed_words_awarded = score_delta if role_name == "guesser" else 0
+            explained_words_awarded = score_delta if role_name == "explainer" else 0
 
             if coins_awarded or game_counted:
                 connection.execute(
