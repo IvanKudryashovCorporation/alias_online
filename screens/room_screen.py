@@ -678,6 +678,21 @@ class TouchPassthroughFloatLayout(FloatLayout):
 
 
 class FullscreenCountdownOverlay(FloatLayout):
+    def on_touch_down(self, touch):
+        if not self._active:
+            return False  # Hidden → pass touches through
+        return True  # Visible → block all touches during countdown
+
+    def on_touch_move(self, touch):
+        if not self._active:
+            return False
+        return True
+
+    def on_touch_up(self, touch):
+        if not self._active:
+            return False
+        return True
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self._active = False
@@ -1598,6 +1613,13 @@ class RoomScreen(Screen):
         button.disabled = not visible
         button.opacity = 1 if visible else 0
 
+    def _show_status(self, text, color_key="error"):
+        self.status_label.color = COLORS.get(color_key, COLORS["error"])
+        self.status_label.text = text
+        self.status_label.opacity = 1
+        self.status_label.disabled = False
+        self.status_label.height = dp(36)
+
     def _set_panel_visibility(self, panel, visible, shown_height):
         panel.disabled = not visible
         panel.opacity = 1 if visible else 0
@@ -1620,6 +1642,20 @@ class RoomScreen(Screen):
         self._set_button_visibility(self.start_game_btn, can_start)
         self.wait_host_btn.disabled = True
         self.wait_host_btn.opacity = 1 if waiting_for_host else 0
+        # Collapse hidden button so the visible one stays centered in the row.
+        if waiting_for_host:
+            self.wait_host_btn.size_hint_x = None
+            self.wait_host_btn.width = dp(228)
+            self.start_game_btn.size_hint_x = None
+            self.start_game_btn.width = dp(0)
+        elif can_start:
+            self.start_game_btn.size_hint_x = None
+            self.start_game_btn.width = dp(228)
+            self.wait_host_btn.size_hint_x = None
+            self.wait_host_btn.width = dp(0)
+        else:
+            self.start_game_btn.width = dp(0)
+            self.wait_host_btn.width = dp(0)
 
     def _set_mic_muted(self, muted):
         self._mic_muted_state = bool(muted)
@@ -2292,18 +2328,15 @@ class RoomScreen(Screen):
 
     def _start_game(self, *_):
         if self._current_phase() != "lobby":
-            self.status_label.color = COLORS["warning"]
-            self.status_label.text = "Игра уже запущена."
+            self._show_status("Игра уже запущена.", "warning")
             return
         if not self._can_control_start():
-            self.status_label.color = COLORS["warning"]
-            self.status_label.text = "Начать игру может только создатель комнаты."
+            self._show_status("Начать игру может только создатель комнаты.", "warning")
             return
 
         player_name = self._player_name()
         if not player_name or not self.room_code:
-            self.status_label.color = COLORS["error"]
-            self.status_label.text = "Не удалось определить игрока для старта игры."
+            self._show_status("Не удалось определить игрока для старта игры.")
             return
 
         room_before_start = self.room_state.get("room", {}) if isinstance(self.room_state, dict) else {}
@@ -2323,17 +2356,17 @@ class RoomScreen(Screen):
                 except (TypeError, ValueError):
                     current_coins = 0
                 if current_coins < ROOM_CREATION_COST:
-                    self.status_label.color = COLORS["warning"]
-                    self.status_label.text = (
-                        f"Нужно минимум {ROOM_CREATION_COST} AC для запуска игры. Сейчас: {current_coins} AC."
+                    self._show_status(
+                        f"Нужно минимум {ROOM_CREATION_COST} AC для запуска игры. Сейчас: {current_coins} AC.",
+                        "warning",
                     )
                     return
             elif app is not None and getattr(app, "guest_mode", False):
                 current_coins = int(app.current_alias_coins() or 0)
                 if current_coins < ROOM_CREATION_COST:
-                    self.status_label.color = COLORS["warning"]
-                    self.status_label.text = (
-                        f"Нужно минимум {ROOM_CREATION_COST} AC для запуска игры. Сейчас: {current_coins} AC."
+                    self._show_status(
+                        f"Нужно минимум {ROOM_CREATION_COST} AC для запуска игры. Сейчас: {current_coins} AC.",
+                        "warning",
                     )
                     return
 
@@ -2361,14 +2394,15 @@ class RoomScreen(Screen):
             result = {"status": "connection_error", "message": str(error)}
         except ValueError as error:
             result = {"status": "value_error", "message": str(error)}
+        except Exception as error:
+            result = {"status": "error", "message": f"Ошибка: {error}"}
         Clock.schedule_once(lambda dt: self._finish_start_game(result), 0)
 
     def _finish_start_game(self, result):
         status = result.get("status")
         if status in ("connection_error", "value_error", "error"):
             color_key = "error" if status == "connection_error" else "warning"
-            self.status_label.color = COLORS[color_key]
-            self.status_label.text = result.get("message") or "Не удалось запустить игру."
+            self._show_status(result.get("message") or "Не удалось запустить игру.", color_key)
             self._start_game_request_in_flight = False
             self.start_game_btn.disabled = False
             self.loading_overlay.hide()
@@ -2420,28 +2454,26 @@ class RoomScreen(Screen):
                 self._start_game_request_in_flight = False
                 self.start_game_btn.disabled = False
                 self.loading_overlay.hide()
-                self.status_label.color = COLORS["warning"]
-                self.status_label.text = str(charge_payload)
+                self._show_status(str(charge_payload), "warning")
                 return
 
         self._start_game_request_in_flight = False
         self.loading_overlay.hide()
-        self.status_label.color = COLORS["success"]
         if should_charge_start and charge_payload is not None:
             remaining_coins = int(getattr(charge_payload, "alias_coins", 0) or 0)
-            self.status_label.text = (
-                f"Старт игры! Списано {ROOM_CREATION_COST} AC, осталось {remaining_coins} AC."
+            self._show_status(
+                f"Старт игры! Списано {ROOM_CREATION_COST} AC, осталось {remaining_coins} AC.",
+                "success",
             )
         else:
-            self.status_label.text = "Старт игры! Первый запуск в этой комнате бесплатный."
+            self._show_status("Старт игры! Первый запуск в этой комнате бесплатный.", "success")
         self._poll_state()
 
     def _send_chat_message(self, *_):
         if self._chat_request_in_flight:
             return
         if not self._can_send_chat():
-            self.status_label.color = COLORS["warning"]
-            self.status_label.text = "Объясняющий не может писать в чат. Только объяснять голосом."
+            self._show_status("Объясняющий не может писать в чат. Только объяснять голосом.", "warning")
             return
 
         text = self.chat_input.text.strip()
