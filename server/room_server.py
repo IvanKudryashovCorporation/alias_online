@@ -1,7 +1,4 @@
 import argparse
-import base64
-import difflib
-import io
 import json
 import os
 import random
@@ -15,7 +12,6 @@ import sys
 import threading
 import time
 import urllib.request
-import wave
 from contextlib import suppress
 from datetime import datetime, timedelta
 from email.message import EmailMessage
@@ -81,33 +77,32 @@ _AUTH_LOCK = threading.Lock()
 _PENDING_REGISTRATIONS = {}
 _PENDING_PASSWORD_RESETS = {}
 
-_BOT_POOL_NAMES = (
-    "Alex",
-    "Mia",
-    "Leo",
-    "Nora",
-    "Max",
-    "Eva",
-    "Ryan",
-    "Lina",
-    "Mark",
-    "Sofi",
-    "Ivan",
-    "Sara",
-)
-_BOT_NAME_MARKER = "\u2063"
-_BOT_LOBBY_IDLE_SECONDS = 6
-_BOT_LOBBY_MAX_PER_ROOM = 4
-_BOT_TRANSCRIPT_LOOKBACK_SECONDS = 16
-_BOT_TRANSCRIPT_MIN_CHUNKS = 2
-_BOT_TRANSCRIPT_CACHE_TTL_SECONDS = 14
-_BOT_TRANSCRIPT_CACHE = {}
-_BOT_TRANSCRIPT_CACHE_LOCK = threading.Lock()
+# --- Rate limiting -----------------------------------------------------------
+_RATE_LIMIT_LOCK = threading.Lock()
+_RATE_LIMIT_BUCKETS = {}  # key -> list of timestamps
+_RATE_LIMIT_MAX_BUCKETS = 4096
 
-_OPENAI_API_KEY_ENV = "ALIAS_OPENAI_API_KEY"
-_OPENAI_BASE_URL_ENV = "ALIAS_OPENAI_BASE_URL"
-_OPENAI_TRANSCRIBE_MODEL_ENV = "ALIAS_OPENAI_TRANSCRIBE_MODEL"
-_OPENAI_TRANSCRIBE_TIMEOUT_SEC = 12
+
+def _rate_limit_check(key, max_requests, window_seconds):
+    """Return True if the request is allowed, False if rate-limited."""
+    now = time.time()
+    cutoff = now - window_seconds
+    with _RATE_LIMIT_LOCK:
+        # Evict stale buckets periodically
+        if len(_RATE_LIMIT_BUCKETS) > _RATE_LIMIT_MAX_BUCKETS:
+            stale = [k for k, v in _RATE_LIMIT_BUCKETS.items() if not v or v[-1] < cutoff]
+            for k in stale:
+                _RATE_LIMIT_BUCKETS.pop(k, None)
+        timestamps = _RATE_LIMIT_BUCKETS.get(key, [])
+        timestamps = [t for t in timestamps if t > cutoff]
+        if len(timestamps) >= max_requests:
+            _RATE_LIMIT_BUCKETS[key] = timestamps
+            return False
+        timestamps.append(now)
+        _RATE_LIMIT_BUCKETS[key] = timestamps
+        return True
+
+_BOT_NAME_MARKER = "\u2063"
 
 
 def _safe_int_env(name, default):
@@ -657,8 +652,12 @@ def _normalize_guess(value):
     return compact
 
 
+COIN_REWARD_GUESSER = 5
+COIN_REWARD_EXPLAINER = 3
+
+
 def _required_players_to_start(max_players):
-    return 1
+    return 2
 
 
 def _init_db():
@@ -1094,284 +1093,9 @@ def _preferred_human_player(players):
     return ""
 
 
-def _pick_bot_delay_seconds():
-    return random.uniform(1.6, 4.2)
-
-
-def _pick_lobby_bot_delay_seconds():
-    return random.uniform(2.5, 4.5)
-
-
-def _next_bot_action_at(mode="round"):
-    if mode == "lobby":
-        return _dt_to_str(_utc_now() + timedelta(seconds=_pick_lobby_bot_delay_seconds()))
-    return _dt_to_str(_utc_now() + timedelta(seconds=_pick_bot_delay_seconds()))
-
-
-def _openai_api_key():
-    return (os.getenv(_OPENAI_API_KEY_ENV) or "").strip()
-
-
 def _ai_bots_enabled():
     # Bot auto-join is disabled for live multiplayer rooms.
     return False
-
-
-def _openai_base_url():
-    raw = (os.getenv(_OPENAI_BASE_URL_ENV) or "https://api.openai.com/v1").strip().rstrip("/")
-    return raw or "https://api.openai.com/v1"
-
-
-def _openai_transcribe_model():
-    return (os.getenv(_OPENAI_TRANSCRIBE_MODEL_ENV) or "gpt-4o-mini-transcribe").strip() or "gpt-4o-mini-transcribe"
-
-
-def _voice_rows_for_transcript(connection, room_code, speaker_name):
-    since = _dt_to_str(_utc_now() - timedelta(seconds=_BOT_TRANSCRIPT_LOOKBACK_SECONDS))
-    rows = connection.execute(
-        """
-        SELECT id, sample_rate, pcm16_b64
-        FROM room_voice_chunks
-        WHERE room_code = ? AND player_name = ? AND created_at >= ?
-        ORDER BY id ASC
-        LIMIT 120
-        """,
-        (room_code, speaker_name, since),
-    ).fetchall()
-    return rows
-
-
-def _voice_rows_to_wav(rows):
-    if not rows:
-        return None, None, None
-
-    decoded = []
-    rate_counter = {}
-    for row in rows:
-        try:
-            sample_rate = int(row["sample_rate"] or 0)
-        except (TypeError, ValueError):
-            sample_rate = 0
-        if sample_rate < 8000 or sample_rate > 48000:
-            continue
-        try:
-            pcm16_raw = base64.b64decode((row["pcm16_b64"] or "").encode("ascii"), validate=True)
-        except Exception:
-            continue
-        if len(pcm16_raw) < 2:
-            continue
-        decoded.append((int(row["id"]), sample_rate, pcm16_raw))
-        rate_counter[sample_rate] = int(rate_counter.get(sample_rate, 0)) + 1
-
-    if len(decoded) < _BOT_TRANSCRIPT_MIN_CHUNKS:
-        return None, None, None
-
-    target_rate = max(rate_counter.items(), key=lambda pair: pair[1])[0]
-    chunk_ids = []
-    buffer = bytearray()
-    for chunk_id, sample_rate, pcm16_raw in decoded:
-        if sample_rate != target_rate:
-            continue
-        chunk_ids.append(chunk_id)
-        buffer.extend(pcm16_raw)
-
-    if len(chunk_ids) < _BOT_TRANSCRIPT_MIN_CHUNKS or len(buffer) < 512:
-        return None, None, None
-
-    wav_stream = io.BytesIO()
-    with wave.open(wav_stream, "wb") as wav_file:
-        wav_file.setnchannels(1)
-        wav_file.setsampwidth(2)
-        wav_file.setframerate(target_rate)
-        wav_file.writeframes(bytes(buffer))
-
-    return wav_stream.getvalue(), max(chunk_ids), target_rate
-
-
-def _build_multipart_body(*, fields, file_field, filename, content_type, file_bytes):
-    boundary = f"----AliasForm{secrets.token_hex(8)}"
-    body = bytearray()
-
-    for key, value in fields.items():
-        body.extend(f"--{boundary}\r\n".encode("utf-8"))
-        body.extend(f'Content-Disposition: form-data; name="{key}"\r\n\r\n'.encode("utf-8"))
-        body.extend(str(value).encode("utf-8"))
-        body.extend(b"\r\n")
-
-    body.extend(f"--{boundary}\r\n".encode("utf-8"))
-    body.extend(
-        (
-            f'Content-Disposition: form-data; name="{file_field}"; filename="{filename}"\r\n'
-            f"Content-Type: {content_type}\r\n\r\n"
-        ).encode("utf-8")
-    )
-    body.extend(file_bytes)
-    body.extend(b"\r\n")
-    body.extend(f"--{boundary}--\r\n".encode("utf-8"))
-    return boundary, bytes(body)
-
-
-def _transcribe_wav_with_openai(wav_bytes):
-    api_key = _openai_api_key()
-    if not api_key or not wav_bytes:
-        return ""
-
-    model = _openai_transcribe_model()
-    endpoint = f"{_openai_base_url()}/audio/transcriptions"
-    boundary, body = _build_multipart_body(
-        fields={"model": model, "temperature": "0"},
-        file_field="file",
-        filename="voice.wav",
-        content_type="audio/wav",
-        file_bytes=wav_bytes,
-    )
-    request = urllib.request.Request(
-        endpoint,
-        data=body,
-        method="POST",
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": f"multipart/form-data; boundary={boundary}",
-            "Accept": "application/json",
-        },
-    )
-
-    try:
-        with urllib.request.urlopen(request, timeout=_OPENAI_TRANSCRIBE_TIMEOUT_SEC) as response:
-            payload = json.loads(response.read().decode("utf-8"))
-    except Exception:
-        return ""
-
-    text = (payload.get("text") or "").strip()
-    if len(text) > 220:
-        text = text[:220].strip()
-    return text
-
-
-def _cached_bot_transcript(room_code, latest_chunk_id):
-    now_ts = time.time()
-    with _BOT_TRANSCRIPT_CACHE_LOCK:
-        cached = _BOT_TRANSCRIPT_CACHE.get(room_code)
-        if (
-            cached
-            and int(cached.get("latest_chunk_id") or 0) == int(latest_chunk_id or 0)
-            and now_ts - float(cached.get("updated_ts") or 0.0) <= _BOT_TRANSCRIPT_CACHE_TTL_SECONDS
-        ):
-            return (cached.get("transcript") or "").strip()
-    return ""
-
-
-def _store_bot_transcript(room_code, latest_chunk_id, transcript):
-    with _BOT_TRANSCRIPT_CACHE_LOCK:
-        _BOT_TRANSCRIPT_CACHE[room_code] = {
-            "latest_chunk_id": int(latest_chunk_id or 0),
-            "transcript": (transcript or "").strip(),
-            "updated_ts": time.time(),
-        }
-
-
-def _resolve_explainer_transcript(connection, room_code, explainer_name):
-    if not _openai_api_key():
-        return ""
-
-    rows = _voice_rows_for_transcript(connection, room_code, explainer_name)
-    wav_bytes, latest_chunk_id, _sample_rate = _voice_rows_to_wav(rows)
-    if not wav_bytes or latest_chunk_id is None:
-        return ""
-
-    cached = _cached_bot_transcript(room_code, latest_chunk_id)
-    if cached:
-        return cached
-
-    transcript = _transcribe_wav_with_openai(wav_bytes)
-    _store_bot_transcript(room_code, latest_chunk_id, transcript)
-    return transcript
-
-
-def _word_pool_for_difficulty(difficulty):
-    key = _difficulty_key(difficulty)
-    if key == "easy":
-        return list(WORDS["easy"])
-    if key == "medium":
-        return list(WORDS["medium"])
-    if key == "hard":
-        return list(WORDS["hard"])
-    return list(WORDS["easy"] + WORDS["medium"] + WORDS["hard"])
-
-
-def _extract_transcript_tokens(text):
-    clean = re.sub(r"[^0-9a-zA-Zа-яА-ЯёЁ]+", " ", (text or "").lower())
-    return [token for token in clean.split() if len(token) >= 3]
-
-
-def _best_transcript_match(transcript, words):
-    normalized_transcript = _normalize_guess(transcript)
-    if not normalized_transcript or not words:
-        return None, 0.0
-
-    transcript_tokens = _extract_transcript_tokens(transcript)
-    best_word = None
-    best_score = 0.0
-    for candidate in words:
-        normalized_candidate = _normalize_guess(candidate)
-        if not normalized_candidate:
-            continue
-        score = 0.0
-        if normalized_candidate in normalized_transcript:
-            score = 1.0
-        if transcript_tokens:
-            for token in transcript_tokens:
-                score = max(score, difflib.SequenceMatcher(None, normalized_candidate, _normalize_guess(token)).ratio() * 0.92)
-        score = max(score, difflib.SequenceMatcher(None, normalized_candidate, normalized_transcript).ratio() * 0.62)
-        if score > best_score:
-            best_word = candidate
-            best_score = score
-    return best_word, float(best_score)
-
-
-def _humanize_bot_guess(guess_text):
-    clean_guess = (guess_text or "").strip()
-    if not clean_guess:
-        return clean_guess
-    roll = random.random()
-    if roll < 0.12:
-        return clean_guess.lower()
-    if roll < 0.20:
-        return f"{clean_guess}?"
-    if roll < 0.24:
-        return f"мб {clean_guess.lower()}"
-    return clean_guess
-
-
-def _pick_bot_name(existing_players):
-    existing = {(name or "").strip().lower() for name in existing_players}
-    existing_visible = {_visible_player_name(name).lower() for name in existing_players}
-    pool = list(_BOT_POOL_NAMES)
-    random.shuffle(pool)
-    for candidate in pool:
-        bot_candidate = f"{_BOT_NAME_MARKER}{candidate}"
-        if bot_candidate.lower() not in existing and candidate.lower() not in existing_visible:
-            return bot_candidate
-    base_name = random.choice(_BOT_POOL_NAMES)
-    index = 2
-    while True:
-        candidate = f"{_BOT_NAME_MARKER}{base_name} {index}"
-        if candidate.lower() not in existing and _visible_player_name(candidate).lower() not in existing_visible:
-            return candidate
-        index += 1
-
-
-def _schedule_lobby_bot_join(connection, room_code, seconds):
-    seconds = max(2, int(seconds))
-    connection.execute(
-        """
-        UPDATE rooms
-        SET bot_next_action_at = ?,
-            updated_at = ?
-        WHERE code = ?
-        """,
-        (_dt_to_str(_utc_now() + timedelta(seconds=seconds)), _now(), room_code),
-    )
 
 
 def _purge_bots_if_ai_disabled(connection, room_code, players):
@@ -1462,111 +1186,6 @@ def _purge_bots_if_ai_disabled(connection, room_code, players):
     return bool(changed or has_scheduled_bot_action)
 
 
-def _maybe_add_lobby_bot(connection, room_code, room, players):
-    if _purge_bots_if_ai_disabled(connection, room_code, players):
-        return False
-    if not _ai_bots_enabled():
-        return False
-
-    max_players = int(room.get("max_players") or 0)
-    if max_players <= 0:
-        return False
-    if len(players) >= max_players:
-        connection.execute(
-            """
-            UPDATE rooms
-            SET bot_next_action_at = NULL,
-                updated_at = ?
-            WHERE code = ?
-            """,
-            (_now(), room_code),
-        )
-        return False
-
-    human_players = [player for player in players if not _is_bot_player(player)]
-    if not human_players:
-        return False
-
-    bot_players = [player for player in players if _is_bot_player(player)]
-    if len(bot_players) >= min(_BOT_LOBBY_MAX_PER_ROOM, max(0, max_players - 1)):
-        return False
-
-    updated_dt = _str_to_dt(room.get("updated_at")) or _str_to_dt(room.get("created_at")) or _utc_now()
-    idle_seconds = max(0, int((_utc_now() - updated_dt).total_seconds()))
-    if idle_seconds < _BOT_LOBBY_IDLE_SECONDS and not bot_players:
-        _schedule_lobby_bot_join(connection, room_code, max(1, _BOT_LOBBY_IDLE_SECONDS - idle_seconds))
-        return False
-
-    bot_name = _pick_bot_name(players)
-    joined_at = _now()
-    connection.execute(
-        """
-        INSERT INTO room_players (room_code, player_name, joined_at)
-        VALUES (?, ?, ?)
-        """,
-        (room_code, bot_name, joined_at),
-    )
-    _ensure_score_row(connection, room_code, bot_name)
-    _insert_message(connection, room_code, "System", f"{bot_name} joined the room.", "system")
-
-    players_after = _room_players(connection, room_code)
-    should_schedule_more = len(players_after) < max_players and (
-        len([name for name in players_after if _is_bot_player(name)]) < min(_BOT_LOBBY_MAX_PER_ROOM, max(0, max_players - 1))
-    )
-    connection.execute(
-        """
-        UPDATE rooms
-        SET bot_next_action_at = ?,
-            updated_at = ?
-        WHERE code = ?
-        """,
-        (_next_bot_action_at("lobby") if should_schedule_more else None, _now(), room_code),
-    )
-    return True
-
-
-def _pick_bot_round_guess(connection, room_code, room):
-    current_word = (room.get("current_word") or "").strip()
-    difficulty = room.get("difficulty")
-    explainer_name = (room.get("current_explainer") or "").strip()
-    transcript = _resolve_explainer_transcript(connection, room_code, explainer_name)
-    if not transcript:
-        return None
-    word_pool = _word_pool_for_difficulty(difficulty)
-    best_match, confidence = _best_transcript_match(transcript, word_pool)
-
-    if best_match:
-        normalized_best = _normalize_guess(best_match)
-        normalized_current = _normalize_guess(current_word)
-        best_is_current = bool(normalized_best and normalized_current and normalized_best == normalized_current)
-        if best_is_current:
-            chance_to_guess = min(0.94, max(0.36, 0.22 + confidence * 0.78))
-            if random.random() <= chance_to_guess:
-                return _humanize_bot_guess(current_word)
-        elif confidence >= 0.86 and random.random() < 0.48:
-            return _humanize_bot_guess(best_match)
-        elif confidence >= 0.74 and random.random() < 0.22:
-            return _humanize_bot_guess(best_match)
-
-    transcript_tokens = _extract_transcript_tokens(transcript)
-    if transcript_tokens and random.random() < 0.22:
-        return _humanize_bot_guess(random.choice(transcript_tokens))
-    return None
-
-
-def _pick_wrong_bot_guess(current_word, difficulty):
-    current = _normalize_guess(current_word)
-    for _ in range(12):
-        candidate = _pick_word(difficulty)
-        if _normalize_guess(candidate) != current:
-            return candidate
-    fallback_pool = ["ракета", "лампа", "окно", "музыка", "яблоко", "поезд"]
-    for candidate in fallback_pool:
-        if _normalize_guess(candidate) != current:
-            return candidate
-    return "другое"
-
-
 def _process_room_guess(connection, room_code, player_name, guess):
     room = connection.execute("SELECT * FROM rooms WHERE code = ?", (room_code,)).fetchone()
     if room is None:
@@ -1621,15 +1240,12 @@ def _process_room_guess(connection, room_code, player_name, guess):
         "guesser_player": resolved_player_name if correct else None,
         "guesser_delta": 1 if correct else 0,
         "guesser_score": awarded_guesser_score,
+        "coin_reward_guesser": COIN_REWARD_GUESSER if correct else 0,
+        "coin_reward_explainer": COIN_REWARD_EXPLAINER if correct else 0,
         "room": response_payload["room"] if response_payload else {},
         "scores": response_payload.get("scores", []) if response_payload else [],
         "current_word": response_payload.get("current_word", "") if response_payload else "",
     }
-
-
-def _run_bot_activity(connection, room_code):
-    players = _room_players(connection, room_code)
-    _purge_bots_if_ai_disabled(connection, room_code, players)
 
 
 def _insert_message(connection, room_code, player_name, message, message_type):
@@ -2033,6 +1649,10 @@ def _room_payload(connection, room_code, player_name="", since_id=None):
 class RoomHandler(BaseHTTPRequestHandler):
     server_version = "AliasRoomServer/1.5"
 
+    def _client_ip(self):
+        forwarded = (self.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
+        return forwarded or (self.client_address[0] if self.client_address else "unknown")
+
     def _json_response(self, code, payload):
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(code)
@@ -2175,6 +1795,9 @@ class RoomHandler(BaseHTTPRequestHandler):
         return (params.get("session_id", [""])[0] or "").strip()
 
     def _handle_auth_register_request_code(self):
+        if not _rate_limit_check(f"reg:{self._client_ip()}", max_requests=5, window_seconds=300):
+            self._json_response(429, {"error": "Слишком много запросов. Подожди 5 минут."})
+            return
         try:
             payload = self._parse_json_body()
             result = _begin_registration_verification(
@@ -2238,6 +1861,9 @@ class RoomHandler(BaseHTTPRequestHandler):
         self._json_response(200, {"ok": True})
 
     def _handle_auth_password_request_code(self):
+        if not _rate_limit_check(f"pwd:{self._client_ip()}", max_requests=5, window_seconds=300):
+            self._json_response(429, {"error": "Слишком много запросов. Подожди 5 минут."})
+            return
         try:
             payload = self._parse_json_body()
             result = _begin_password_reset(email=payload.get("email"))
@@ -2349,6 +1975,9 @@ class RoomHandler(BaseHTTPRequestHandler):
         self._json_response(200, {"code": code})
 
     def _handle_create_room(self):
+        if not _rate_limit_check(f"room:{self._client_ip()}", max_requests=10, window_seconds=300):
+            self._json_response(429, {"error": "Слишком много запросов на создание комнат."})
+            return
         try:
             payload = self._parse_json_body()
         except ValueError as error:

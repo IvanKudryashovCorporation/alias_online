@@ -38,8 +38,11 @@ def _is_retryable_http_status(status_code):
 
 def _retry_sleep_delay(attempt):
     index = max(1, int(attempt))
-    # Smooth backoff for sleeping Render instances: 0.55s, 1.1s, 1.65s, ...
-    return REMOTE_RETRY_BASE_DELAY_SECONDS * index
+    # Exponential backoff with jitter: ~0.55s, ~1.1s, ~2.2s, ~4.4s, capped at 8s
+    import random
+    base = REMOTE_RETRY_BASE_DELAY_SECONDS * (2 ** (index - 1))
+    capped = min(base, 8.0)
+    return capped * (0.7 + 0.6 * random.random())
 
 
 def _is_mobile_platform():
