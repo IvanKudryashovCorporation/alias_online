@@ -2341,22 +2341,42 @@ class RoomScreen(Screen):
         self.start_game_btn.disabled = True
         self.loading_overlay.show("Запускаем игру...")
 
+        Thread(
+            target=self._start_game_worker,
+            args=(self.room_code, player_name, should_charge_by_local_state, starts_before),
+            daemon=True,
+        ).start()
+
+    def _start_game_worker(self, room_code, player_name, should_charge_by_local_state, starts_before):
+        result = {"status": "error", "message": "Не удалось запустить игру."}
         try:
-            start_response = start_room_game(room_code=self.room_code, player_name=player_name)
+            start_response = start_room_game(room_code=room_code, player_name=player_name)
+            result = {
+                "status": "success",
+                "response": start_response,
+                "should_charge_by_local_state": should_charge_by_local_state,
+                "starts_before": starts_before,
+            }
         except ConnectionError as error:
-            self.status_label.color = COLORS["error"]
-            self.status_label.text = str(error)
-            self._start_game_request_in_flight = False
-            self.start_game_btn.disabled = False
-            self.loading_overlay.hide()
-            return
+            result = {"status": "connection_error", "message": str(error)}
         except ValueError as error:
-            self.status_label.color = COLORS["warning"]
-            self.status_label.text = str(error)
+            result = {"status": "value_error", "message": str(error)}
+        Clock.schedule_once(lambda dt: self._finish_start_game(result), 0)
+
+    def _finish_start_game(self, result):
+        status = result.get("status")
+        if status in ("connection_error", "value_error", "error"):
+            color_key = "error" if status == "connection_error" else "warning"
+            self.status_label.color = COLORS[color_key]
+            self.status_label.text = result.get("message") or "Не удалось запустить игру."
             self._start_game_request_in_flight = False
             self.start_game_btn.disabled = False
             self.loading_overlay.hide()
             return
+
+        start_response = result.get("response") or {}
+        should_charge_by_local_state = result.get("should_charge_by_local_state", False)
+        starts_before = result.get("starts_before", 0)
 
         updated_state = dict(self.room_state or {})
         if isinstance(start_response, dict):
