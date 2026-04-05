@@ -666,28 +666,6 @@ def update_profile(email, name=None, avatar_path=None, bio=None, db_path=None):
         raise ValueError("Укажи корректный e-mail.")
 
     with _connect(db_path) as connection:
-        blocked_by_owner = connection.execute(
-            """
-            SELECT 1
-            FROM blocked_profiles
-            WHERE owner_email = ? AND blocked_email = ?
-            """,
-            (clean_owner, clean_friend),
-        ).fetchone()
-        if blocked_by_owner is not None:
-            raise ValueError("Сначала сними блокировку этого игрока.")
-
-        blocked_owner = connection.execute(
-            """
-            SELECT 1
-            FROM blocked_profiles
-            WHERE owner_email = ? AND blocked_email = ?
-            """,
-            (clean_friend, clean_owner),
-        ).fetchone()
-        if blocked_owner is not None:
-            raise ValueError("Этот игрок ограничил взаимодействие.")
-
         existing = connection.execute(
             """
             SELECT id
