@@ -658,6 +658,25 @@ class ExplainerSpotlightCard(RoundedPanel):
         self.guessed_chip.set_value(getattr(profile, "guessed_words", 0) if profile is not None else 0)
 
 
+class TouchPassthroughFloatLayout(FloatLayout):
+    """FloatLayout that passes touches through when disabled/hidden instead of consuming them."""
+
+    def on_touch_down(self, touch):
+        if self.disabled or self.opacity < 0.01:
+            return False
+        return super().on_touch_down(touch)
+
+    def on_touch_move(self, touch):
+        if self.disabled or self.opacity < 0.01:
+            return False
+        return super().on_touch_move(touch)
+
+    def on_touch_up(self, touch):
+        if self.disabled or self.opacity < 0.01:
+            return False
+        return super().on_touch_up(touch)
+
+
 class FullscreenCountdownOverlay(FloatLayout):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -838,7 +857,7 @@ class RoomScreen(Screen):
         self.scores_wrap_height = dp(132)
         self.scores_wrap_overlay_height = dp(162)
         self.scores_wrap = FloatLayout(size_hint_y=None, height=self.scores_wrap_height)
-        self.score_chat_layer = FloatLayout(size_hint=(1, 1), opacity=0, disabled=True)
+        self.score_chat_layer = TouchPassthroughFloatLayout(size_hint=(1, 1), opacity=0, disabled=True)
         self.scores_wrap.add_widget(self.score_chat_layer)
         self.score_badge = ScoreBadge(pos_hint={"center_x": 0.5, "top": 1.0})
         self.scores_wrap.add_widget(self.score_badge)
@@ -994,7 +1013,7 @@ class RoomScreen(Screen):
         content.add_widget(self.chat_host)
 
         self.countdown_overlay = FullscreenCountdownOverlay()
-        self.chat_overlay_layer = FloatLayout(size_hint=(1, 1), opacity=0, disabled=True)
+        self.chat_overlay_layer = TouchPassthroughFloatLayout(size_hint=(1, 1), opacity=0, disabled=True)
 
         root.add_widget(content)
         root.add_widget(self.chat_overlay_layer)
