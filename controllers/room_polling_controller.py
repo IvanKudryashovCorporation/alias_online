@@ -283,6 +283,10 @@ class RoomPollingController:
                 self.screen._room_state_version = incoming_version
                 self.screen.room_state = state
                 state_updated = True
+                # Verify state consistency
+                room_version_check = (state.get("room", {}).get("updated_at") or "")
+                if room_version_check != incoming_version:
+                    print(f"[POLLING] WARNING: State version mismatch! incoming={incoming_version}, room.updated_at={room_version_check}")
 
                 self._rejoin_recover_attempts = 0
                 app = App.get_running_app()
