@@ -1389,24 +1389,15 @@ class LoadingOverlay(FloatLayout):
 
     def hide(self):
         import traceback
-        # Log who's calling hide
+        # Log full traceback of hide() calls to identify issue
         stack = traceback.extract_stack()
-        caller = "unknown"
-        for frame in reversed(stack[-5:-1]):
-            if "finish_start_game" in frame.name:
-                caller = "finish_start_game"
-                break
-            elif "start_game" in frame.name:
-                caller = "start_game"
-                break
-            elif "on_pre_enter" in frame.name:
-                caller = "on_pre_enter"
-                break
-            elif "polling" in frame.name or "_finish_poll_state" in frame.name:
-                caller = "polling"
-                break
+        if len(stack) > 3:
+            caller_frame = stack[-3]  # Get the frame that called hide()
+            caller_info = f"{caller_frame.name}:{caller_frame.lineno}"
+        else:
+            caller_info = "unknown"
 
-        print(f"[LOADING_OVERLAY] HIDE (from {caller})")
+        print(f"[LOADING_OVERLAY] HIDE from {caller_info}")
         if self._spin_event is not None:
             self._spin_event.cancel()
             self._spin_event = None
