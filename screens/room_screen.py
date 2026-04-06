@@ -2163,20 +2163,23 @@ class RoomScreen(Screen):
                 self.countdown_overlay.show(countdown_left)
             else:
                 self.countdown_overlay.show(1)
-            # Start local countdown timer for smooth updates
-            server_time = self.room_state.get("server_time", 0)
-            if server_time:
-                self._start_countdown_timer(server_time, countdown_left)
+            # Start local countdown timer ONLY if not already running for countdown phase
+            if self._countdown_event is None:
+                server_time = self.room_state.get("server_time", 0)
+                if server_time:
+                    self._start_countdown_timer(server_time, countdown_left)
         else:
             self.phase_label.color = COLORS["success"]
             self.phase_label.text = f"ОСТАЛОСЬ {round_left} СЕК"
             print(f"[PHASE] Hiding countdown overlay (round)")
             self._stop_countdown_timer()
             self.countdown_overlay.hide()
-            # Start local round timer for smooth updates
-            server_time = self.room_state.get("server_time", 0)
-            if server_time:
-                self._start_round_timer(server_time, round_left)
+            # Start local round timer ONLY if not already running for round phase
+            # This prevents timer restart jitter when polling updates state frequently
+            if self._round_timer_event is None:
+                server_time = self.room_state.get("server_time", 0)
+                if server_time:
+                    self._start_round_timer(server_time, round_left)
 
         self._render_player_cards(players, explainer_name, host_name, profile_map, score_map, phase)
         if phase == "round" and is_explainer:
