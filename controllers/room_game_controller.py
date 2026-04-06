@@ -263,9 +263,9 @@ class RoomGameController:
             return
         if not self._start_game_request_in_flight:
             return
+        # Only unblock if still waiting (finish_start_game will hide overlay when it completes)
         self._start_game_request_in_flight = False
         self.screen._start_game_request_in_flight = False
-        self.screen.loading_overlay.hide()
         self.screen.start_game_btn.disabled = not self.can_start_game()
         self.screen.status_label.color = self.screen.COLORS["warning"]
         self.screen.status_label.text = "Сервер отвечает слишком долго. Попробуй нажать «Начать игру» ещё раз."
