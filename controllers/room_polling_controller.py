@@ -131,6 +131,13 @@ class RoomPollingController:
             print(f"[REJOIN] Version check: incoming={incoming_version}({incoming_phase}), current={current_version}({current_phase}), priority={incoming_phase_priority} vs {current_phase_priority}, will_apply={will_apply}")
 
             if will_apply:
+                # CRITICAL: Don't let rejoin skip countdown phase if countdown timer is active
+                # Rejoin can have more recent server state, but we should respect the countdown UI
+                if (self.screen._countdown_event is not None and
+                    incoming_phase == "round" and current_phase == "countdown"):
+                    print(f"[REJOIN] BLOCKED - countdown timer active, don't skip to round yet")
+                    return
+
                 # Set version FIRST to prevent polling race conditions
                 if isinstance(room_data, dict):
                     self.screen._room_state_version = incoming_version
