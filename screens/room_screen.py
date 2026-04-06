@@ -1671,8 +1671,24 @@ class RoomScreen(Screen):
         self._smoothed_voice_level = 0.0
 
     def _set_button_visibility(self, button, visible):
+        if not hasattr(button, "_original_size"):
+            button._original_size = tuple(button.size)
+            button._original_size_hint = tuple(button.size_hint) if isinstance(button.size_hint, (list, tuple)) else button.size_hint
+
         button.disabled = not visible
         button.opacity = 1 if visible else 0
+        if visible:
+            original_hint = button._original_size_hint
+            if isinstance(original_hint, (list, tuple)):
+                button.size_hint = tuple(original_hint)
+            else:
+                button.size_hint = original_hint
+            button.size = tuple(button._original_size)
+        else:
+            # Disabled widgets can still swallow touches in Kivy when overlapping.
+            # Collapse hidden buttons so they cannot block the visible one underneath.
+            button.size_hint = (None, None)
+            button.size = (dp(0), dp(0))
 
     def _set_panel_visibility(self, panel, visible, shown_height):
         panel.disabled = not visible
