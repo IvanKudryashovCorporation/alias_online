@@ -1857,9 +1857,13 @@ class RoomScreen(Screen):
 
         # Prevent rendering old state: if this state is older than current version, skip
         incoming_version = (room.get("updated_at") or "")
-        if incoming_version and incoming_version < self._room_state_version:
-            print(f"[APPLY_STATE] SKIPPED - state version is older. incoming={incoming_version}, current={self._room_state_version}")
-            return
+
+        # DEBUG: log version comparison details
+        if self._room_state_version and incoming_version:
+            is_older = incoming_version < self._room_state_version
+            if is_older:
+                print(f"[APPLY_STATE] SKIPPED - old state. incoming={incoming_version} < current={self._room_state_version}")
+                return
 
         players = self.room_state.get("players", [])
         scores = self.room_state.get("scores", [])

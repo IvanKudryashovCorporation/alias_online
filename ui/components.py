@@ -1388,7 +1388,25 @@ class LoadingOverlay(FloatLayout):
             self._spin_event = Clock.schedule_interval(self._advance, 1 / 60.0)
 
     def hide(self):
-        print(f"[LOADING_OVERLAY] HIDE")
+        import traceback
+        # Log who's calling hide
+        stack = traceback.extract_stack()
+        caller = "unknown"
+        for frame in reversed(stack[-5:-1]):
+            if "finish_start_game" in frame.name:
+                caller = "finish_start_game"
+                break
+            elif "start_game" in frame.name:
+                caller = "start_game"
+                break
+            elif "on_pre_enter" in frame.name:
+                caller = "on_pre_enter"
+                break
+            elif "polling" in frame.name or "_finish_poll_state" in frame.name:
+                caller = "polling"
+                break
+
+        print(f"[LOADING_OVERLAY] HIDE (from {caller})")
         if self._spin_event is not None:
             self._spin_event.cancel()
             self._spin_event = None
