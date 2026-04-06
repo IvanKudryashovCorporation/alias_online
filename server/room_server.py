@@ -763,6 +763,10 @@ def _init_db():
         existing_player_columns = {column["name"] for column in player_columns}
         if "client_id" not in existing_player_columns:
             connection.execute("ALTER TABLE room_players ADD COLUMN client_id TEXT")
+        if "role" not in existing_player_columns:
+            connection.execute("ALTER TABLE room_players ADD COLUMN role TEXT NOT NULL DEFAULT 'guesser'")
+        if "join_order" not in existing_player_columns:
+            connection.execute("ALTER TABLE room_players ADD COLUMN join_order INTEGER NOT NULL DEFAULT 0")
 
         connection.execute(
             """
@@ -1037,17 +1041,32 @@ def _room_with_count(connection, room_code):
     return _normalize_room(row, count_row["players_count"])
 
 
-def _room_players(connection, room_code):
+def _room_players_list(connection, room_code):
+    """Returns list of player names only"""
     rows = connection.execute(
         """
         SELECT player_name
         FROM room_players
         WHERE room_code = ?
-        ORDER BY joined_at ASC, rowid ASC
+        ORDER BY join_order ASC, rowid ASC
         """,
         (room_code,),
     ).fetchall()
     return [row["player_name"] for row in rows]
+
+
+def _room_players(connection, room_code):
+    """Returns list of player objects with role and join_order info"""
+    rows = connection.execute(
+        """
+        SELECT player_name, role, join_order
+        FROM room_players
+        WHERE room_code = ?
+        ORDER BY join_order ASC, rowid ASC
+        """,
+        (room_code,),
+    ).fetchall()
+    return [{"name": row["player_name"], "role": row["role"], "join_order": row["join_order"]} for row in rows]
 
 
 def _room_scores(connection, room_code):
@@ -1104,7 +1123,7 @@ def _guest_name_prefix(player_name):
 
 def _next_available_guest_name(connection, room_code, requested_name):
     prefix = _guest_name_prefix(requested_name)
-    existing_players = _room_players(connection, room_code)
+    existing_players = _room_players_list(connection, room_code)
     occupied = {_normalize_player_name(name) for name in existing_players}
     index = 1
     while _normalize_player_name(f"{prefix}{index}") in occupied:
@@ -1120,11 +1139,14 @@ def _visible_player_name(player_name):
 
 
 def _preferred_human_player(players):
+    """players can be list of strings OR list of dicts with 'name' key"""
     for player in players or []:
-        if not _is_bot_player(player):
-            return player
+        player_name = player["name"] if isinstance(player, dict) else player
+        if not _is_bot_player(player_name):
+            return player_name
     if players:
-        return players[0]
+        first = players[0]
+        return first["name"] if isinstance(first, dict) else first
     return ""
 
 
@@ -1378,8 +1400,16 @@ def _humanize_bot_guess(guess_text):
 
 
 def _pick_bot_name(existing_players):
-    existing = {(name or "").strip().lower() for name in existing_players}
-    existing_visible = {_visible_player_name(name).lower() for name in existing_players}
+    # existing_players can be list of strings OR list of dicts with 'name' key
+    player_names = []
+    for p in (existing_players or []):
+        if isinstance(p, dict):
+            player_names.append(p["name"] or "")
+        else:
+            player_names.append(p or "")
+    
+    existing = {(name or "").strip().lower() for name in player_names}
+    existing_visible = {_visible_player_name(name).lower() for name in player_names}
     pool = list(_BOT_POOL_NAMES)
     random.shuffle(pool)
     for candidate in pool:
@@ -1420,7 +1450,16 @@ def _purge_bots_if_ai_disabled(connection, room_code, players):
         (room_code,),
     ).fetchone()
     has_scheduled_bot_action = bool(room_row and room_row["bot_next_action_at"])
-    bot_players = [player for player in (players or []) if _is_bot_player(player)]
+    
+    # Extract player names from players list (can be strings or dicts)
+    player_names = []
+    for p in (players or []):
+        if isinstance(p, dict):
+            player_names.append(p["name"] or "")
+        else:
+            player_names.append(p or "")
+    
+    bot_players = [name for name in player_names if _is_bot_player(name)]
     changed = False
 
     if bot_players:
@@ -1505,7 +1544,16 @@ def _maybe_add_lobby_bot(connection, room_code, room, players):
     max_players = int(room.get("max_players") or 0)
     if max_players <= 0:
         return False
-    if len(players) >= max_players:
+    
+    # Extract player names from players list (can be strings or dicts)
+    player_names = []
+    for p in (players or []):
+        if isinstance(p, dict):
+            player_names.append(p["name"] or "")
+        else:
+            player_names.append(p or "")
+    
+    if len(player_names) >= max_players:
         connection.execute(
             """
             UPDATE rooms
@@ -1517,11 +1565,11 @@ def _maybe_add_lobby_bot(connection, room_code, room, players):
         )
         return False
 
-    human_players = [player for player in players if not _is_bot_player(player)]
+    human_players = [name for name in player_names if not _is_bot_player(name)]
     if not human_players:
         return False
 
-    bot_players = [player for player in players if _is_bot_player(player)]
+    bot_players = [name for name in player_names if _is_bot_player(name)]
     if len(bot_players) >= min(_BOT_LOBBY_MAX_PER_ROOM, max(0, max_players - 1)):
         return False
 
@@ -1531,19 +1579,25 @@ def _maybe_add_lobby_bot(connection, room_code, room, players):
         _schedule_lobby_bot_join(connection, room_code, max(1, _BOT_LOBBY_IDLE_SECONDS - idle_seconds))
         return False
 
-    bot_name = _pick_bot_name(players)
+    bot_name = _pick_bot_name(player_names)
     joined_at = _now()
+    max_join_order_row = connection.execute(
+        "SELECT COALESCE(MAX(join_order), 0) AS max_order FROM room_players WHERE room_code = ?",
+        (room_code,),
+    ).fetchone()
+    next_join_order = int(max_join_order_row["max_order"] or 0) + 1
+    
     connection.execute(
         """
-        INSERT INTO room_players (room_code, player_name, joined_at)
-        VALUES (?, ?, ?)
+        INSERT INTO room_players (room_code, player_name, role, join_order, joined_at)
+        VALUES (?, ?, ?, ?, ?)
         """,
-        (room_code, bot_name, joined_at),
+        (room_code, bot_name, "guesser", next_join_order, joined_at),
     )
     _ensure_score_row(connection, room_code, bot_name)
     _insert_message(connection, room_code, "System", f"{bot_name} joined the room.", "system")
 
-    players_after = _room_players(connection, room_code)
+    players_after = _room_players_list(connection, room_code)
     should_schedule_more = len(players_after) < max_players and (
         len([name for name in players_after if _is_bot_player(name)]) < min(_BOT_LOBBY_MAX_PER_ROOM, max(0, max_players - 1))
     )
@@ -1737,16 +1791,42 @@ def _repair_room_integrity(connection, room_code):
         _delete_room(connection, room_code)
         return {"deleted": True, "players": []}
 
-    preferred_human = _preferred_human_player(players)
-    host_name = room["host_name"] if room["host_name"] in players else ""
+    # Extract player names for checking (players is list of dicts with name/role)
+    player_names = [p["name"] for p in players]
+    
+    # Select new host by minimum join_order (first person who joined)
+    preferred_human = _preferred_human_player(player_names)
+    host_name = room["host_name"] if room["host_name"] in player_names else ""
     if not host_name or (_is_bot_player(host_name) and preferred_human and not _is_bot_player(preferred_human)):
-        host_name = preferred_human or players[0]
+        # Get player with minimum join_order
+        new_host_row = connection.execute(
+            """
+            SELECT player_name FROM room_players 
+            WHERE room_code = ? 
+            ORDER BY join_order ASC, rowid ASC 
+            LIMIT 1
+            """,
+            (room_code,),
+        ).fetchone()
+        host_name = new_host_row["player_name"] if new_host_row else (preferred_human or player_names[0])
+    
+    # Explainer is always the host
+    current_explainer = host_name
 
-    current_explainer = host_name if host_name in players else ""
-    if not current_explainer:
-        current_explainer = preferred_human or players[0]
+    # Update roles in room_players table
+    connection.execute(
+        """
+        UPDATE room_players
+        SET role = CASE 
+            WHEN player_name = ? THEN 'explainer'
+            ELSE 'guesser'
+        END
+        WHERE room_code = ?
+        """,
+        (host_name, room_code),
+    )
 
-    voice_speaker = room["voice_speaker"] if room["voice_speaker"] in players else None
+    voice_speaker = room["voice_speaker"] if room["voice_speaker"] in player_names else None
     voice_until = room["voice_until"] if voice_speaker else None
     explainer_changed = current_explainer != room["current_explainer"]
     current_mic_muted = _normalize_mic_muted_flag(room["explainer_mic_muted"], default=1)
@@ -2498,17 +2578,73 @@ class RoomHandler(BaseHTTPRequestHandler):
                 )
             connection.execute(
                 """
-                INSERT INTO room_players (room_code, player_name, client_id, joined_at)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO room_players (room_code, player_name, client_id, role, join_order, joined_at)
+                VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (room_code, host_name, client_id or None, timestamp),
+                (room_code, host_name, client_id or None, "explainer", 1, timestamp),
             )
             _ensure_score_row(connection, room_code, host_name)
             _insert_message(connection, room_code, "System", f"{host_name} created the room.", "system")
             room = _room_with_count(connection, room_code)
 
         room["current_word"] = ""
-        self._json_response(201, {"room": room})
+        payload_state = _room_payload(connection, room_code, player_name=host_name)
+        
+        if payload_state is None:
+            self._json_response(
+                201,
+                {
+                    "room": room,
+                    "players": [],
+                    "scores": [],
+                    "messages": [],
+                    "viewer": {
+                        "player_name": host_name,
+                        "is_player": True,
+                        "is_explainer": True,
+                        "is_host": True,
+                        "can_control_start": True,
+                        "can_start_game": False,
+                        "can_send_chat": False,
+                        "can_use_voice": False,
+                        "can_toggle_mic": False,
+                        "explainer_mic_state": "idle",
+                        "required_players_to_start": 1,
+                    },
+                    "voice_active": False,
+                    "voice_speaker": None,
+                    "explainer_mic_muted": True,
+                    "explainer_mic_state": "idle",
+                    "can_see_word": False,
+                    "current_word": "",
+                    "game_phase": "lobby",
+                    "countdown_left_sec": 0,
+                    "round_left_sec": 0,
+                    "server_time": _now(),
+                },
+            )
+            return
+        
+        self._json_response(
+            201,
+            {
+                "room": payload_state.get("room", room),
+                "players": payload_state.get("players", []),
+                "scores": payload_state.get("scores", []),
+                "messages": payload_state.get("messages", []),
+                "viewer": payload_state.get("viewer", {}),
+                "voice_active": payload_state.get("voice_active", False),
+                "voice_speaker": payload_state.get("voice_speaker"),
+                "explainer_mic_muted": payload_state.get("explainer_mic_muted", True),
+                "explainer_mic_state": payload_state.get("explainer_mic_state", "idle"),
+                "can_see_word": payload_state.get("can_see_word", False),
+                "current_word": payload_state.get("current_word", ""),
+                "game_phase": payload_state.get("game_phase", "lobby"),
+                "countdown_left_sec": payload_state.get("countdown_left_sec", 0),
+                "round_left_sec": payload_state.get("round_left_sec", 0),
+                "server_time": payload_state.get("server_time", _now()),
+            },
+        )
 
     def _handle_join_room(self, room_code):
         try:
@@ -2586,12 +2722,18 @@ class RoomHandler(BaseHTTPRequestHandler):
                     self._json_response(409, {"error": "Room is already full."})
                     return
 
+                max_join_order_row = connection.execute(
+                    "SELECT COALESCE(MAX(join_order), 0) AS max_order FROM room_players WHERE room_code = ?",
+                    (room_code,),
+                ).fetchone()
+                next_join_order = int(max_join_order_row["max_order"] or 0) + 1
+                
                 connection.execute(
                     """
-                    INSERT INTO room_players (room_code, player_name, client_id, joined_at)
-                    VALUES (?, ?, ?, ?)
+                    INSERT INTO room_players (room_code, player_name, client_id, role, join_order, joined_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
                     """,
-                    (room_code, player_name, client_id or None, _now()),
+                    (room_code, player_name, client_id or None, "guesser", next_join_order, _now()),
                 )
                 _ensure_score_row(connection, room_code, player_name)
                 _insert_message(connection, room_code, "System", f"{player_name} joined the room.", "system")
