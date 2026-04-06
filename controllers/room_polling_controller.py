@@ -110,15 +110,40 @@ class RoomPollingController:
             initial_state = dict(server_state)
             incoming_messages = initial_state.get("messages") if isinstance(initial_state.get("messages"), list) else []
             initial_state["messages"] = self.screen._merge_message_history(incoming_messages, since_id=0)
-            # Set version FIRST to prevent polling race conditions
+            # Check version and phase gate - don't apply rejoin state if it's not truly newer
             room_data = initial_state.get("room", {})
-            if isinstance(room_data, dict):
-                self.screen._room_state_version = (room_data.get("updated_at") or "")
-            self.screen.room_state = initial_state
-            self._rejoin_recover_attempts = 0
-            if app is not None:
-                app.set_active_room(initial_state.get("room", joined_room))
-            self.screen._apply_state()
+            incoming_version = (room_data.get("updated_at") or "") if isinstance(room_data, dict) else ""
+            current_version = self.screen._room_state_version
+            incoming_phase = (initial_state.get("game_phase") or "").strip().lower()
+            current_phase = self.screen._current_phase()
+
+            # Phase priority to prevent phase downgrade
+            phase_priority = {"lobby": 0, "countdown": 1, "round": 2}
+            incoming_phase_priority = phase_priority.get(incoming_phase, -1)
+            current_phase_priority = phase_priority.get(current_phase, -1)
+
+            # CRITICAL: Only apply rejoin if:
+            # 1. Version is STRICTLY NEWER, OR
+            # 2. Same version BUT incoming phase has higher priority (should never happen in rejoin)
+            will_apply = incoming_version > current_version or (
+                incoming_version == current_version and incoming_phase_priority > current_phase_priority
+            )
+            print(f"[REJOIN] Version check: incoming={incoming_version}({incoming_phase}), current={current_version}({current_phase}), priority={incoming_phase_priority} vs {current_phase_priority}, will_apply={will_apply}")
+
+            if will_apply:
+                # Set version FIRST to prevent polling race conditions
+                if isinstance(room_data, dict):
+                    self.screen._room_state_version = incoming_version
+                self.screen.room_state = initial_state
+                self._rejoin_recover_attempts = 0
+                if app is not None:
+                    app.set_active_room(initial_state.get("room", joined_room))
+                self.screen._apply_state()
+            else:
+                print(f"[REJOIN] SKIPPED - rejoin state is not newer or phase downgraded. Keeping current state.")
+                self._rejoin_recover_attempts = 0
+                if app is not None:
+                    app.set_active_room(initial_state.get("room", joined_room))
         elif app is not None:
             app.set_active_room(joined_room)
 

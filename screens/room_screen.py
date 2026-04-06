@@ -772,6 +772,12 @@ class RoomScreen(Screen):
         self._skip_request_in_flight = False
         self._chat_request_token = 0
         self._skip_request_token = 0
+        self._countdown_event = None
+        self._countdown_end_time = 0.0
+        self._countdown_start_local_time = 0.0
+        self._round_timer_event = None
+        self._round_end_time = 0.0
+        self._round_start_local_time = 0.0
         self._message_history = []
         self._last_message_id = 0
 
@@ -1092,7 +1098,10 @@ class RoomScreen(Screen):
         self.polling_controller.start_polling()
         self._start_voice_ui_sync()
         self._start_voice_engine()
-        self.polling_controller.request_rejoin_state()
+        # Don't rejoin if we're in countdown or round phase - let polling sync instead
+        current_phase = self._current_phase()
+        if current_phase not in ("countdown", "round"):
+            self.polling_controller.request_rejoin_state()
         if not self.room_state.get("viewer"):
             self.polling_controller._poll_state()
         self._apply_state()
@@ -1102,6 +1111,8 @@ class RoomScreen(Screen):
         print(f"[ON_LEAVE] Leaving room screen. Current phase: {self._current_phase()}")
         self.polling_controller.stop_polling()
         self._stop_voice_ui_sync()
+        self._stop_countdown_timer()
+        self._stop_round_timer()
         self._stop_voice_engine()
         self.loading_overlay.hide()
         self.countdown_overlay.hide()
@@ -1177,7 +1188,7 @@ class RoomScreen(Screen):
         if not self._start_game_request_in_flight:
             self.loading_overlay.hide()
         if self._current_phase() != "round":
-            self.countdown_overlay.hide()
+            # countdown_overlay visibility is controlled by _apply_state, not here
             self.chat_overlay_layer.clear_widgets()
             self.chat_overlay_layer.size_hint = (None, None)
             self.chat_overlay_layer.size = (0, 0)
@@ -1591,6 +1602,87 @@ class RoomScreen(Screen):
             self._voice_ui_event.cancel()
             self._voice_ui_event = None
 
+    def _start_countdown_timer(self, server_time, countdown_left):
+        """Start a local countdown timer that updates the overlay every second."""
+        self._stop_countdown_timer()
+        if countdown_left <= 0:
+            return
+
+        import time
+        try:
+            countdown_sec = int(countdown_left) if countdown_left else 0
+        except (TypeError, ValueError):
+            print(f"[COUNTDOWN_TIMER] Invalid countdown_left: {countdown_left}")
+            return
+
+        self._countdown_start_local_time = time.time()
+        self._countdown_end_time = self._countdown_start_local_time + countdown_sec
+        print(f"[COUNTDOWN_TIMER] Started. Duration: {countdown_sec}s, will end at {self._countdown_end_time:.1f}")
+        self._countdown_event = Clock.schedule_interval(self._update_countdown_display, 0.1)
+
+    def _stop_countdown_timer(self):
+        """Stop the countdown timer."""
+        if self._countdown_event is not None:
+            self._countdown_event.cancel()
+            self._countdown_event = None
+            self._countdown_end_time = 0.0
+            self._countdown_start_local_time = 0.0
+
+    def _update_countdown_display(self, _dt):
+        """Update countdown overlay display based on elapsed local time."""
+        import time
+        current_local_time = time.time()
+        remaining = max(0, self._countdown_end_time - current_local_time)
+
+        if remaining <= 0:
+            self._stop_countdown_timer()
+            self.countdown_overlay.hide()
+            return False
+
+        seconds = max(1, int(remaining))
+        self.countdown_overlay._label.text = str(seconds)
+        return True
+
+    def _start_round_timer(self, server_time, round_left):
+        """Start a local round timer that updates the phase label every second."""
+        self._stop_round_timer()
+        if round_left <= 0:
+            return
+
+        import time
+        try:
+            round_sec = int(round_left) if round_left else 0
+        except (TypeError, ValueError):
+            print(f"[ROUND_TIMER] Invalid round_left: {round_left}")
+            return
+
+        self._round_start_local_time = time.time()
+        self._round_end_time = self._round_start_local_time + round_sec
+        print(f"[ROUND_TIMER] Started. Duration: {round_sec}s, will end at {self._round_end_time:.1f}")
+        self._round_timer_event = Clock.schedule_interval(self._update_round_display, 0.1)
+
+    def _stop_round_timer(self):
+        """Stop the round timer."""
+        if self._round_timer_event is not None:
+            self._round_timer_event.cancel()
+            self._round_timer_event = None
+            self._round_end_time = 0.0
+            self._round_start_local_time = 0.0
+
+    def _update_round_display(self, _dt):
+        """Update round timer display based on elapsed local time."""
+        import time
+        current_local_time = time.time()
+        remaining = max(0, self._round_end_time - current_local_time)
+
+        if remaining <= 0:
+            self._stop_round_timer()
+            return False
+
+        seconds = max(1, int(remaining))
+        self.phase_label.text = f"ОСТАЛОСЬ {seconds} СЕК"
+        return True
+
     def _start_voice_engine(self):
         player_name = self._player_name()
         if not self.voice_engine.available or not player_name or not self.room_code:
@@ -1874,10 +1966,10 @@ class RoomScreen(Screen):
         is_explainer = self._is_explainer()
         phase = self._current_phase()
 
-        # Log who called _apply_state
+        # Log who called _apply_state - with full traceback for unknown callers
         stack = traceback.extract_stack()
         caller = "unknown"
-        for frame in reversed(stack[-8:-1]):  # Check last 7 frames for better detection
+        for frame in reversed(stack[-8:-1]):
             if "finish_start_game" in frame.name:
                 caller = "finish_start_game"
                 break
@@ -1886,6 +1978,9 @@ class RoomScreen(Screen):
                 break
             elif "on_pre_enter" in frame.name:
                 caller = "on_pre_enter"
+                break
+            elif "_finish_rejoin_state" in frame.name:
+                caller = "rejoin"
                 break
             elif "_send_chat_message" in frame.name:
                 caller = "_send_chat_message"
@@ -1904,6 +1999,11 @@ class RoomScreen(Screen):
                 break
 
         print(f"[APPLY_STATE] Phase: {phase}, Version: {room.get('updated_at', '?')}, Caller: {caller}")
+
+        # DEBUG: Log full traceback for unknown callers
+        if caller == "unknown":
+            caller_frame = stack[-2]
+            print(f"[APPLY_STATE] UNKNOWN CALLER: {caller_frame.filename}:{caller_frame.lineno} in {caller_frame.name}")
         self._set_room_exit_button(self._is_match_active())
         countdown_left = int(self.room_state.get("countdown_left_sec") or 0)
         round_left = int(self.room_state.get("round_left_sec") or 0)
@@ -2052,6 +2152,8 @@ class RoomScreen(Screen):
         if phase == "lobby":
             self.phase_label.text = ""
             print(f"[PHASE] Hiding countdown overlay (lobby)")
+            self._stop_countdown_timer()
+            self._stop_round_timer()
             self.countdown_overlay.hide()
         elif phase == "countdown":
             self.phase_label.color = COLORS["accent"]
@@ -2061,11 +2163,20 @@ class RoomScreen(Screen):
                 self.countdown_overlay.show(countdown_left)
             else:
                 self.countdown_overlay.show(1)
+            # Start local countdown timer for smooth updates
+            server_time = self.room_state.get("server_time", 0)
+            if server_time:
+                self._start_countdown_timer(server_time, countdown_left)
         else:
             self.phase_label.color = COLORS["success"]
             self.phase_label.text = f"ОСТАЛОСЬ {round_left} СЕК"
             print(f"[PHASE] Hiding countdown overlay (round)")
+            self._stop_countdown_timer()
             self.countdown_overlay.hide()
+            # Start local round timer for smooth updates
+            server_time = self.room_state.get("server_time", 0)
+            if server_time:
+                self._start_round_timer(server_time, round_left)
 
         self._render_player_cards(players, explainer_name, host_name, profile_map, score_map, phase)
         if phase == "round" and is_explainer:
