@@ -235,9 +235,11 @@ class RoomGameController:
                     self.screen.loading_overlay.hide()
                     self.screen.status_label.color = self.screen.COLORS["warning"]
                     self.screen.status_label.text = str(charge_payload)
+                    self.screen._ensure_interaction_ready()
                     return
 
             self.screen.loading_overlay.hide()
+            self.screen._ensure_interaction_ready()
         finally:
             self._start_game_request_in_flight = False
             self.screen._start_game_request_in_flight = False
