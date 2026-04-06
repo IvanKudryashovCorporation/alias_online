@@ -2,6 +2,7 @@
 
 import time
 from threading import Thread
+from kivy.app import App
 from kivy.clock import Clock
 from services import join_online_room, get_online_room_state
 
@@ -40,7 +41,6 @@ class RoomPollingController:
         if not player_name or not room_code:
             return
 
-        from kivy.app import App
         app = App.get_running_app()
         self._rejoin_request_token += 1
         request_token = self._rejoin_request_token
@@ -99,7 +99,6 @@ class RoomPollingController:
             return
 
         joined_room = payload.get("joined_room") or {}
-        from kivy.app import App
         app = App.get_running_app()
         if app is not None:
             joined_as = (joined_room.get("_joined_as") or "").strip()
@@ -112,6 +111,10 @@ class RoomPollingController:
             incoming_messages = initial_state.get("messages") if isinstance(initial_state.get("messages"), list) else []
             initial_state["messages"] = self.screen._merge_message_history(incoming_messages, since_id=0)
             self.screen.room_state = initial_state
+            # Update state version from rejoined state
+            room_data = initial_state.get("room", {})
+            if isinstance(room_data, dict):
+                self.screen._room_state_version = (room_data.get("updated_at") or "")
             self._rejoin_recover_attempts = 0
             if app is not None:
                 app.set_active_room(initial_state.get("room", joined_room))
@@ -208,12 +211,20 @@ class RoomPollingController:
         if self.screen.manager is None or self.screen.manager.current != self.screen.name:
             return
 
+        print(f"[POLLING_START] _finish_poll_state called")
+
         if (payload.get("room_code") or "").strip().upper() != (self.screen.room_code or "").strip().upper():
+            print(f"[POLLING_START] Room code mismatch, returning")
             return
 
         status = payload.get("status")
         if status == "success":
             state = dict(payload.get("state") or {})
+            incoming_phase = state.get("game_phase", "?")
+            incoming_room = state.get("room", {})
+            incoming_version = (incoming_room.get("updated_at") or "")
+            print(f"[POLLING] Response received. Phase: {incoming_phase}, Version: {incoming_version}, Current version: {self.screen._room_state_version}")
+
             incoming_messages = state.get("messages") if isinstance(state.get("messages"), list) else []
             used_since = int(payload.get("since_id") or 0)
             state["messages"] = self.screen._merge_message_history(incoming_messages, used_since)
@@ -234,7 +245,6 @@ class RoomPollingController:
                     self.screen._ensure_interaction_ready()
                     return
 
-                from kivy.app import App
                 app = App.get_running_app()
                 if app is not None:
                     app.clear_active_room()
@@ -242,21 +252,50 @@ class RoomPollingController:
                         app.ensure_screen("join_room")
                 self.screen.room_code = ""
                 self.screen.room_state = {}
+                self.screen._room_state_version = ""
                 self.screen.status_label.color = self.screen.COLORS["warning"]
                 self.screen.status_label.text = "Ты больше не состоишь в этой комнате."
                 Clock.schedule_once(lambda *_: setattr(self.screen.manager, "current", "join_room"), 0)
                 self.screen._ensure_interaction_ready()
                 return
 
-            self.screen.room_state = state
-            self._rejoin_recover_attempts = 0
-            app = App.get_running_app()
-            if app is not None:
-                viewer_name = ((state.get("viewer") or {}).get("player_name") or "").strip()
-                if viewer_name and hasattr(app, "adopt_room_player_name"):
-                    app.adopt_room_player_name(viewer_name)
-                app.set_active_room(state.get("room", {}))
-            self.screen._apply_state()
+            # Only apply state if it's newer than what we have (prevents old polling state from overwriting)
+            incoming_room = state.get("room", {})
+            incoming_version = (incoming_room.get("updated_at") or "")
+
+            # Phase priority to prevent older phases from overwriting newer ones with same timestamp
+            phase_priority = {"lobby": 0, "countdown": 1, "round": 2}
+            incoming_phase = (state.get("game_phase") or "").strip().lower()
+            current_phase = self.screen._current_phase()
+            incoming_phase_priority = phase_priority.get(incoming_phase, -1)
+            current_phase_priority = phase_priority.get(current_phase, -1)
+
+            state_updated = False
+            # Apply if version is newer OR (same version AND incoming phase has higher priority)
+            will_apply = incoming_version > self.screen._room_state_version or (
+                incoming_version == self.screen._room_state_version and incoming_phase_priority > current_phase_priority
+            )
+            print(f"[POLLING] Version comparison: '{incoming_version}' > '{self.screen._room_state_version}'? {incoming_version > self.screen._room_state_version}, Phase priority: {incoming_phase}({incoming_phase_priority}) vs {current_phase}({current_phase_priority}), will_apply={will_apply}")
+
+            if will_apply:
+                print(f"[POLLING] APPLYING state. Phase changing from {self.screen._current_phase()} to {state.get('game_phase', '?')}")
+                self.screen.room_state = state
+                self.screen._room_state_version = incoming_version
+                state_updated = True
+
+                self._rejoin_recover_attempts = 0
+                app = App.get_running_app()
+                if app is not None:
+                    viewer_name = ((state.get("viewer") or {}).get("player_name") or "").strip()
+                    if viewer_name and hasattr(app, "adopt_room_player_name"):
+                        app.adopt_room_player_name(viewer_name)
+                    app.set_active_room(state.get("room", {}))
+
+                # Re-render with the new state
+                self.screen._apply_state()
+            else:
+                current_phase = self.screen._current_phase()
+                print(f"[POLLING] SKIPPED - version too old. Current phase stays: {current_phase}")
         elif status == "connection_error":
             self.screen.status_label.color = self.screen.COLORS["error"]
             self.screen.status_label.text = payload.get("message") or "Не удалось обновить комнату."
@@ -271,7 +310,6 @@ class RoomPollingController:
                     self.screen._ensure_interaction_ready()
                     return
 
-                from kivy.app import App
                 app = App.get_running_app()
                 if app is not None:
                     app.clear_active_room()
