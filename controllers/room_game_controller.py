@@ -155,15 +155,20 @@ class RoomGameController:
         """Handle game start response."""
         token = int(payload.get("token") or 0)
         if token != self._start_game_request_token:
+            self._start_game_request_in_flight = False
+            self.screen._start_game_request_in_flight = False
             return
 
         self._cancel_start_watchdog()
-        self._start_game_request_in_flight = False
         if self.screen.manager is None or self.screen.manager.current != self.screen.name:
+            self._start_game_request_in_flight = False
+            self.screen._start_game_request_in_flight = False
             return
 
         status = payload.get("status")
         if status != "success":
+            self._start_game_request_in_flight = False
+            self.screen._start_game_request_in_flight = False
             self.screen.loading_overlay.hide()
             self.screen.start_game_btn.disabled = not self.can_start_game()
             self.screen.status_label.color = self.screen.COLORS["warning"] if status == "value_error" else self.screen.COLORS["error"]
@@ -172,33 +177,73 @@ class RoomGameController:
 
         start_response = payload.get("start_response")
         starts_before = int(payload.get("starts_before") or 0)
+        should_charge_by_local_state = bool(payload.get("should_charge_by_local_state"))
 
-        # Update room state with new game state
-        updated_state = dict(self.screen.room_state or {})
-        if isinstance(start_response, dict):
-            for key in ("room", "players", "scores", "messages", "viewer", "voice_active", "voice_speaker", "can_see_word", "current_word", "server_time"):
-                if key in start_response:
-                    updated_state[key] = start_response.get(key)
-            phase = (start_response.get("game_phase") or updated_state.get("game_phase") or "").strip().lower()
-            if phase in {"lobby", "countdown", "round"}:
-                updated_state["game_phase"] = phase
-            if "countdown_left_sec" in start_response:
-                updated_state["countdown_left_sec"] = int(start_response.get("countdown_left_sec") or 0)
-            if "round_left_sec" in start_response:
-                updated_state["round_left_sec"] = int(start_response.get("round_left_sec") or 0)
-
-        self.screen.room_state = updated_state
-        self.screen._apply_state()
-
-        # Update local starts count
-        room_payload = updated_state.get("room") if isinstance(updated_state, dict) else {}
         try:
-            starts_count = int((room_payload or {}).get("starts_count") or 0)
-        except (TypeError, ValueError):
-            starts_count = 0
-        self._local_starts_count = max(starts_count, starts_before + 1)
+            # Update room state with new game state
+            updated_state = dict(self.screen.room_state or {})
+            if isinstance(start_response, dict):
+                for key in (
+                    "room",
+                    "players",
+                    "scores",
+                    "messages",
+                    "viewer",
+                    "voice_active",
+                    "voice_speaker",
+                    "explainer_mic_muted",
+                    "explainer_mic_state",
+                    "can_see_word",
+                    "current_word",
+                    "server_time",
+                ):
+                    if key in start_response:
+                        updated_state[key] = start_response.get(key)
+                phase = (start_response.get("game_phase") or updated_state.get("game_phase") or "").strip().lower()
+                if phase in {"lobby", "countdown", "round"}:
+                    updated_state["game_phase"] = phase
+                if "countdown_left_sec" in start_response:
+                    updated_state["countdown_left_sec"] = int(start_response.get("countdown_left_sec") or 0)
+                if "round_left_sec" in start_response:
+                    updated_state["round_left_sec"] = int(start_response.get("round_left_sec") or 0)
 
-        self.screen.loading_overlay.hide()
+            self.screen.room_state = updated_state
+            self.screen._apply_state()
+
+            room_payload = updated_state.get("room") if isinstance(updated_state, dict) else {}
+            try:
+                starts_count = int((room_payload or {}).get("starts_count") or 0)
+            except (TypeError, ValueError):
+                starts_count = 0
+            self._local_starts_count = max(starts_count, starts_before + 1)
+            self.screen._local_starts_count = self._local_starts_count
+
+            should_charge_start = starts_count > 1 or should_charge_by_local_state
+            charge_payload = None
+            if should_charge_start:
+                charged, charge_payload = self.screen._charge_start_cost()
+                if not charged:
+                    self.screen.loading_overlay.hide()
+                    self.screen.start_game_btn.disabled = not self.can_start_game()
+                    self.screen.status_label.color = self.screen.COLORS["warning"]
+                    self.screen.status_label.text = str(charge_payload)
+                    self.screen.polling_controller._poll_state()
+                    return
+
+            self.screen.loading_overlay.hide()
+            self.screen.start_game_btn.disabled = not self.can_start_game()
+            self.screen.status_label.color = self.screen.COLORS["success"]
+            if should_charge_start and charge_payload is not None:
+                remaining_coins = int(getattr(charge_payload, "alias_coins", 0) or 0)
+                self.screen.status_label.text = (
+                    f"Старт игры! Списано {ROOM_CREATION_COST} AC, осталось {remaining_coins} AC."
+                )
+            else:
+                self.screen.status_label.text = "Старт игры! Первый запуск в этой комнате бесплатный."
+            self.screen.polling_controller._poll_state()
+        finally:
+            self._start_game_request_in_flight = False
+            self.screen._start_game_request_in_flight = False
 
     def _arm_start_watchdog(self, request_token):
         """Set watchdog timer for stuck game start requests."""
@@ -222,6 +267,7 @@ class RoomGameController:
         if not self._start_game_request_in_flight:
             return
         self._start_game_request_in_flight = False
+        self.screen._start_game_request_in_flight = False
         self.screen.loading_overlay.hide()
         self.screen.start_game_btn.disabled = not self.can_start_game()
         self.screen.status_label.color = self.screen.COLORS["warning"]
