@@ -1076,12 +1076,12 @@ class RoomScreen(Screen):
                         self._last_message_id = int(initial_messages[-1].get("id") or 0)
                     except (TypeError, ValueError):
                         self._last_message_id = 0
-            self.room_state = initial_state
-            # Track state version from cached state
+            # Track state version FIRST to prevent polling race conditions
             room_info = initial_state.get("room", {})
             if isinstance(room_info, dict):
                 self._room_state_version = (room_info.get("updated_at") or "")
             print(f"[ON_PRE_ENTER] Loaded cached state. Phase: {initial_state.get('game_phase', '?')}, Version: {self._room_state_version}")
+            self.room_state = initial_state
             self.status_label.color = COLORS["text_muted"]
             self.status_label.text = ""
             if app is not None:

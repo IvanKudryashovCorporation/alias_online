@@ -110,11 +110,11 @@ class RoomPollingController:
             initial_state = dict(server_state)
             incoming_messages = initial_state.get("messages") if isinstance(initial_state.get("messages"), list) else []
             initial_state["messages"] = self.screen._merge_message_history(incoming_messages, since_id=0)
-            self.screen.room_state = initial_state
-            # Update state version from rejoined state
+            # Set version FIRST to prevent polling race conditions
             room_data = initial_state.get("room", {})
             if isinstance(room_data, dict):
                 self.screen._room_state_version = (room_data.get("updated_at") or "")
+            self.screen.room_state = initial_state
             self._rejoin_recover_attempts = 0
             if app is not None:
                 app.set_active_room(initial_state.get("room", joined_room))
@@ -279,8 +279,9 @@ class RoomPollingController:
 
             if will_apply:
                 print(f"[POLLING] APPLYING state. Phase changing from {self.screen._current_phase()} to {state.get('game_phase', '?')}")
-                self.screen.room_state = state
+                # Set version FIRST to prevent race conditions with concurrent requests
                 self.screen._room_state_version = incoming_version
+                self.screen.room_state = state
                 state_updated = True
 
                 self._rejoin_recover_attempts = 0

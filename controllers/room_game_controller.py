@@ -208,13 +208,14 @@ class RoomGameController:
                     updated_state["round_left_sec"] = int(start_response.get("round_left_sec") or 0)
 
             old_phase = self.screen._current_phase()
-            self.screen.room_state = updated_state
-            # Track state version to prevent polling from overwriting with old state
+            # Set version FIRST to prevent polling race condition
             room_data = updated_state.get("room", {})
             if isinstance(room_data, dict):
                 self.screen._room_state_version = (room_data.get("updated_at") or "")
             new_phase = updated_state.get("game_phase", "?")
             print(f"[FINISH_START_GAME] Phase: {old_phase} -> {new_phase}, Version: {self.screen._room_state_version}")
+            # Now set state AFTER version is locked
+            self.screen.room_state = updated_state
             self.screen._apply_state()
             print(f"[FINISH_START_GAME] After _apply_state(): current phase is {self.screen._current_phase()}")
 
