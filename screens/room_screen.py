@@ -15,6 +15,7 @@ from kivy.graphics import (
 )
 from kivy.core.image import Image as CoreImage
 from kivy.metrics import dp, sp
+from kivy.uix.anchorlayout import AnchorLayout
 from kivy.uix.behaviors import ButtonBehavior
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.floatlayout import FloatLayout
@@ -41,6 +42,7 @@ from services import (
     start_room_game,
     sync_room_progress,
 )
+from controllers import RoomGameController, RoomPollingController
 from ui import (
     AppButton,
     AppTextInput,
@@ -772,12 +774,21 @@ class RoomScreen(Screen):
         self._message_history = []
         self._last_message_id = 0
 
+        # Initialize controllers
+        self.game_controller = RoomGameController(self)
+        self.polling_controller = RoomPollingController(self)
+
+        # Color constants for UI
+        self.COLORS = COLORS
+
         root = ScreenBackground(variant="game")
         content = BoxLayout(
             orientation="vertical",
             padding=[dp(8), dp(10), dp(8), dp(10)],
             spacing=dp(6),
+            size_hint_y=None,
         )
+        content.bind(minimum_height=content.setter("height"))
 
         top_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(56))
         self.back_btn = AppButton(text="В меню", compact=True, size_hint=(None, None), size=(dp(122), dp(46)))
@@ -861,8 +872,7 @@ class RoomScreen(Screen):
         content.add_widget(self.players_summary_wrap)
 
         self.lobby_start_height = dp(52)
-        self.lobby_start_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=self.lobby_start_height)
-        self.lobby_start_row.add_widget(Widget(size_hint_x=1))
+        self.lobby_start_row = AnchorLayout(size_hint_y=None, height=self.lobby_start_height, anchor_x="center", anchor_y="center")
         self.start_game_btn = AppButton(
             text="Начать игру",
             compact=True,
@@ -870,7 +880,7 @@ class RoomScreen(Screen):
             size_hint=(None, None),
             size=(dp(228), dp(46)),
         )
-        self.start_game_btn.bind(on_release=self._queue_start_game)
+        self.start_game_btn.bind(on_release=lambda *_: self.game_controller.queue_start_game())
         self.lobby_start_row.add_widget(self.start_game_btn)
         self.wait_host_btn = AppButton(
             text="Ожидание старта от хоста",
@@ -882,7 +892,6 @@ class RoomScreen(Screen):
         self.wait_host_btn.disabled = True
         self.wait_host_btn.opacity = 0
         self.lobby_start_row.add_widget(self.wait_host_btn)
-        self.lobby_start_row.add_widget(Widget(size_hint_x=1))
         content.add_widget(self.lobby_start_row)
 
         self.phase_wrap_height = dp(62)
@@ -958,7 +967,7 @@ class RoomScreen(Screen):
         self.voice_card.add_widget(self.mic_button)
         content.add_widget(self.voice_card)
 
-        self.chat_host = BoxLayout(orientation="vertical", size_hint_y=1)
+        self.chat_host = BoxLayout(orientation="vertical", size_hint_y=None, height=dp(210))
 
         self.chat_card = RoundedPanel(
             orientation="vertical",
@@ -1001,7 +1010,9 @@ class RoomScreen(Screen):
         self.countdown_overlay = FullscreenCountdownOverlay()
         self.chat_overlay_layer = FloatLayout(size_hint=(None, None), size=(0, 0), opacity=0, disabled=True)
 
-        root.add_widget(content)
+        content_scroll = ScrollView(do_scroll_x=False, bar_width=dp(4), scroll_type=["bars", "content"])
+        content_scroll.add_widget(content)
+        root.add_widget(content_scroll)
         root.add_widget(self.chat_overlay_layer)
         root.add_widget(self.countdown_overlay)
         self.loading_overlay = LoadingOverlay()
@@ -1023,40 +1034,54 @@ class RoomScreen(Screen):
         self._last_progress_signature = None
         self._last_overlay_geometry_signature = None
         self._leave_sent = False
-        self._last_start_attempt_ts = 0.0
-        self._start_game_request_in_flight = False
-        self._start_game_request_token = 0
-        self._cancel_start_watchdog()
-        self._rejoin_request_token += 1
-        self._rejoin_in_flight = False
-        self._rejoin_recover_attempts = 0
-        self._local_starts_count = 0
         self._profile_cache = {}
         self._profile_cache_ts = 0.0
-        self._poll_in_flight = False
-        self._poll_token = 0
-        self._poll_started_at = 0.0
         self._chat_request_in_flight = False
         self._skip_request_in_flight = False
         self._chat_request_token = 0
         self._skip_request_token = 0
         self._message_history = []
         self._last_message_id = 0
+
+        # Reset controllers
+        self.game_controller.reset_for_new_room()
+        self.polling_controller.reset_for_new_room()
+
         self._reset_transient_layers()
         self._set_mic_muted(True)
         self._set_mic_level(0.0)
         self.coin_badge.refresh_from_session()
         self.status_label.color = COLORS["text_muted"]
         self.status_label.text = "Синхронизируем комнату..."
-        self._start_polling()
+
+        cached_server_state = room_data.get("_server_state") if isinstance(room_data, dict) else None
+        if isinstance(cached_server_state, dict) and cached_server_state.get("viewer"):
+            initial_state = dict(cached_server_state)
+            initial_messages = initial_state.get("messages", [])
+            if isinstance(initial_messages, list):
+                initial_state["messages"] = self._merge_message_history(initial_messages, since_id=0)
+                if initial_messages:
+                    try:
+                        self._last_message_id = int(initial_messages[-1].get("id") or 0)
+                    except (TypeError, ValueError):
+                        self._last_message_id = 0
+            self.room_state = initial_state
+            self.status_label.color = COLORS["text_muted"]
+            self.status_label.text = ""
+            if app is not None:
+                app.set_active_room(initial_state.get("room", room_data))
+
+        self.polling_controller.start_polling()
         self._start_voice_ui_sync()
         self._start_voice_engine()
-        self._request_rejoin_state()
-        self._poll_state()
+        self.polling_controller.request_rejoin_state()
+        if not self.room_state.get("viewer"):
+            self.polling_controller._poll_state()
+        self._apply_state()
         self._ensure_interaction_ready()
 
     def on_leave(self, *_):
-        self._stop_polling()
+        self.polling_controller.stop_polling()
         self._stop_voice_ui_sync()
         self._stop_voice_engine()
         self.loading_overlay.hide()
@@ -1066,19 +1091,12 @@ class RoomScreen(Screen):
         self._last_chat_mount_signature = None
         self._last_progress_signature = None
         self._last_overlay_geometry_signature = None
-        self._poll_in_flight = False
-        self._poll_token += 1
-        self._poll_started_at = 0.0
         self._chat_request_in_flight = False
         self._skip_request_in_flight = False
         self._chat_request_token += 1
         self._skip_request_token += 1
         self._message_history = []
         self._last_message_id = 0
-        self._cancel_start_watchdog()
-        self._rejoin_request_token += 1
-        self._rejoin_in_flight = False
-        self._rejoin_recover_attempts = 0
         self._reset_transient_layers()
         self.disabled = True
 
@@ -1676,8 +1694,7 @@ class RoomScreen(Screen):
         can_start = phase == "lobby" and self._can_start_game()
         waiting_for_host = phase == "lobby" and self._can_wait_for_host_in_lobby() and not can_start
         self._set_button_visibility(self.start_game_btn, can_start)
-        self.wait_host_btn.disabled = True
-        self.wait_host_btn.opacity = 1 if waiting_for_host else 0
+        self._set_button_visibility(self.wait_host_btn, waiting_for_host)
 
     def _set_mic_muted(self, muted):
         self._mic_muted_state = bool(muted)
@@ -2166,6 +2183,12 @@ class RoomScreen(Screen):
         self._set_panel_visibility(self.voice_card, False, self.voice_card_height)
         self._set_panel_visibility(self.scores_wrap, phase == "round" and is_explainer, scores_panel_height)
         self._set_panel_visibility(self.phase_wrap, phase in {"countdown", "round"}, self.phase_wrap_height)
+        if phase == "lobby":
+            self.chat_host.size_hint_y = None
+            self.chat_host.height = dp(210)
+        else:
+            self.chat_host.size_hint_y = 1
+            self.chat_host.height = dp(0)
         if phase == "round" and is_explainer:
             self.word_push_spacer.size_hint_y = 1
             self.word_push_spacer.height = dp(0)
