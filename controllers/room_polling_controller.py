@@ -303,6 +303,14 @@ class RoomPollingController:
             print(f"[POLLING] Version comparison: '{incoming_version}' > '{self.screen._room_state_version}'? {incoming_version > self.screen._room_state_version}, Phase priority: {incoming_phase}({incoming_phase_priority}) vs {current_phase}({current_phase_priority}), will_apply={will_apply}")
 
             if will_apply:
+                # CRITICAL: If countdown timer is active, don't let polling skip to round phase
+                # This prevents countdown from being hidden before user sees it
+                if (self.screen._countdown_event is not None and
+                    incoming_phase == "round" and current_phase == "countdown"):
+                    print(f"[POLLING] BLOCKED - countdown timer active, don't skip to round yet")
+                    self.screen._ensure_interaction_ready()
+                    return
+
                 print(f"[POLLING] APPLYING state. Phase changing from {self.screen._current_phase()} to {state.get('game_phase', '?')}")
                 # Set version FIRST to prevent race conditions with concurrent requests
                 self.screen._room_state_version = incoming_version
