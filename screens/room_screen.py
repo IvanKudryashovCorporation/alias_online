@@ -55,6 +55,7 @@ from ui import (
     PixelLabel,
     RoundedPanel,
     ScreenBackground,
+    TouchPassthroughFloatLayout,
     register_game_font,
 )
 
@@ -788,6 +789,7 @@ class RoomScreen(Screen):
             spacing=dp(6),
             size_hint_y=None,
         )
+        self._content_box = content
         content.bind(minimum_height=content.setter("height"))
 
         top_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(56))
@@ -854,7 +856,7 @@ class RoomScreen(Screen):
         self.scores_wrap_height = dp(132)
         self.scores_wrap_overlay_height = dp(162)
         self.scores_wrap = FloatLayout(size_hint_y=None, height=self.scores_wrap_height)
-        self.score_chat_layer = FloatLayout(size_hint=(1, 1), opacity=0, disabled=True)
+        self.score_chat_layer = TouchPassthroughFloatLayout(size_hint=(1, 1), opacity=0, disabled=True)
         self.scores_wrap.add_widget(self.score_chat_layer)
         self.score_badge = ScoreBadge(pos_hint={"center_x": 0.5, "top": 1.0})
         self.scores_wrap.add_widget(self.score_badge)
@@ -872,7 +874,13 @@ class RoomScreen(Screen):
         content.add_widget(self.players_summary_wrap)
 
         self.lobby_start_height = dp(52)
-        self.lobby_start_row = AnchorLayout(size_hint_y=None, height=self.lobby_start_height, anchor_x="center", anchor_y="center")
+        self.lobby_action_bar = TouchPassthroughFloatLayout(
+            size_hint=(1, None),
+            height=dp(0),
+            opacity=0,
+            pos_hint={"x": 0, "y": 0},
+        )
+        self.lobby_start_row = AnchorLayout(size_hint=(1, 1), anchor_x="center", anchor_y="center")
         self.start_game_btn = AppButton(
             text="Начать игру",
             compact=True,
@@ -892,7 +900,7 @@ class RoomScreen(Screen):
         self.wait_host_btn.disabled = True
         self.wait_host_btn.opacity = 0
         self.lobby_start_row.add_widget(self.wait_host_btn)
-        content.add_widget(self.lobby_start_row)
+        self.lobby_action_bar.add_widget(self.lobby_start_row)
 
         self.phase_wrap_height = dp(62)
         self.phase_wrap = RoundedPanel(
@@ -1010,9 +1018,10 @@ class RoomScreen(Screen):
         self.countdown_overlay = FullscreenCountdownOverlay()
         self.chat_overlay_layer = FloatLayout(size_hint=(None, None), size=(0, 0), opacity=0, disabled=True)
 
-        content_scroll = ScrollView(do_scroll_x=False, bar_width=dp(4), scroll_type=["bars", "content"])
-        content_scroll.add_widget(content)
-        root.add_widget(content_scroll)
+        self._content_scroll = ScrollView(do_scroll_x=False, bar_width=dp(4), scroll_type=["bars", "content"])
+        self._content_scroll.add_widget(content)
+        root.add_widget(self._content_scroll)
+        root.add_widget(self.lobby_action_bar)
         root.add_widget(self.chat_overlay_layer)
         root.add_widget(self.countdown_overlay)
         self.loading_overlay = LoadingOverlay()
@@ -1117,6 +1126,9 @@ class RoomScreen(Screen):
         self.chat_host.height = dp(0)
         self.chat_host.opacity = 1
         self.chat_host.disabled = False
+        self.lobby_action_bar.opacity = 0
+        self.lobby_action_bar.height = dp(0)
+        self.lobby_action_bar.disabled = False
         self.chat_card.size_hint = (1, 1)
         self.chat_card.height = dp(0)
         self.chat_card.pos_hint = {}
@@ -1690,6 +1702,17 @@ class RoomScreen(Screen):
             button.size_hint = (None, None)
             button.size = (dp(0), dp(0))
 
+    def _set_lobby_action_bar_visibility(self, visible, shown_height):
+        bar = self.lobby_action_bar
+        if visible:
+            bar.opacity = 1
+            bar.disabled = False
+            bar.height = shown_height
+        else:
+            bar.opacity = 0
+            bar.disabled = False
+            bar.height = dp(0)
+
     def _set_panel_visibility(self, panel, visible, shown_height):
         panel.disabled = not visible
         panel.opacity = 1 if visible else 0
@@ -2189,11 +2212,12 @@ class RoomScreen(Screen):
         self._set_panel_visibility(self.room_meta_wrap, phase not in {"lobby", "round"} and not is_explainer, self.room_meta_wrap_height)
         self._set_panel_visibility(self.players_wrap, show_players_grid, players_panel_height)
         self._set_panel_visibility(self.players_summary_wrap, False, self.players_summary_wrap_height)
-        self._set_panel_visibility(
-            self.lobby_start_row,
+        self._set_lobby_action_bar_visibility(
             self._show_lobby_action_row(phase),
             self.lobby_start_height,
         )
+        lobby_bar_visible = phase == "lobby" and self._show_lobby_action_row(phase)
+        self._content_box.padding[3] = dp(10) + (self.lobby_start_height if lobby_bar_visible else 0)
         self._set_panel_visibility(self.explainer_card, phase in {"countdown", "round"} and not is_explainer, self.explainer_card_height)
         self._set_panel_visibility(self.word_stage, phase == "round" and is_explainer, self.word_stage_height)
         self._set_panel_visibility(self.voice_card, False, self.voice_card_height)

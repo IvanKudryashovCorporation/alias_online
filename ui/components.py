@@ -321,6 +321,25 @@ class ScreenBackground(FloatLayout):
         self._token_mint.size = (width * 0.07, width * 0.07)
 
 
+class TouchPassthroughFloatLayout(FloatLayout):
+    """FloatLayout that does not steal touches when collapsed or fully transparent."""
+
+    def on_touch_down(self, touch):
+        if self.disabled or self.opacity < 0.01 or self.height < 1:
+            return False
+        return super().on_touch_down(touch)
+
+    def on_touch_move(self, touch):
+        if self.disabled or self.opacity < 0.01 or self.height < 1:
+            return False
+        return super().on_touch_move(touch)
+
+    def on_touch_up(self, touch):
+        if self.disabled or self.opacity < 0.01 or self.height < 1:
+            return False
+        return super().on_touch_up(touch)
+
+
 class RoundedPanel(BoxLayout):
     def __init__(self, bg_color=None, shadow_alpha=0.24, **kwargs):
         super().__init__(**kwargs)

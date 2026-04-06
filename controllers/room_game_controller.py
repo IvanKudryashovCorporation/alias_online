@@ -3,8 +3,9 @@
 import time
 from threading import Thread
 from kivy.clock import Clock
-from services import start_room_game
 from kivy.app import App
+
+from services import ROOM_CREATION_COST, start_room_game
 
 
 class RoomGameController:
@@ -80,7 +81,6 @@ class RoomGameController:
         if should_charge_by_local_state:
             app = App.get_running_app()
             profile = app.current_profile() if app is not None and getattr(app, "authenticated", False) else None
-            ROOM_CREATION_COST = 1  # Update this to match actual value
 
             if profile is not None:
                 try:
@@ -106,6 +106,7 @@ class RoomGameController:
         self._start_game_request_token += 1
         request_token = self._start_game_request_token
         self._start_game_request_in_flight = True
+        self.screen._start_game_request_in_flight = True
         self.screen.start_game_btn.disabled = True
         self.screen.loading_overlay.show("Запускаем игру...")
         self._arm_start_watchdog(request_token)
@@ -143,6 +144,9 @@ class RoomGameController:
             payload["message"] = str(error)
         except ValueError as error:
             payload["status"] = "value_error"
+            payload["message"] = str(error)
+        except Exception as error:
+            payload["status"] = "error"
             payload["message"] = str(error)
 
         Clock.schedule_once(lambda _dt, data=payload: self.finish_start_game(data), 0)

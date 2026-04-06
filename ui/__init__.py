@@ -12,6 +12,7 @@ from .components import (
     PixelLabel,
     RoundedPanel,
     ScreenBackground,
+    TouchPassthroughFloatLayout,
     build_scrollable_content,
     resolve_image_source,
     spacer,
