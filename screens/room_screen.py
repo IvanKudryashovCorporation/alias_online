@@ -2267,15 +2267,35 @@ class RoomScreen(Screen):
 
         Clock.schedule_once(lambda *_: setattr(self.chat_scroll, "scroll_y", 0), 0)
 
+    def _debug_toast(self, msg):
+        """Temporary debug: show a visible label at the top of the screen."""
+        print(f"[START-GAME] {msg}")
+        try:
+            if not hasattr(self, "_debug_label"):
+                from kivy.uix.label import Label as _DebugLabel
+                self._debug_label = _DebugLabel(
+                    text="", font_size=sp(11), color=(1, 1, 0.2, 1),
+                    size_hint=(1, None), height=dp(28),
+                    pos_hint={"top": 1, "center_x": 0.5},
+                    halign="center", valign="middle",
+                )
+                self._debug_label.bind(size=self._debug_label.setter("text_size"))
+                root_widget = self.children[0] if self.children else self
+                root_widget.add_widget(self._debug_label)
+            self._debug_label.text = msg
+            self._debug_label.opacity = 1
+        except Exception as e:
+            print(f"[START-GAME] debug toast error: {e}")
+
     def _queue_start_game(self, *_):
-        print("[START-GAME] _queue_start_game called")
+        self._debug_toast("НАЖАТА! queue_start_game вызван")
         now_ts = time.time()
         if self._start_game_request_in_flight:
-            print("[START-GAME] BLOCKED: request already in flight")
+            self._debug_toast("БЛОК: запрос уже в полёте")
             self._show_status("Запрос уже отправлен, подождите...", "warning")
             return
         if now_ts - self._last_start_attempt_ts < 0.35:
-            print("[START-GAME] BLOCKED: debounce")
+            self._debug_toast("БЛОК: дебаунс")
             return
         self._last_start_attempt_ts = now_ts
         self._start_game()
@@ -2333,20 +2353,22 @@ class RoomScreen(Screen):
         return True, None
 
     def _start_game(self, *_):
-        print(f"[START-GAME] _start_game called, phase={self._current_phase()}, can_control={self._can_control_start()}")
-        if self._current_phase() != "lobby":
+        phase = self._current_phase()
+        can_ctrl = self._can_control_start()
+        self._debug_toast(f"_start_game: phase={phase}, can_ctrl={can_ctrl}")
+        if phase != "lobby":
+            self._debug_toast(f"БЛОК: phase={phase} != lobby")
             self._show_status("Игра уже запущена.", "warning")
-            print("[START-GAME] BLOCKED: phase != lobby")
             return
-        if not self._can_control_start():
+        if not can_ctrl:
+            self._debug_toast("БЛОК: не хост")
             self._show_status("Начать игру может только создатель комнаты.", "warning")
-            print("[START-GAME] BLOCKED: not host")
             return
 
         player_name = self._player_name()
         if not player_name or not self.room_code:
+            self._debug_toast(f"БЛОК: player={player_name}, room={self.room_code}")
             self._show_status("Не удалось определить игрока для старта игры.")
-            print(f"[START-GAME] BLOCKED: player_name={player_name}, room_code={self.room_code}")
             return
 
         room_before_start = self.room_state.get("room", {}) if isinstance(self.room_state, dict) else {}
@@ -2383,7 +2405,7 @@ class RoomScreen(Screen):
         self._start_game_request_in_flight = True
         self.start_game_btn.disabled = True
         self.loading_overlay.show("Запускаем игру...")
-        print(f"[START-GAME] launching worker thread, room={self.room_code}, player={player_name}")
+        self._debug_toast(f"Отправляю запрос... room={self.room_code}")
 
         Thread(
             target=self._start_game_worker,
@@ -2392,12 +2414,12 @@ class RoomScreen(Screen):
         ).start()
 
     def _start_game_worker(self, room_code, player_name, should_charge_by_local_state, starts_before):
-        print(f"[START-GAME] worker started, calling start_room_game({room_code}, {player_name})")
+        print(f"[START-GAME] worker: calling start_room_game({room_code}, {player_name})")
         result = {"status": "error", "message": "Не удалось запустить игру."}
         try:
             start_response = start_room_game(room_code=room_code, player_name=player_name)
-            print(f"[START-GAME] server response keys: {list(start_response.keys()) if isinstance(start_response, dict) else type(start_response)}")
-            print(f"[START-GAME] game_phase={start_response.get('game_phase') if isinstance(start_response, dict) else '?'}")
+            phase = start_response.get("game_phase") if isinstance(start_response, dict) else "?"
+            print(f"[START-GAME] worker: OK, phase={phase}")
             result = {
                 "status": "success",
                 "response": start_response,
@@ -2405,24 +2427,23 @@ class RoomScreen(Screen):
                 "starts_before": starts_before,
             }
         except ConnectionError as error:
-            print(f"[START-GAME] ConnectionError: {error}")
+            print(f"[START-GAME] worker: ConnectionError: {error}")
             result = {"status": "connection_error", "message": str(error)}
         except ValueError as error:
-            print(f"[START-GAME] ValueError: {error}")
+            print(f"[START-GAME] worker: ValueError: {error}")
             result = {"status": "value_error", "message": str(error)}
         except Exception as error:
-            print(f"[START-GAME] Exception: {type(error).__name__}: {error}")
+            print(f"[START-GAME] worker: {type(error).__name__}: {error}")
             result = {"status": "error", "message": f"Ошибка: {error}"}
-        print(f"[START-GAME] scheduling _finish_start_game with status={result['status']}")
         Clock.schedule_once(lambda dt: self._finish_start_game(result), 0)
 
     def _finish_start_game(self, result):
         status = result.get("status")
-        print(f"[START-GAME] _finish_start_game called, status={status}")
+        self._debug_toast(f"Ответ сервера: status={status}")
         if status in ("connection_error", "value_error", "error"):
             color_key = "error" if status == "connection_error" else "warning"
             msg = result.get("message") or "Не удалось запустить игру."
-            print(f"[START-GAME] ERROR: {msg}")
+            self._debug_toast(f"ОШИБКА: {msg}")
             self._show_status(msg, color_key)
             self._start_game_request_in_flight = False
             self.start_game_btn.disabled = False
@@ -2458,9 +2479,8 @@ class RoomScreen(Screen):
                 updated_state["round_left_sec"] = int(start_response.get("round_left_sec") or 0)
 
         self.room_state = updated_state
-        print(f"[START-GAME] applying state, phase={updated_state.get('game_phase')}, countdown={updated_state.get('countdown_left_sec')}")
+        self._debug_toast(f"Фаза: {updated_state.get('game_phase')}, отсчёт: {updated_state.get('countdown_left_sec')}с")
         self._apply_state()
-        print(f"[START-GAME] state applied, current_phase={self._current_phase()}")
 
         room_payload = updated_state.get("room") if isinstance(updated_state, dict) else {}
         try:
