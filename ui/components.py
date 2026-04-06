@@ -1376,6 +1376,7 @@ class LoadingOverlay(FloatLayout):
         return True
 
     def show(self, message="Загрузка..."):
+        print(f"[LOADING_OVERLAY] SHOW: {message}")
         self.message_label.text = message
         self.size_hint = self._shown_size_hint
         self.disabled = False
@@ -1387,6 +1388,7 @@ class LoadingOverlay(FloatLayout):
             self._spin_event = Clock.schedule_interval(self._advance, 1 / 60.0)
 
     def hide(self):
+        print(f"[LOADING_OVERLAY] HIDE")
         if self._spin_event is not None:
             self._spin_event.cancel()
             self._spin_event = None

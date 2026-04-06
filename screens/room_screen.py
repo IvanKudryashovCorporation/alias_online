@@ -29,8 +29,6 @@ from kivy.uix.widget import Widget
 from services import (
     ROOM_CREATION_COST,
     RoomVoiceEngine,
-    get_online_room_state,
-    join_online_room,
     leave_online_room,
     list_profiles,
     ping_room_voice,
@@ -39,7 +37,6 @@ from services import (
     set_room_mic_state,
     skip_room_word,
     spend_alias_coins,
-    start_room_game,
     sync_room_progress,
 )
 from controllers import RoomGameController, RoomPollingController
@@ -713,6 +710,7 @@ class FullscreenCountdownOverlay(FloatLayout):
     def show(self, seconds_left):
         self._active = True
         self.opacity = 1
+        self.disabled = False
         number = max(1, int(seconds_left))
         self._label.text = str(number)
         self._caption.text = "СТАРТ ЧЕРЕЗ"
@@ -721,6 +719,7 @@ class FullscreenCountdownOverlay(FloatLayout):
     def hide(self):
         self._active = False
         self.opacity = 0
+        self.disabled = True
         self._label.text = ""
 
     def on_touch_down(self, touch):
@@ -741,6 +740,7 @@ class RoomScreen(Screen):
 
         self.room_code = ""
         self.room_state = {}
+        self._room_state_version = ""  # Track server state version to prevent old state overwrites
         self._poll_event = None
         self._voice_ui_event = None
         self._last_voice_ping_ts = 0.0
@@ -1029,11 +1029,13 @@ class RoomScreen(Screen):
         self.add_widget(root)
 
     def on_pre_enter(self, *_):
+        print(f"\n[ON_PRE_ENTER] Entering room screen")
         self.disabled = False
         app = App.get_running_app()
         room_data = app.get_active_room() if app is not None else {}
         self.room_code = (room_data or {}).get("code", "")
         self.room_state = {}
+        print(f"[ON_PRE_ENTER] Room code: {self.room_code}")
         player_name = self._player_name()
         self._last_voice_ping_ts = 0.0
         self._smoothed_voice_level = 0.0
@@ -1075,10 +1077,17 @@ class RoomScreen(Screen):
                     except (TypeError, ValueError):
                         self._last_message_id = 0
             self.room_state = initial_state
+            # Track state version from cached state
+            room_info = initial_state.get("room", {})
+            if isinstance(room_info, dict):
+                self._room_state_version = (room_info.get("updated_at") or "")
+            print(f"[ON_PRE_ENTER] Loaded cached state. Phase: {initial_state.get('game_phase', '?')}, Version: {self._room_state_version}")
             self.status_label.color = COLORS["text_muted"]
             self.status_label.text = ""
             if app is not None:
                 app.set_active_room(initial_state.get("room", room_data))
+        else:
+            print(f"[ON_PRE_ENTER] No cached state available")
 
         self.polling_controller.start_polling()
         self._start_voice_ui_sync()
@@ -1090,6 +1099,7 @@ class RoomScreen(Screen):
         self._ensure_interaction_ready()
 
     def on_leave(self, *_):
+        print(f"[ON_LEAVE] Leaving room screen. Current phase: {self._current_phase()}")
         self.polling_controller.stop_polling()
         self._stop_voice_ui_sync()
         self._stop_voice_engine()
@@ -1180,83 +1190,6 @@ class RoomScreen(Screen):
                 self._mount_chat_in_column()
         self.back_btn.disabled = False
 
-    def _request_rejoin_state(self):
-        if self._rejoin_in_flight:
-            return
-        player_name = (self._player_name() or "").strip()
-        room_code = (self.room_code or "").strip().upper()
-        if not player_name or not room_code:
-            return
-
-        app = App.get_running_app()
-        self._rejoin_request_token += 1
-        request_token = self._rejoin_request_token
-        self._rejoin_in_flight = True
-        is_guest = bool(app is not None and getattr(app, "guest_mode", False))
-        client_id = app.resolve_client_id() if app is not None and hasattr(app, "resolve_client_id") else ""
-        worker = Thread(
-            target=self._rejoin_worker,
-            args=(request_token, room_code, player_name, is_guest, client_id),
-            daemon=True,
-        )
-        worker.start()
-
-    def _rejoin_worker(self, request_token, room_code, player_name, is_guest, client_id):
-        payload = {"token": request_token, "status": "error", "message": "Не удалось синхронизировать комнату."}
-        try:
-            joined_room = join_online_room(
-                room_code=room_code,
-                player_name=player_name,
-                is_guest=bool(is_guest),
-                client_id=(client_id or "").strip(),
-            )
-            payload = {
-                "token": request_token,
-                "status": "success",
-                "joined_room": joined_room,
-            }
-        except ConnectionError as error:
-            payload = {"token": request_token, "status": "connection_error", "message": str(error)}
-        except ValueError as error:
-            payload = {"token": request_token, "status": "value_error", "message": str(error)}
-        Clock.schedule_once(lambda _dt, data=payload: self._finish_rejoin_state(data), 0)
-
-    def _finish_rejoin_state(self, payload):
-        token = int(payload.get("token") or 0)
-        if token != self._rejoin_request_token:
-            return
-        self._rejoin_in_flight = False
-        if self.manager is None or self.manager.current != self.name:
-            return
-
-        status = payload.get("status")
-        if status != "success":
-            message = payload.get("message") or "Не удалось синхронизировать комнату."
-            self.status_label.color = COLORS["warning"] if status == "value_error" else COLORS["error"]
-            self.status_label.text = message
-            self._ensure_interaction_ready()
-            return
-
-        joined_room = payload.get("joined_room") or {}
-        app = App.get_running_app()
-        if app is not None:
-            joined_as = (joined_room.get("_joined_as") or "").strip()
-            if joined_as and hasattr(app, "adopt_room_player_name"):
-                app.adopt_room_player_name(joined_as)
-
-        server_state = joined_room.get("_server_state")
-        if isinstance(server_state, dict):
-            initial_state = dict(server_state)
-            incoming_messages = initial_state.get("messages") if isinstance(initial_state.get("messages"), list) else []
-            initial_state["messages"] = self._merge_message_history(incoming_messages, since_id=0)
-            self.room_state = initial_state
-            self._rejoin_recover_attempts = 0
-            if app is not None:
-                app.set_active_room(initial_state.get("room", joined_room))
-            self._apply_state()
-        elif app is not None:
-            app.set_active_room(joined_room)
-        self._ensure_interaction_ready()
 
     def _go_back_to_menu(self, *_):
         if self._is_match_active():
@@ -1648,14 +1581,6 @@ class RoomScreen(Screen):
         self._last_message_id = int(merged[-1]["id"]) if merged else 0
         return list(merged)
 
-    def _start_polling(self):
-        self._stop_polling()
-        self._poll_event = Clock.schedule_interval(lambda _dt: self._poll_state(), 0.65)
-
-    def _stop_polling(self):
-        if self._poll_event is not None:
-            self._poll_event.cancel()
-            self._poll_event = None
 
     def _start_voice_ui_sync(self):
         self._stop_voice_ui_sync()
@@ -1925,167 +1850,9 @@ class RoomScreen(Screen):
             card.bind(on_release=lambda *_args, player=listed_player: self._open_player_profile(player))
             self.players_box.add_widget(card)
 
-    def _poll_state(self):
-        if self._poll_in_flight:
-            if self._poll_started_at > 0 and (time.time() - self._poll_started_at) > 9.0:
-                self._poll_in_flight = False
-                self._poll_started_at = 0.0
-            else:
-                return
-
-        room_code = (self.room_code or "").strip().upper()
-        if not room_code:
-            self.status_label.color = COLORS["warning"]
-            self.status_label.text = "Комната не выбрана. Создай комнату или зайди в существующую."
-            self._ensure_interaction_ready()
-            return
-
-        player_name = (self._player_name() or "").strip()
-        if not player_name:
-            self.status_label.color = COLORS["error"]
-            self.status_label.text = "Сессия игрока не найдена. Войди в аккаунт снова."
-            self._ensure_interaction_ready()
-            return
-
-        self._poll_in_flight = True
-        self._poll_started_at = time.time()
-        self._poll_token += 1
-        request_token = self._poll_token
-        since_id = int(self._last_message_id or 0)
-        client_id = self._client_id()
-        worker = Thread(
-            target=self._poll_state_worker,
-            args=(request_token, room_code, player_name, client_id, since_id),
-            daemon=True,
-        )
-        worker.start()
-
-    def _poll_state_worker(self, request_token, room_code, player_name, client_id, since_id):
-        result = {
-            "token": request_token,
-            "room_code": room_code,
-            "player_name": player_name,
-            "client_id": (client_id or "").strip(),
-            "since_id": int(since_id or 0),
-            "status": "error",
-            "message": "Unexpected polling error.",
-        }
-        try:
-            request_since_id = int(since_id or 0)
-            state = get_online_room_state(
-                room_code=room_code,
-                player_name=player_name,
-                since_id=request_since_id if request_since_id > 0 else None,
-                client_id=(client_id or "").strip(),
-                timeout=4,
-            )
-            result = {
-                "token": request_token,
-                "room_code": room_code,
-                "player_name": player_name,
-                "since_id": request_since_id,
-                "status": "success",
-                "state": state,
-            }
-        except ConnectionError as error:
-            result["status"] = "connection_error"
-            result["message"] = str(error)
-        except ValueError as error:
-            result["status"] = "value_error"
-            result["message"] = str(error)
-        except Exception as error:
-            result["status"] = "error"
-            result["message"] = str(error)
-
-        Clock.schedule_once(lambda _dt, payload=result: self._finish_poll_state(payload), 0)
-
-    def _finish_poll_state(self, payload):
-        token = int(payload.get("token") or 0)
-        if token != self._poll_token:
-            return
-
-        self._poll_in_flight = False
-        self._poll_started_at = 0.0
-        if self.manager is None or self.manager.current != self.name:
-            return
-
-        if (payload.get("room_code") or "").strip().upper() != (self.room_code or "").strip().upper():
-            return
-
-        status = payload.get("status")
-        if status == "success":
-            state = dict(payload.get("state") or {})
-            incoming_messages = state.get("messages") if isinstance(state.get("messages"), list) else []
-            used_since = int(payload.get("since_id") or 0)
-            state["messages"] = self._merge_message_history(incoming_messages, used_since)
-            viewer_state = state.get("viewer") if isinstance(state.get("viewer"), dict) else {}
-            if not viewer_state or "is_player" not in viewer_state:
-                self.status_label.color = COLORS["warning"]
-                self.status_label.text = "Сервер не прислал состояние игрока. Повтори вход в комнату."
-                self._ensure_interaction_ready()
-                return
-            if not bool(viewer_state.get("is_player")):
-                if self._rejoin_recover_attempts < 2:
-                    self._rejoin_recover_attempts += 1
-                    self.status_label.color = COLORS["warning"]
-                    self.status_label.text = "Синхронизируем состав комнаты. Пожалуйста, подожди..."
-                    self._request_rejoin_state()
-                    self._ensure_interaction_ready()
-                    return
-                app = App.get_running_app()
-                if app is not None:
-                    app.clear_active_room()
-                    if hasattr(app, "ensure_screen"):
-                        app.ensure_screen("join_room")
-                self.room_code = ""
-                self.room_state = {}
-                self.status_label.color = COLORS["warning"]
-                self.status_label.text = "Ты больше не состоишь в этой комнате."
-                Clock.schedule_once(lambda *_: setattr(self.manager, "current", "join_room"), 0)
-                self._ensure_interaction_ready()
-                return
-            self.room_state = state
-            self._rejoin_recover_attempts = 0
-            app = App.get_running_app()
-            if app is not None:
-                viewer_name = ((state.get("viewer") or {}).get("player_name") or "").strip()
-                if viewer_name and hasattr(app, "adopt_room_player_name"):
-                    app.adopt_room_player_name(viewer_name)
-                app.set_active_room(state.get("room", {}))
-            self._apply_state()
-        elif status == "connection_error":
-            self.status_label.color = COLORS["error"]
-            self.status_label.text = payload.get("message") or "Не удалось обновить комнату."
-        elif status == "value_error":
-            message = payload.get("message") or "Ошибка обновления комнаты."
-            if "Player is not in this room." in message:
-                if self._rejoin_recover_attempts < 2:
-                    self._rejoin_recover_attempts += 1
-                    self.status_label.color = COLORS["warning"]
-                    self.status_label.text = "Потеряли связь с комнатой. Пробуем переподключиться..."
-                    self._request_rejoin_state()
-                    self._ensure_interaction_ready()
-                    return
-                app = App.get_running_app()
-                if app is not None:
-                    app.clear_active_room()
-                    if hasattr(app, "ensure_screen"):
-                        app.ensure_screen("join_room")
-                self.room_code = ""
-                self.room_state = {}
-                self.status_label.color = COLORS["warning"]
-                self.status_label.text = "Ты больше не в этой комнате. Зайди в нее снова."
-                Clock.schedule_once(lambda *_: setattr(self.manager, "current", "join_room"), 0)
-            else:
-                self.status_label.color = COLORS["warning"]
-                self.status_label.text = message
-        else:
-            self.status_label.color = COLORS["error"]
-            self.status_label.text = payload.get("message") or "Не удалось обновить состояние комнаты."
-
-        self._ensure_interaction_ready()
 
     def _apply_state(self):
+        import traceback
         room = self.room_state.get("room", {})
         players = self.room_state.get("players", [])
         scores = self.room_state.get("scores", [])
@@ -2095,6 +1862,25 @@ class RoomScreen(Screen):
         player_name = self._player_name() or ""
         is_explainer = self._is_explainer()
         phase = self._current_phase()
+
+        # Log who called _apply_state
+        stack = traceback.extract_stack()
+        caller = "unknown"
+        for frame in reversed(stack[-5:-1]):  # Check last 4 frames
+            if "finish_start_game" in frame.name:
+                caller = "finish_start_game"
+                break
+            elif "_finish_poll_state" in frame.name:
+                caller = "polling"
+                break
+            elif "on_pre_enter" in frame.name:
+                caller = "on_pre_enter"
+                break
+            elif "_ensure_interaction_ready" in frame.name:
+                caller = "_ensure_interaction_ready"
+                break
+
+        print(f"[APPLY_STATE] Phase: {phase}, Version: {room.get('updated_at', '?')}, Caller: {caller}")
         self._set_room_exit_button(self._is_match_active())
         countdown_left = int(self.room_state.get("countdown_left_sec") or 0)
         round_left = int(self.room_state.get("round_left_sec") or 0)
@@ -2223,6 +2009,8 @@ class RoomScreen(Screen):
         self._set_panel_visibility(self.voice_card, False, self.voice_card_height)
         self._set_panel_visibility(self.scores_wrap, phase == "round" and is_explainer, scores_panel_height)
         self._set_panel_visibility(self.phase_wrap, phase in {"countdown", "round"}, self.phase_wrap_height)
+        # Disable scroll during game to allow swipe on word card
+        self._content_scroll.disabled = phase in {"countdown", "round"}
         if phase == "lobby":
             self.chat_host.size_hint_y = None
             self.chat_host.height = dp(210)
@@ -2240,10 +2028,12 @@ class RoomScreen(Screen):
 
         if phase == "lobby":
             self.phase_label.text = ""
+            print(f"[PHASE] Hiding countdown overlay (lobby)")
             self.countdown_overlay.hide()
         elif phase == "countdown":
             self.phase_label.color = COLORS["accent"]
             self.phase_label.text = f"СТАРТ ЧЕРЕЗ {countdown_left} СЕК"
+            print(f"[PHASE] Showing countdown overlay ({countdown_left} sec)")
             if countdown_left > 0:
                 self.countdown_overlay.show(countdown_left)
             else:
@@ -2251,6 +2041,7 @@ class RoomScreen(Screen):
         else:
             self.phase_label.color = COLORS["success"]
             self.phase_label.text = f"ОСТАЛОСЬ {round_left} СЕК"
+            print(f"[PHASE] Hiding countdown overlay (round)")
             self.countdown_overlay.hide()
 
         self._render_player_cards(players, explainer_name, host_name, profile_map, score_map, phase)
@@ -2358,12 +2149,6 @@ class RoomScreen(Screen):
 
         Clock.schedule_once(lambda *_: setattr(self.chat_scroll, "scroll_y", 0), 0)
 
-    def _queue_start_game(self, *_):
-        now_ts = time.time()
-        if self._start_game_request_in_flight or now_ts - self._last_start_attempt_ts < 0.35:
-            return
-        self._last_start_attempt_ts = now_ts
-        self._start_game()
 
     def _charge_start_cost(self):
         app = App.get_running_app()
@@ -2417,303 +2202,6 @@ class RoomScreen(Screen):
 
         return True, None
 
-    def _start_game_sync_legacy(self, *_):
-        return self._start_game(*_)
-        if self._current_phase() != "lobby":
-            self.status_label.color = COLORS["warning"]
-            self.status_label.text = "Игра уже запущена."
-            return
-        if not self._can_control_start():
-            self.status_label.color = COLORS["warning"]
-            self.status_label.text = "Начать игру может только создатель комнаты."
-            return
-
-        player_name = self._player_name()
-        if not player_name or not self.room_code:
-            self.status_label.color = COLORS["error"]
-            self.status_label.text = "Не удалось определить игрока для старта игры."
-            return
-
-        room_before_start = self.room_state.get("room", {}) if isinstance(self.room_state, dict) else {}
-        try:
-            starts_before = int((room_before_start or {}).get("starts_count") or 0)
-        except (TypeError, ValueError):
-            starts_before = 0
-        starts_before = max(starts_before, int(self._local_starts_count or 0))
-        should_charge_by_local_state = starts_before >= 1
-
-        app = App.get_running_app()
-        profile = app.current_profile() if app is not None and getattr(app, "authenticated", False) else None
-        if should_charge_by_local_state:
-            if profile is not None:
-                try:
-                    current_coins = int(getattr(profile, "alias_coins", 0) or 0)
-                except (TypeError, ValueError):
-                    current_coins = 0
-                if current_coins < ROOM_CREATION_COST:
-                    self.status_label.color = COLORS["warning"]
-                    self.status_label.text = (
-                        f"Нужно минимум {ROOM_CREATION_COST} AC для запуска игры. Сейчас: {current_coins} AC."
-                    )
-                    return
-            elif app is not None and getattr(app, "guest_mode", False):
-                current_coins = int(app.current_alias_coins() or 0)
-                if current_coins < ROOM_CREATION_COST:
-                    self.status_label.color = COLORS["warning"]
-                    self.status_label.text = (
-                        f"Нужно минимум {ROOM_CREATION_COST} AC для запуска игры. Сейчас: {current_coins} AC."
-                    )
-                    return
-
-        self._start_game_request_in_flight = True
-        self.start_game_btn.disabled = True
-        self.loading_overlay.show("Запускаем игру...")
-        self._arm_start_watchdog(request_token)
-
-        try:
-            start_response = start_room_game(room_code=self.room_code, player_name=player_name)
-        except ConnectionError as error:
-            self.status_label.color = COLORS["error"]
-            self.status_label.text = str(error)
-            self._start_game_request_in_flight = False
-            self.start_game_btn.disabled = not self._can_start_game()
-            self.loading_overlay.hide()
-            return
-        except ValueError as error:
-            self.status_label.color = COLORS["warning"]
-            self.status_label.text = str(error)
-            self._start_game_request_in_flight = False
-            self.start_game_btn.disabled = not self._can_start_game()
-            self.loading_overlay.hide()
-            return
-
-        updated_state = dict(self.room_state or {})
-        if isinstance(start_response, dict):
-            for key in (
-                "room",
-                "players",
-                "scores",
-                "messages",
-                "viewer",
-                "voice_active",
-                "voice_speaker",
-                "can_see_word",
-                "current_word",
-                "server_time",
-            ):
-                if key in start_response:
-                    updated_state[key] = start_response.get(key)
-            phase = (start_response.get("game_phase") or updated_state.get("game_phase") or "").strip().lower()
-            if phase in {"lobby", "countdown", "round"}:
-                updated_state["game_phase"] = phase
-            if "countdown_left_sec" in start_response:
-                updated_state["countdown_left_sec"] = int(start_response.get("countdown_left_sec") or 0)
-            if "round_left_sec" in start_response:
-                updated_state["round_left_sec"] = int(start_response.get("round_left_sec") or 0)
-
-        self.room_state = updated_state
-        self._apply_state()
-
-        room_payload = updated_state.get("room") if isinstance(updated_state, dict) else {}
-        try:
-            starts_count = int((room_payload or {}).get("starts_count") or 0)
-        except (TypeError, ValueError):
-            starts_count = 0
-        should_charge_start = starts_count > 1 or should_charge_by_local_state
-        self._local_starts_count = max(starts_count, starts_before + 1)
-
-        charge_payload = None
-        if should_charge_start:
-            charged, charge_payload = self._charge_start_cost()
-            if not charged:
-                self._start_game_request_in_flight = False
-                self.start_game_btn.disabled = not self._can_start_game()
-                self.loading_overlay.hide()
-                self.status_label.color = COLORS["warning"]
-                self.status_label.text = str(charge_payload)
-                return
-
-        self._start_game_request_in_flight = False
-        self.loading_overlay.hide()
-        self.status_label.color = COLORS["success"]
-        if should_charge_start and charge_payload is not None:
-            remaining_coins = int(getattr(charge_payload, "alias_coins", 0) or 0)
-            self.status_label.text = (
-                f"Старт игры! Списано {ROOM_CREATION_COST} AC, осталось {remaining_coins} AC."
-            )
-        else:
-            self.status_label.text = "Старт игры! Первый запуск в этой комнате бесплатный."
-        self._poll_state()
-
-    # NOTE: Kept separate from legacy synchronous implementation above.
-    # This override ensures room UI never blocks while start-game request is in flight.
-    def _start_game(self, *_):
-        if self._current_phase() != "lobby":
-            self.status_label.color = COLORS["warning"]
-            self.status_label.text = "Игра уже запущена."
-            return
-        if not self._can_control_start():
-            self.status_label.color = COLORS["warning"]
-            self.status_label.text = "Начать игру может только создатель комнаты."
-            return
-
-        player_name = self._player_name()
-        if not player_name or not self.room_code:
-            self.status_label.color = COLORS["error"]
-            self.status_label.text = "Не удалось определить игрока для старта игры."
-            return
-
-        room_before_start = self.room_state.get("room", {}) if isinstance(self.room_state, dict) else {}
-        try:
-            starts_before = int((room_before_start or {}).get("starts_count") or 0)
-        except (TypeError, ValueError):
-            starts_before = 0
-        starts_before = max(starts_before, int(self._local_starts_count or 0))
-        should_charge_by_local_state = starts_before >= 1
-
-        app = App.get_running_app()
-        profile = app.current_profile() if app is not None and getattr(app, "authenticated", False) else None
-        if should_charge_by_local_state:
-            if profile is not None:
-                try:
-                    current_coins = int(getattr(profile, "alias_coins", 0) or 0)
-                except (TypeError, ValueError):
-                    current_coins = 0
-                if current_coins < ROOM_CREATION_COST:
-                    self.status_label.color = COLORS["warning"]
-                    self.status_label.text = (
-                        f"Нужно минимум {ROOM_CREATION_COST} AC для запуска игры. Сейчас: {current_coins} AC."
-                    )
-                    return
-            elif app is not None and getattr(app, "guest_mode", False):
-                current_coins = int(app.current_alias_coins() or 0)
-                if current_coins < ROOM_CREATION_COST:
-                    self.status_label.color = COLORS["warning"]
-                    self.status_label.text = (
-                        f"Нужно минимум {ROOM_CREATION_COST} AC для запуска игры. Сейчас: {current_coins} AC."
-                    )
-                    return
-
-        self._start_game_request_token += 1
-        request_token = self._start_game_request_token
-        self._start_game_request_in_flight = True
-        self.start_game_btn.disabled = True
-        self.loading_overlay.show("Запускаем игру...")
-        self._arm_start_watchdog(request_token)
-        Thread(
-            target=self._start_game_worker,
-            args=(request_token, self.room_code, player_name, self._client_id(), starts_before, should_charge_by_local_state),
-            daemon=True,
-        ).start()
-
-    def _start_game_worker(self, request_token, room_code, player_name, client_id, starts_before, should_charge_by_local_state):
-        payload = {
-            "token": request_token,
-            "status": "error",
-            "message": "Не удалось запустить игру.",
-            "starts_before": int(starts_before or 0),
-            "should_charge_by_local_state": bool(should_charge_by_local_state),
-        }
-        try:
-            start_response = start_room_game(
-                room_code=room_code,
-                player_name=player_name,
-                client_id=(client_id or "").strip(),
-            )
-            payload = {
-                "token": request_token,
-                "status": "success",
-                "start_response": start_response,
-                "starts_before": int(starts_before or 0),
-                "should_charge_by_local_state": bool(should_charge_by_local_state),
-            }
-        except ConnectionError as error:
-            payload["status"] = "connection_error"
-            payload["message"] = str(error)
-        except ValueError as error:
-            payload["status"] = "value_error"
-            payload["message"] = str(error)
-
-        Clock.schedule_once(lambda _dt, data=payload: self._finish_start_game(data), 0)
-
-    def _finish_start_game(self, payload):
-        token = int(payload.get("token") or 0)
-        if token != self._start_game_request_token:
-            return
-
-        self._cancel_start_watchdog()
-        self._start_game_request_in_flight = False
-        if self.manager is None or self.manager.current != self.name:
-            return
-
-        status = payload.get("status")
-        if status != "success":
-            self.loading_overlay.hide()
-            self.start_game_btn.disabled = not self._can_start_game()
-            self.status_label.color = COLORS["warning"] if status == "value_error" else COLORS["error"]
-            self.status_label.text = payload.get("message") or "Не удалось запустить игру."
-            return
-
-        start_response = payload.get("start_response")
-        starts_before = int(payload.get("starts_before") or 0)
-        should_charge_by_local_state = bool(payload.get("should_charge_by_local_state"))
-
-        updated_state = dict(self.room_state or {})
-        if isinstance(start_response, dict):
-            for key in (
-                "room",
-                "players",
-                "scores",
-                "messages",
-                "viewer",
-                "voice_active",
-                "voice_speaker",
-                "can_see_word",
-                "current_word",
-                "server_time",
-            ):
-                if key in start_response:
-                    updated_state[key] = start_response.get(key)
-            phase = (start_response.get("game_phase") or updated_state.get("game_phase") or "").strip().lower()
-            if phase in {"lobby", "countdown", "round"}:
-                updated_state["game_phase"] = phase
-            if "countdown_left_sec" in start_response:
-                updated_state["countdown_left_sec"] = int(start_response.get("countdown_left_sec") or 0)
-            if "round_left_sec" in start_response:
-                updated_state["round_left_sec"] = int(start_response.get("round_left_sec") or 0)
-
-        self.room_state = updated_state
-        self._apply_state()
-
-        room_payload = updated_state.get("room") if isinstance(updated_state, dict) else {}
-        try:
-            starts_count = int((room_payload or {}).get("starts_count") or 0)
-        except (TypeError, ValueError):
-            starts_count = 0
-        should_charge_start = starts_count > 1 or should_charge_by_local_state
-        self._local_starts_count = max(starts_count, starts_before + 1)
-
-        charge_payload = None
-        if should_charge_start:
-            charged, charge_payload = self._charge_start_cost()
-            if not charged:
-                self.loading_overlay.hide()
-                self.start_game_btn.disabled = not self._can_start_game()
-                self.status_label.color = COLORS["warning"]
-                self.status_label.text = str(charge_payload)
-                return
-
-        self.loading_overlay.hide()
-        self.start_game_btn.disabled = not self._can_start_game()
-        self.status_label.color = COLORS["success"]
-        if should_charge_start and charge_payload is not None:
-            remaining_coins = int(getattr(charge_payload, "alias_coins", 0) or 0)
-            self.status_label.text = (
-                f"Старт игры! Списано {ROOM_CREATION_COST} AC, осталось {remaining_coins} AC."
-            )
-        else:
-            self.status_label.text = "Старт игры! Первый запуск в этой комнате бесплатный."
-        self._poll_state()
 
     def _send_chat_message(self, *_):
         if self._chat_request_in_flight:
@@ -2831,6 +2319,12 @@ class RoomScreen(Screen):
             updated_state = dict(self.room_state or {})
             if "room" in result:
                 updated_state["room"] = result.get("room") or {}
+                # Update state version when room data changes
+                room_data = updated_state.get("room", {})
+                if isinstance(room_data, dict):
+                    new_version = (room_data.get("updated_at") or "")
+                    if new_version > self._room_state_version:
+                        self._room_state_version = new_version
             if "scores" in result:
                 updated_state["scores"] = result.get("scores") or []
             if "current_word" in result:
@@ -2839,7 +2333,6 @@ class RoomScreen(Screen):
             self._apply_state()
 
         self.chat_input.text = ""
-        self._poll_state()
 
     def _skip_word(self, *_):
         if self._skip_request_in_flight:
@@ -2917,6 +2410,12 @@ class RoomScreen(Screen):
             updated_state = dict(self.room_state or {})
             if "room" in response:
                 updated_state["room"] = response.get("room") or {}
+                # Update state version when room data changes
+                room_data = updated_state.get("room", {})
+                if isinstance(room_data, dict):
+                    new_version = (room_data.get("updated_at") or "")
+                    if new_version > self._room_state_version:
+                        self._room_state_version = new_version
             if "scores" in response:
                 updated_state["scores"] = response.get("scores") or []
             if "current_word" in response:
@@ -2925,42 +2424,52 @@ class RoomScreen(Screen):
             self.room_state = updated_state
             self.word_card.opacity = 1.0
             self._apply_state()
-        Clock.schedule_once(lambda *_: self._poll_state(), 0.1)
 
     def _toggle_mic(self, *_):
+        print(f"[TOGGLE_MIC] Clicked")
         if not self._can_toggle_mic():
             self.status_label.color = COLORS["warning"]
             self.status_label.text = "Микрофон доступен только тому, кто объясняет слова."
+            print(f"[TOGGLE_MIC] BLOCKED - not explainer or wrong phase")
             return
 
         player_name = self._player_name()
         if not player_name or not self.room_code:
             self.status_label.color = COLORS["error"]
             self.status_label.text = "Не удалось определить игрока или комнату."
+            print(f"[TOGGLE_MIC] BLOCKED - no player or room")
             return
 
         old_muted = self._mic_is_muted()
         new_muted = not old_muted
+        print(f"[TOGGLE_MIC] Toggling: {old_muted} -> {new_muted}")
         self._set_mic_muted(new_muted)
 
+        Thread(
+            target=self._toggle_mic_worker,
+            args=(self.room_code, player_name, self._client_id(), old_muted, new_muted),
+            daemon=True,
+        ).start()
+
+    def _toggle_mic_worker(self, room_code, player_name, client_id, old_muted, new_muted):
         try:
             response = set_room_mic_state(
-                room_code=self.room_code,
+                room_code=room_code,
                 player_name=player_name,
                 muted=new_muted,
-                client_id=self._client_id(),
+                client_id=client_id,
             )
-        except ConnectionError as error:
-            self._set_mic_muted(old_muted)
-            self.status_label.color = COLORS["error"]
-            self.status_label.text = str(error)
-            return
-        except ValueError as error:
-            self._set_mic_muted(old_muted)
-            self.status_label.color = COLORS["warning"]
-            self.status_label.text = str(error)
-            return
+            Clock.schedule_once(
+                lambda _dt, data=response: self._finish_toggle_mic(data, old_muted, new_muted),
+                0,
+            )
+        except (ConnectionError, ValueError) as error:
+            Clock.schedule_once(
+                lambda _dt, err=str(error), old=old_muted: self._on_toggle_mic_error(err, old),
+                0,
+            )
 
+    def _finish_toggle_mic(self, response, old_muted, new_muted):
         updated_state = dict(self.room_state or {})
         if isinstance(response, dict):
             for key in ("room", "voice_active", "voice_speaker", "explainer_mic_state", "server_time"):
@@ -2970,11 +2479,15 @@ class RoomScreen(Screen):
             room_payload = response.get("room")
             if isinstance(room_payload, dict) and "explainer_mic_muted" in room_payload:
                 updated_state["explainer_mic_muted"] = bool(room_payload.get("explainer_mic_muted"))
+                new_version = (room_payload.get("updated_at") or "")
+                if new_version > self._room_state_version:
+                    self._room_state_version = new_version
             elif "muted" in response:
                 updated_state["explainer_mic_muted"] = bool(response.get("muted"))
 
         self.room_state = updated_state
-        self._set_mic_muted(bool(updated_state.get("explainer_mic_muted", new_muted)))
+        final_muted = bool(updated_state.get("explainer_mic_muted", new_muted))
+        self._set_mic_muted(final_muted)
 
         if self._mic_is_muted():
             self.voice_status.text = "Микрофон выключен"
@@ -2990,6 +2503,11 @@ class RoomScreen(Screen):
                 self.status_label.text = "Микрофон включен, но запись недоступна на этом устройстве."
 
         self._apply_state()
+
+    def _on_toggle_mic_error(self, error_msg, old_muted):
+        self._set_mic_muted(old_muted)
+        self.status_label.color = COLORS["error"]
+        self.status_label.text = str(error_msg)
 
     def _sync_voice_ui(self):
         if not self._can_use_voice():
