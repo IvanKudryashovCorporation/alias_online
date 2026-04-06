@@ -1854,6 +1854,13 @@ class RoomScreen(Screen):
     def _apply_state(self):
         import traceback
         room = self.room_state.get("room", {})
+
+        # Prevent rendering old state: if this state is older than current version, skip
+        incoming_version = (room.get("updated_at") or "")
+        if incoming_version and incoming_version < self._room_state_version:
+            print(f"[APPLY_STATE] SKIPPED - state version is older. incoming={incoming_version}, current={self._room_state_version}")
+            return
+
         players = self.room_state.get("players", [])
         scores = self.room_state.get("scores", [])
         messages = self.room_state.get("messages", [])
