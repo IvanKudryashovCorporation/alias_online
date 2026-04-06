@@ -862,7 +862,7 @@ class RoomScreen(Screen):
 
         self.lobby_start_height = dp(52)
         self.lobby_start_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=self.lobby_start_height)
-        self.lobby_start_row.add_widget(Widget())
+        self.lobby_start_row.add_widget(Widget(size_hint_x=1))
         self.start_game_btn = AppButton(
             text="Начать игру",
             compact=True,
@@ -882,7 +882,7 @@ class RoomScreen(Screen):
         self.wait_host_btn.disabled = True
         self.wait_host_btn.opacity = 0
         self.lobby_start_row.add_widget(self.wait_host_btn)
-        self.lobby_start_row.add_widget(Widget())
+        self.lobby_start_row.add_widget(Widget(size_hint_x=1))
         content.add_widget(self.lobby_start_row)
 
         self.phase_wrap_height = dp(62)
@@ -1127,7 +1127,7 @@ class RoomScreen(Screen):
             return
         self._start_game_request_in_flight = False
         self.loading_overlay.hide()
-        self.start_game_btn.disabled = not self._can_control_start()
+        self.start_game_btn.disabled = not self._can_start_game()
         self.status_label.color = COLORS["warning"]
         self.status_label.text = "Сервер отвечает слишком долго. Попробуй нажать «Начать игру» ещё раз."
 
@@ -1673,7 +1673,7 @@ class RoomScreen(Screen):
         return self._can_control_start() or self._can_wait_for_host_in_lobby()
 
     def _show_explainer_controls(self, is_explainer, phase):
-        can_start = phase == "lobby" and self._can_control_start()
+        can_start = phase == "lobby" and self._can_start_game()
         waiting_for_host = phase == "lobby" and self._can_wait_for_host_in_lobby() and not can_start
         self._set_button_visibility(self.start_game_btn, can_start)
         self.wait_host_btn.disabled = True
@@ -2413,14 +2413,14 @@ class RoomScreen(Screen):
             self.status_label.color = COLORS["error"]
             self.status_label.text = str(error)
             self._start_game_request_in_flight = False
-            self.start_game_btn.disabled = False
+            self.start_game_btn.disabled = not self._can_start_game()
             self.loading_overlay.hide()
             return
         except ValueError as error:
             self.status_label.color = COLORS["warning"]
             self.status_label.text = str(error)
             self._start_game_request_in_flight = False
-            self.start_game_btn.disabled = False
+            self.start_game_btn.disabled = not self._can_start_game()
             self.loading_overlay.hide()
             return
 
@@ -2464,7 +2464,7 @@ class RoomScreen(Screen):
             charged, charge_payload = self._charge_start_cost()
             if not charged:
                 self._start_game_request_in_flight = False
-                self.start_game_btn.disabled = False
+                self.start_game_btn.disabled = not self._can_start_game()
                 self.loading_overlay.hide()
                 self.status_label.color = COLORS["warning"]
                 self.status_label.text = str(charge_payload)
@@ -2536,6 +2536,7 @@ class RoomScreen(Screen):
         self._start_game_request_in_flight = True
         self.start_game_btn.disabled = True
         self.loading_overlay.show("Запускаем игру...")
+        self._arm_start_watchdog(request_token)
         Thread(
             target=self._start_game_worker,
             args=(request_token, self.room_code, player_name, self._client_id(), starts_before, should_charge_by_local_state),
@@ -2585,7 +2586,7 @@ class RoomScreen(Screen):
         status = payload.get("status")
         if status != "success":
             self.loading_overlay.hide()
-            self.start_game_btn.disabled = not self._can_control_start()
+            self.start_game_btn.disabled = not self._can_start_game()
             self.status_label.color = COLORS["warning"] if status == "value_error" else COLORS["error"]
             self.status_label.text = payload.get("message") or "Не удалось запустить игру."
             return
@@ -2634,13 +2635,13 @@ class RoomScreen(Screen):
             charged, charge_payload = self._charge_start_cost()
             if not charged:
                 self.loading_overlay.hide()
-                self.start_game_btn.disabled = not self._can_control_start()
+                self.start_game_btn.disabled = not self._can_start_game()
                 self.status_label.color = COLORS["warning"]
                 self.status_label.text = str(charge_payload)
                 return
 
         self.loading_overlay.hide()
-        self.start_game_btn.disabled = not self._can_control_start()
+        self.start_game_btn.disabled = not self._can_start_game()
         self.status_label.color = COLORS["success"]
         if should_charge_start and charge_payload is not None:
             remaining_coins = int(getattr(charge_payload, "alias_coins", 0) or 0)
