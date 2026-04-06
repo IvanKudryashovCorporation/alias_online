@@ -5,6 +5,8 @@ dist/
 build/
 data/*.db
 data/*.sqlite3
+data/avatars/
+data/registered_profiles.csv
 __pycache__/
 *.py[cod]
 .pytest_cache/
@@ -21,3 +23,5 @@ data/email.env
 logs/
 tools/platform-tools/
 tools/platform-tools.zip
+flutter_client/
+.claude/
