@@ -444,6 +444,9 @@ class AppTextInput(TextInput):
         self._base_hint_color = (0.22, 0.26, 0.32, 1)
         self._muted_hint_color = (0.28, 0.33, 0.40, 1)
         self._color_guard_events = []
+        self._persistent_guard_event = None
+        self._last_text_color = COLORS["input_text"]
+        self._last_hint_color = self._base_hint_color
 
         with self.canvas.before:
             self._stencil_push = StencilPush()
@@ -466,16 +469,14 @@ class AppTextInput(TextInput):
         self.bind(disabled=self._refresh_text_colors)
         self.bind(focus=self._refresh_text_colors)
         self.bind(text=self._ensure_visible_text)
-        self.bind(text=self._schedule_color_guard)
         self.bind(focus=self._schedule_color_guard)
         self.bind(focus=self._enforce_mobile_text_input_mode)
-        self.bind(parent=self._schedule_color_guard)
-        self.bind(on_text_validate=self._schedule_color_guard)
+        self.bind(parent=self._handle_parent_change)
         self._apply_surface_palette()
         self._refresh_text_colors()
         self._ensure_visible_text()
         self._enforce_mobile_text_input_mode()
-        self._schedule_color_guard()
+        self._handle_parent_change()
 
     def _apply_surface_palette(self, *_):
         if self.readonly:
@@ -498,21 +499,19 @@ class AppTextInput(TextInput):
     def _refresh_text_colors(self, *_):
         text_color = COLORS["input_readonly_text"] if self.readonly or self.disabled else COLORS["input_text"]
         hint_color = self._muted_hint_color if self.readonly or self.disabled else self._base_hint_color
+        self._last_text_color = text_color
+        self._last_hint_color = hint_color
         self.foreground_color = text_color
         self.disabled_foreground_color = text_color
         self.cursor_color = (0, 0, 0, 0) if self.readonly or self.disabled else COLORS["input_text"]
         self.hint_text_color = hint_color
+        self._apply_internal_label_palette(text_color, hint_color)
 
     def _ensure_visible_text(self, *_):
         # Mobile keyboards sometimes reset TextInput foreground color dynamically.
         # Force the expected high-contrast palette each time text changes.
-        if self.readonly or self.disabled:
-            target_color = COLORS["input_readonly_text"]
-        else:
-            target_color = COLORS["input_text"]
-        self.foreground_color = target_color
-        self.disabled_foreground_color = target_color
-        self._force_internal_line_palette(target_color)
+        self._refresh_text_colors()
+        self._force_text_refresh()
 
     def _schedule_color_guard(self, *_):
         # On some Android keyboards, TextInput color may reset after focus/keyboard transitions.
@@ -523,53 +522,65 @@ class AppTextInput(TextInput):
             except Exception:
                 pass
         self._color_guard_events = []
-        for delay in (0, 0.04, 0.12, 0.24, 0.42, 0.75, 1.0, 1.5, 2.0):
+        for delay in (0, 0.06, 0.22, 0.52):
             self._color_guard_events.append(Clock.schedule_once(self._enforce_text_palette, delay))
 
     def _enforce_text_palette(self, *_):
         self._refresh_text_colors()
-        self._ensure_visible_text()
+        self._force_text_refresh()
 
-    def on_foreground_color(self, instance, value):
-        """Intercept any runtime reset of foreground_color by Android IME or Kivy internals."""
-        if getattr(self, "_color_fix_in_progress", False):
-            return
-        desired = COLORS["input_readonly_text"] if (self.readonly or self.disabled) else COLORS["input_text"]
-        if list(value) != list(desired):
-            self._color_fix_in_progress = True
-
-            def _apply_fix(dt):
-                self.foreground_color = desired
-                self._force_internal_line_palette(desired)
-                self._color_fix_in_progress = False
-
-            Clock.schedule_once(_apply_fix, 0)
-
-    def _get_line_options(self):
-        """Override Kivy internal method to force correct text color in rendered labels."""
-        opts = super()._get_line_options()
-        desired = COLORS["input_readonly_text"] if (self.readonly or self.disabled) else COLORS["input_text"]
-        opts["color"] = desired
-        return opts
-
-    def _force_internal_line_palette(self, rgba):
-        # Some mobile keyboards repaint internal line labels with a default color.
-        # Keep rendered text labels in sync with foreground_color.
-        for line_label in getattr(self, "_lines_labels", []) or []:
-            if line_label is None:
+    def _apply_internal_label_palette(self, text_color, hint_color):
+        # Some Android keyboard providers may repaint internal labels with their own palette.
+        # Keep the visible glyph layers in sync with the configured input palette.
+        try:
+            labels = list(getattr(self, "_lines_labels", []) or [])
+        except Exception:
+            labels = []
+        for label in labels:
+            if label is None:
                 continue
             try:
-                line_label.color = rgba
+                label.color = text_color
+                label.texture_update()
             except Exception:
                 pass
-            options = getattr(line_label, "options", None)
-            if isinstance(options, dict):
-                options["color"] = rgba
-        # Also force refresh the texture so new color takes effect immediately
+        hint_label = getattr(self, "_hint_text_label", None)
+        if hint_label is not None:
+            try:
+                hint_label.color = hint_color
+                hint_label.texture_update()
+            except Exception:
+                pass
+
+    def _force_text_refresh(self):
         try:
-            self._trigger_refresh_text()
+            self._refresh_text(self.text)
         except Exception:
             pass
+        try:
+            self._trigger_update_graphics()
+        except Exception:
+            pass
+
+    def _handle_parent_change(self, *_):
+        if self.parent is None:
+            if self._persistent_guard_event is not None:
+                self._persistent_guard_event.cancel()
+                self._persistent_guard_event = None
+            return
+
+        if self._persistent_guard_event is None:
+            self._persistent_guard_event = Clock.schedule_interval(self._persistent_palette_guard_tick, 0.45)
+        self._schedule_color_guard()
+
+    def _persistent_palette_guard_tick(self, *_):
+        if self.parent is None:
+            if self._persistent_guard_event is not None:
+                self._persistent_guard_event.cancel()
+                self._persistent_guard_event = None
+            return False
+        self._enforce_text_palette()
+        return True
 
     def _sync_canvas(self, *_):
         self._stencil_mask.pos = self.pos
@@ -852,7 +863,7 @@ class CoinBadge(ButtonBehavior, RoundedPanel):
 
         self.coin_value = PixelLabel(text="0", font_size=sp(18), center=False, size_hint_y=None)
         self.add_widget(self.coin_value)
-        self.bind(on_release=self._open_help_popup)
+        self.bind(on_release=self._open_help_popup_styled)
         self.bind(on_press=self._animate_press)
         self.bind(on_release=self._animate_release)
 
@@ -930,6 +941,67 @@ class CoinBadge(ButtonBehavior, RoundedPanel):
             content=body,
             size_hint=(0.9, 0.5),
             auto_dismiss=True,
+        )
+        self._help_popup = popup
+
+        def _close(*_):
+            popup.dismiss()
+
+        close_btn.bind(on_release=_close)
+        popup.bind(on_dismiss=lambda *_: setattr(self, "_help_popup", None))
+        popup.open()
+
+    def _open_help_popup_styled(self, *_):
+        if self.disabled or self.opacity <= 0.01:
+            return
+
+        if self._help_popup is not None:
+            self._help_popup.dismiss()
+            self._help_popup = None
+            return
+
+        body = BoxLayout(orientation="vertical", spacing=dp(8), padding=[dp(6), dp(6), dp(6), dp(6)])
+        panel = RoundedPanel(
+            orientation="vertical",
+            spacing=dp(10),
+            padding=[dp(16), dp(14), dp(16), dp(14)],
+            bg_color=COLORS["surface_card"],
+            shadow_alpha=0.24,
+        )
+        panel._border_color.rgba = (1, 1, 1, 0.16)
+        panel._border_line.width = 1.2
+        panel.add_widget(PixelLabel(text="Памятка Alias Coin", font_size=sp(18), center=True, size_hint_y=None))
+        panel.add_widget(
+            BodyLabel(
+                center=False,
+                color=COLORS["text_soft"],
+                font_size=sp(12.5),
+                text=(
+                    "Как зарабатывать Alias Coin (AC):\n"
+                    "• 1 очко в игре = 1 AC\n"
+                    "• За правильные ответы и объяснённые слова начисляются очки\n"
+                    "• Играй чаще, чтобы накапливать AC\n\n"
+                    "Важно:\n"
+                    "• Создание комнаты стоит 25 AC\n"
+                    "• Первый запуск игры после создания комнаты — бесплатный\n"
+                    "• Каждый следующий запуск в том же лобби: -25 AC\n"
+                    "• Выход из матча раньше времени: -50 AC и блокировка на 5 минут"
+                ),
+            )
+        )
+
+        close_btn = AppButton(text="Понятно", compact=True, size_hint_y=None, height=dp(42))
+        panel.add_widget(close_btn)
+        body.add_widget(panel)
+
+        popup = Popup(
+            title="",
+            separator_height=0,
+            content=body,
+            size_hint=(0.92, 0.56),
+            auto_dismiss=True,
+            background="",
+            background_color=(0, 0, 0, 0),
         )
         self._help_popup = popup
 
@@ -1103,7 +1175,9 @@ class IconMetaChip(RoundedPanel):
         self.label.text = text
 
     def _sync_label_text(self, *_):
-        self.label.text_size = (max(0, self.label.width), max(0, self.label.height))
+        next_size = (max(0, self.label.width), None)
+        if self.label.text_size != next_size:
+            self.label.text_size = next_size
 
 
 class IconCircleButton(ButtonBehavior, FloatLayout):
@@ -1209,6 +1283,7 @@ class LoadingOverlay(FloatLayout):
     def __init__(self, **kwargs):
         kwargs.setdefault("size_hint", (1, 1))
         super().__init__(**kwargs)
+        self._shown_size_hint = tuple(self.size_hint or (1, 1))
         self.opacity = 0
         self.disabled = True
         self._spin_event = None
@@ -1283,6 +1358,7 @@ class LoadingOverlay(FloatLayout):
 
     def show(self, message="Загрузка..."):
         self.message_label.text = message
+        self.size_hint = self._shown_size_hint
         self.disabled = False
         self.opacity = 1
         self._angle = 0.0
@@ -1297,6 +1373,8 @@ class LoadingOverlay(FloatLayout):
             self._spin_event = None
         self.opacity = 0
         self.disabled = True
+        self.size_hint = (None, None)
+        self.size = (0, 0)
 
     def _is_interactive(self):
         return self.opacity > 0.01 and not self.disabled

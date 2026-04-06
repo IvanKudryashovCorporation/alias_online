@@ -76,17 +76,20 @@ class LoginScreen(Screen):
             font_size=sp(11.5),
             text="Если аккаунта ещё нет, вернись и выбери регистрацию.",
             size_hint_y=None,
+            auto_height=False,
         )
+        self.status_label.height = dp(38)
         card.add_widget(self.status_label)
+        card.add_widget(Widget(size_hint_y=None, height=dp(4)))
 
-        forgot_password_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(28))
+        forgot_password_row = BoxLayout(orientation="horizontal", size_hint_y=None, height=dp(30))
         forgot_password_row.add_widget(Widget())
         forgot_password_btn = AppButton(
             text="Забыли пароль?",
             compact=True,
             font_size=sp(10.5),
             size_hint=(None, None),
-            size=(dp(124), dp(24)),
+            size=(dp(126), dp(26)),
             button_color=(0.12, 0.17, 0.27, 0.42),
             pressed_color=(0.10, 0.15, 0.24, 0.58),
         )

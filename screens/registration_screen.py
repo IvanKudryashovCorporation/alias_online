@@ -150,7 +150,7 @@ class RegistrationScreen(Screen):
 
         self.scroll = ScrollView(
             do_scroll_x=False,
-            do_scroll_y=False,
+            do_scroll_y=True,
             bar_width=dp(4),
             scroll_type=["bars", "content"],
         )
@@ -798,7 +798,7 @@ class RegistrationScreen(Screen):
         self.subtitle_label.text = "\u0421\u043e\u0437\u0434\u0430\u0439 \u043f\u0440\u043e\u0444\u0438\u043b\u044c, \u0447\u0442\u043e\u0431\u044b \u0432\u043e\u0439\u0442\u0438 \u0432 \u0438\u0433\u0440\u0443."
         self.subtitle_label.font_size = sp(12)
         self.avatar_mode_note.text = "\u0424\u043e\u0442\u043e \u043c\u043e\u0436\u043d\u043e \u0434\u043e\u0431\u0430\u0432\u0438\u0442\u044c \u0441\u0440\u0430\u0437\u0443 \u0438\u043b\u0438 \u043f\u043e\u0437\u0436\u0435 \u0432 \u043f\u0440\u043e\u0444\u0438\u043b\u0435."
-        self.scroll.do_scroll_y = False
+        self.scroll.do_scroll_y = True
         self.content.spacing = self.default_content_spacing
         self.content.padding = self.default_content_padding
         self.card.spacing = self.default_card_spacing
@@ -924,6 +924,8 @@ class RegistrationScreen(Screen):
 
         self.avatar_section.size_hint_x = None
         self.avatar_section.width = avatar_width
+        self.pick_avatar_btn.size_hint_x = None
+        self.pick_avatar_btn.width = max(dp(132), min(dp(210), avatar_width - dp(28)))
 
     def _apply_profile_summary(self, profile):
         joined_label = self._format_profile_date(profile.created_at)

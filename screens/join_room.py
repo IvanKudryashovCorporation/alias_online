@@ -584,6 +584,12 @@ class JoinRoomScreen(Screen):
         app = App.get_running_app()
         if app is not None:
             joined_as = (joined_room.get("_joined_as") or "").strip()
+            if not joined_as:
+                server_state = joined_room.get("_server_state")
+                if isinstance(server_state, dict):
+                    viewer = server_state.get("viewer")
+                    if isinstance(viewer, dict):
+                        joined_as = (viewer.get("player_name") or "").strip()
             if joined_as and hasattr(app, "adopt_room_player_name"):
                 app.adopt_room_player_name(joined_as)
             app.set_active_room(joined_room)

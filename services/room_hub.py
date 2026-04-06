@@ -405,8 +405,10 @@ def join_online_room(*, room_code, player_name, is_guest=False, client_id=None, 
     )
     room = dict(response.get("room", {}) or {})
     joined_as = (response.get("joined_as") or "").strip()
-    if joined_as:
-        room["_joined_as"] = joined_as
+    if not joined_as:
+        viewer = response.get("viewer")
+        if isinstance(viewer, dict):
+            joined_as = (viewer.get("player_name") or "").strip()
     state_keys = (
         "room",
         "players",
@@ -428,6 +430,26 @@ def join_online_room(*, room_code, player_name, is_guest=False, client_id=None, 
     for key in state_keys:
         if key in response:
             server_state[key] = response.get(key)
+    if not joined_as and client_id:
+        try:
+            probe_state = get_online_room_state(
+                room_code=room_code,
+                player_name=player_name,
+                client_id=client_id,
+                timeout=4,
+                base_url=base_url,
+            )
+            if isinstance(probe_state, dict):
+                probe_viewer = probe_state.get("viewer")
+                if isinstance(probe_viewer, dict):
+                    joined_as = (probe_viewer.get("player_name") or "").strip()
+                for key in state_keys:
+                    if key in probe_state and key not in server_state:
+                        server_state[key] = probe_state.get(key)
+        except Exception:
+            pass
+    if joined_as:
+        room["_joined_as"] = joined_as
     if server_state:
         if not isinstance(server_state.get("room"), dict):
             server_state["room"] = dict(room)
@@ -435,8 +457,10 @@ def join_online_room(*, room_code, player_name, is_guest=False, client_id=None, 
     return room
 
 
-def leave_online_room(*, room_code, player_name, base_url=None):
+def leave_online_room(*, room_code, player_name, client_id=None, base_url=None):
     payload = {"player_name": player_name}
+    if client_id:
+        payload["client_id"] = str(client_id).strip()
     return _request_json(
         "POST",
         f"/api/rooms/{urllib.parse.quote(room_code)}/leave",
@@ -450,8 +474,10 @@ def get_online_room(*, room_code, base_url=None):
     return response.get("room", {})
 
 
-def get_online_room_state(*, room_code, player_name, since_id=None, timeout=6, base_url=None):
+def get_online_room_state(*, room_code, player_name, since_id=None, timeout=6, client_id=None, base_url=None):
     query_payload = {"player_name": player_name}
+    if client_id:
+        query_payload["client_id"] = str(client_id).strip()
     if since_id is not None:
         query_payload["since_id"] = str(int(since_id))
 
@@ -465,8 +491,10 @@ def get_online_room_state(*, room_code, player_name, since_id=None, timeout=6, b
     return response
 
 
-def send_room_chat(*, room_code, player_name, message, base_url=None):
+def send_room_chat(*, room_code, player_name, message, client_id=None, base_url=None):
     payload = {"player_name": player_name, "message": message}
+    if client_id:
+        payload["client_id"] = str(client_id).strip()
     response = _request_json(
         "POST",
         f"/api/rooms/{urllib.parse.quote(room_code)}/chat",
@@ -476,8 +504,10 @@ def send_room_chat(*, room_code, player_name, message, base_url=None):
     return response.get("message", {})
 
 
-def send_room_guess(*, room_code, player_name, guess, base_url=None):
+def send_room_guess(*, room_code, player_name, guess, client_id=None, base_url=None):
     payload = {"player_name": player_name, "guess": guess}
+    if client_id:
+        payload["client_id"] = str(client_id).strip()
     return _request_json(
         "POST",
         f"/api/rooms/{urllib.parse.quote(room_code)}/guess",
@@ -486,8 +516,10 @@ def send_room_guess(*, room_code, player_name, guess, base_url=None):
     )
 
 
-def start_room_game(*, room_code, player_name, base_url=None):
+def start_room_game(*, room_code, player_name, client_id=None, base_url=None):
     payload = {"player_name": player_name}
+    if client_id:
+        payload["client_id"] = str(client_id).strip()
     return _request_json(
         "POST",
         f"/api/rooms/{urllib.parse.quote(room_code)}/start-game",
@@ -496,8 +528,10 @@ def start_room_game(*, room_code, player_name, base_url=None):
     )
 
 
-def skip_room_word(*, room_code, player_name, base_url=None):
+def skip_room_word(*, room_code, player_name, client_id=None, base_url=None):
     payload = {"player_name": player_name}
+    if client_id:
+        payload["client_id"] = str(client_id).strip()
     response = _request_json(
         "POST",
         f"/api/rooms/{urllib.parse.quote(room_code)}/skip-word",
@@ -511,8 +545,10 @@ def next_room_word(*, room_code, player_name, base_url=None):
     return skip_room_word(room_code=room_code, player_name=player_name, base_url=base_url)
 
 
-def ping_room_voice(*, room_code, player_name, active_seconds=3, base_url=None):
+def ping_room_voice(*, room_code, player_name, active_seconds=3, client_id=None, base_url=None):
     payload = {"player_name": player_name, "active_seconds": int(active_seconds)}
+    if client_id:
+        payload["client_id"] = str(client_id).strip()
     return _request_json(
         "POST",
         f"/api/rooms/{urllib.parse.quote(room_code)}/voice-ping",
@@ -521,8 +557,10 @@ def ping_room_voice(*, room_code, player_name, active_seconds=3, base_url=None):
     )
 
 
-def set_room_mic_state(*, room_code, player_name, muted, base_url=None):
+def set_room_mic_state(*, room_code, player_name, muted, client_id=None, base_url=None):
     payload = {"player_name": player_name, "muted": bool(muted)}
+    if client_id:
+        payload["client_id"] = str(client_id).strip()
     return _request_json(
         "POST",
         f"/api/rooms/{urllib.parse.quote(room_code)}/mic-state",
@@ -531,12 +569,14 @@ def set_room_mic_state(*, room_code, player_name, muted, base_url=None):
     )
 
 
-def send_room_voice_chunk(*, room_code, player_name, pcm16_b64, sample_rate=16000, base_url=None):
+def send_room_voice_chunk(*, room_code, player_name, pcm16_b64, sample_rate=16000, client_id=None, base_url=None):
     payload = {
         "player_name": player_name,
         "pcm16_b64": pcm16_b64,
         "sample_rate": int(sample_rate),
     }
+    if client_id:
+        payload["client_id"] = str(client_id).strip()
     return _request_json(
         "POST",
         f"/api/rooms/{urllib.parse.quote(room_code)}/voice-chunk",
@@ -545,13 +585,14 @@ def send_room_voice_chunk(*, room_code, player_name, pcm16_b64, sample_rate=1600
     )
 
 
-def get_room_voice_chunks(*, room_code, player_name, since_id=0, base_url=None):
-    query = urllib.parse.urlencode(
-        {
-            "player_name": player_name,
-            "since_id": str(int(since_id)),
-        }
-    )
+def get_room_voice_chunks(*, room_code, player_name, since_id=0, client_id=None, base_url=None):
+    query_payload = {
+        "player_name": player_name,
+        "since_id": str(int(since_id)),
+    }
+    if client_id:
+        query_payload["client_id"] = str(client_id).strip()
+    query = urllib.parse.urlencode(query_payload)
     return _request_json(
         "GET",
         f"/api/rooms/{urllib.parse.quote(room_code)}/voice-chunks?{query}",

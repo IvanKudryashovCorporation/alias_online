@@ -178,9 +178,10 @@ class EntryScreen(Screen):
 
     def _go_to_registration(self, *_):
         app = App.get_running_app()
+        if self.manager is not None:
+            self.manager.current = "registration"
         if app is not None:
-            app.start_registration_flow()
-        self.manager.current = "registration"
+            Clock.schedule_once(lambda *_: app.start_registration_flow(), 0)
 
     def _play_as_guest(self, *_):
         app = App.get_running_app()

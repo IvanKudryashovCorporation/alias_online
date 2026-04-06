@@ -179,8 +179,10 @@ class AliasApp(App):
         self.guest_counter = 0
         self.guest_alias_coins = 0
         self.client_id = uuid.uuid4().hex
+        self._guest_seed = (int(self.client_id[:6], 16) % 9000) + 1
         self.pending_registration_session_id = None
         self.active_room = {}
+        self.active_room_player_name = None
         self._room_server_process = None
         self._room_server_thread = None
         self._embedded_room_server = None
@@ -231,8 +233,8 @@ class AliasApp(App):
             screen_manager.add_widget(StartScreen(name="start"))
             screen_manager.bind(current=self._guard_session)
             screen_manager.current = "start" if self.authenticated else "entry"
-            if platform not in ("android", "ios"):
-                Clock.schedule_once(lambda *_: self._start_lazy_screen_warmup(), 0.15)
+            warmup_delay = 0.55 if platform in ("android", "ios") else 0.15
+            Clock.schedule_once(lambda *_: self._start_lazy_screen_warmup(), warmup_delay)
             return screen_manager
         except Exception as error:
             _log_unhandled_exception(type(error), error, error.__traceback__)
@@ -403,15 +405,24 @@ class AliasApp(App):
         profile = self.current_profile()
         return profile.name if profile is not None else None
 
+    def resolve_room_player_name(self, room_code=None):
+        active_room_code = ((self.active_room or {}).get("code") or "").strip().upper()
+        target_room_code = (room_code or active_room_code or "").strip().upper()
+        room_player_name = (self.active_room_player_name or "").strip()
+        if room_player_name and (not target_room_code or target_room_code == active_room_code):
+            return room_player_name
+        return self.resolve_player_name()
+
     def resolve_client_id(self):
         return (self.client_id or "").strip()
 
     def adopt_room_player_name(self, player_name):
-        """Sync local guest alias with server-assigned player name."""
-        if not self.guest_mode:
-            return
         clean_name = (player_name or "").strip()
-        if clean_name:
+        if not clean_name:
+            return
+        self.active_room_player_name = clean_name
+        # Keep guest alias aligned with server-assigned guest names.
+        if self.guest_mode:
             self.guest_name = clean_name
 
     def current_alias_coins(self):
@@ -448,6 +459,8 @@ class AliasApp(App):
         self.authenticated = profile is not None
         self.guest_mode = False
         self.guest_alias_coins = 0
+        guest_number = self._guest_seed + self.guest_counter - 1
+        self.guest_name = f"Гость{guest_number}"
         self.clear_pending_registration_session()
         self.clear_active_room()
 
@@ -461,7 +474,8 @@ class AliasApp(App):
         self.guest_mode = True
         self.guest_counter += 1
         self.guest_alias_coins = 100
-        self.guest_name = f"Гость{self.guest_counter}"
+        guest_number = self._guest_seed + self.guest_counter - 1
+        self.guest_name = f"Гость{guest_number}"
         self.clear_pending_registration_session()
         self.clear_active_room()
 
@@ -487,16 +501,33 @@ class AliasApp(App):
         self.pending_registration_session_id = clean_session_id or None
 
     def clear_pending_registration_session(self):
+        if self.guest_mode:
+            guest_number = self._guest_seed + max(0, self.guest_counter - 1)
+            self.guest_name = f"Гость{guest_number}"
         self.pending_registration_session_id = None
 
     def set_active_room(self, room):
+        previous_room_code = ((self.active_room or {}).get("code") or "").strip().upper()
         self.active_room = dict(room or {})
+        current_room_code = ((self.active_room or {}).get("code") or "").strip().upper()
+        joined_as = (self.active_room.get("_joined_as") or "").strip()
+        if not joined_as:
+            server_state = self.active_room.get("_server_state")
+            if isinstance(server_state, dict):
+                viewer = server_state.get("viewer")
+                if isinstance(viewer, dict):
+                    joined_as = (viewer.get("player_name") or "").strip()
+        if joined_as:
+            self.active_room_player_name = joined_as
+        elif previous_room_code and current_room_code and previous_room_code != current_room_code:
+            self.active_room_player_name = None
 
     def get_active_room(self):
         return dict(self.active_room or {})
 
     def clear_active_room(self):
         self.active_room = {}
+        self.active_room_player_name = None
 
     def room_access_state(self):
         if self.authenticated:
@@ -554,12 +585,16 @@ class AliasApp(App):
 
     def _leave_active_room(self):
         room_code = (self.active_room or {}).get("code", "")
-        player_name = self.resolve_player_name()
+        player_name = self.resolve_room_player_name(room_code=room_code)
         if not room_code or not player_name:
             return
 
         try:
-            leave_online_room(room_code=room_code, player_name=player_name)
+            leave_online_room(
+                room_code=room_code,
+                player_name=player_name,
+                client_id=self.resolve_client_id(),
+            )
         except (ConnectionError, ValueError):
             pass
 
