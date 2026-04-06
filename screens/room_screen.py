@@ -1098,13 +1098,14 @@ class RoomScreen(Screen):
         self.polling_controller.start_polling()
         self._start_voice_ui_sync()
         self._start_voice_engine()
+        if not self.room_state.get("viewer"):
+            self.polling_controller._poll_state()
+        self._apply_state()
+        # Request rejoin AFTER _apply_state, so current_phase is correct
         # Don't rejoin if we're in countdown or round phase - let polling sync instead
         current_phase = self._current_phase()
         if current_phase not in ("countdown", "round"):
             self.polling_controller.request_rejoin_state()
-        if not self.room_state.get("viewer"):
-            self.polling_controller._poll_state()
-        self._apply_state()
         self._ensure_interaction_ready()
 
     def on_leave(self, *_):
