@@ -1866,7 +1866,7 @@ class RoomScreen(Screen):
         # Log who called _apply_state
         stack = traceback.extract_stack()
         caller = "unknown"
-        for frame in reversed(stack[-5:-1]):  # Check last 4 frames
+        for frame in reversed(stack[-8:-1]):  # Check last 7 frames for better detection
             if "finish_start_game" in frame.name:
                 caller = "finish_start_game"
                 break
@@ -1875,6 +1875,18 @@ class RoomScreen(Screen):
                 break
             elif "on_pre_enter" in frame.name:
                 caller = "on_pre_enter"
+                break
+            elif "_send_chat_message" in frame.name:
+                caller = "_send_chat_message"
+                break
+            elif "_skip_word" in frame.name:
+                caller = "_skip_word"
+                break
+            elif "_finish_toggle_mic" in frame.name:
+                caller = "_finish_toggle_mic"
+                break
+            elif "sync_room_progress" in frame.name:
+                caller = "sync_room_progress"
                 break
             elif "_ensure_interaction_ready" in frame.name:
                 caller = "_ensure_interaction_ready"
