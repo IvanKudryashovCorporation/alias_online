@@ -1,5 +1,6 @@
 import importlib
 import importlib.util
+import logging
 import os
 import subprocess
 import sys
@@ -16,6 +17,8 @@ from kivy.app import App
 from kivy.clock import Clock
 from kivy.metrics import dp
 from kivy.utils import platform
+
+logger = logging.getLogger(__name__)
 
 
 def _ensure_android_site_packages_path():
@@ -741,24 +744,24 @@ class AliasApp(App):
             root = self.root
             current = getattr(root, "current", "<no-manager>")
             screen_names = getattr(root, "screen_names", [])
-            print(f"[ALIAS_UI] {tag} current={current} screens={list(screen_names)}")
+            logger.debug(f"[ALIAS_UI] {tag} current={current} screens={list(screen_names)}")
             if root is None:
                 return
 
             screen = root.get_screen(current) if current in screen_names else None
             if screen is None:
-                print(f"[ALIAS_UI] {tag} no-active-screen")
+                logger.debug(f"[ALIAS_UI] {tag} no-active-screen")
                 return
 
             child_count = len(screen.children)
-            print(f"[ALIAS_UI] {tag} screen={screen.name} size={tuple(screen.size)} children={child_count}")
+            logger.debug(f"[ALIAS_UI] {tag} screen={screen.name} size={tuple(screen.size)} children={child_count}")
             for index, child in enumerate(screen.children[:4]):
-                print(
+                logger.debug(
                     f"[ALIAS_UI] {tag} child[{index}]={child.__class__.__name__} "
                     f"size={tuple(child.size)} pos={tuple(child.pos)} opacity={getattr(child, 'opacity', 1)}"
                 )
         except Exception as error:
-            print(f"[ALIAS_UI] {tag} dump-error={error}")
+            logger.debug(f"[ALIAS_UI] {tag} dump-error={error}")
 
 
 if __name__ == "__main__":

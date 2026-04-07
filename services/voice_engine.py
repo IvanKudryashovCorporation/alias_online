@@ -48,15 +48,16 @@ class RoomVoiceEngine:
         self._agc_gain = 1.0
 
     def start(self, *, room_code, player_name, should_transmit):
-        if not self.available or self._active:
-            return
+        with self._lock:
+            if not self.available or self._active:
+                return
+            self._active = True
 
         self.room_code = (room_code or "").strip().upper()
         self.player_name = (player_name or "").strip()
         self._should_transmit = should_transmit or (lambda: False)
         self._stop_event.clear()
         self._last_voice_id = 0
-        self._active = True
 
         try:
             self._input_stream = sd.InputStream(
@@ -78,7 +79,8 @@ class RoomVoiceEngine:
                 callback=self._output_callback,
             )
             self._output_stream.start()
-        except Exception:
+        except Exception as e:
+            logger.error(f"Failed to initialize audio streams: {e}", exc_info=True)
             self.stop()
             self.available = False
             return
@@ -90,7 +92,8 @@ class RoomVoiceEngine:
 
     def stop(self):
         self._stop_event.set()
-        self._active = False
+        with self._lock:
+            self._active = False
 
         if self._input_stream is not None:
             try:
@@ -129,20 +132,22 @@ class RoomVoiceEngine:
         self._agc_gain = 1.0
 
     def set_muted(self, muted):
-        self._muted = bool(muted)
-        if self._muted:
-            with self._lock:
+        with self._lock:
+            self._muted = bool(muted)
+            if self._muted:
                 self._level = 0.0
 
     def is_muted(self):
-        return self._muted
+        with self._lock:
+            return self._muted
 
     def level(self):
         with self._lock:
             return float(self._level)
 
     def active(self):
-        return self._active and self.available
+        with self._lock:
+            return self._active and self.available
 
     def _set_level(self, value):
         with self._lock:
@@ -197,9 +202,11 @@ class RoomVoiceEngine:
         mono = self._prepare_capture_audio(indata[:, 0].copy())
         rms = float(np.sqrt(np.mean(mono * mono))) if mono.size else 0.0
         level = min(1.0, max(0.0, (rms - 0.004) * 12.5))
-        self._set_level(0.0 if self._muted else level)
+        with self._lock:
+            self._set_level(0.0 if self._muted else level)
+            is_muted = self._muted
 
-        if self._muted or not self._should_transmit() or not self.room_code:
+        if is_muted or not self._should_transmit() or not self.room_code:
             return
 
         pcm = np.clip(mono, -1.0, 1.0)
@@ -214,14 +221,15 @@ class RoomVoiceEngine:
         try:
             self._send_queue.put_nowait(payload)
         except queue.Full:
+            logger.debug("Voice send queue full, dropping audio frame to make space")
             try:
                 self._send_queue.get_nowait()
             except queue.Empty:
-                pass
+                logger.debug("Voice send queue unexpectedly empty during drop attempt")
             try:
                 self._send_queue.put_nowait(payload)
             except queue.Full:
-                pass
+                logger.debug("Voice send queue still full after drop attempt, skipping frame")
 
     def _output_callback(self, outdata, frames, _time_info, status):
         if status:
@@ -235,6 +243,7 @@ class RoomVoiceEngine:
                 try:
                     self._play_buffer = self._play_queue.get_nowait()
                 except queue.Empty:
+                    logger.debug("Voice play queue empty, filling with silence")
                     break
 
             take = min(frames - written, len(self._play_buffer))
@@ -289,7 +298,8 @@ class RoomVoiceEngine:
                 try:
                     raw = base64.b64decode(encoded)
                     pcm = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32767.0
-                except Exception:
+                except Exception as e:
+                    logger.debug(f"Failed to decode voice chunk: {e}")
                     continue
 
                 if pcm.size == 0:
@@ -313,13 +323,14 @@ class RoomVoiceEngine:
                 try:
                     self._play_queue.put_nowait(pcm)
                 except queue.Full:
+                    logger.debug("Voice play queue full, dropping audio frame to make space")
                     try:
                         self._play_queue.get_nowait()
                     except queue.Empty:
-                        pass
+                        logger.debug("Voice play queue unexpectedly empty during drop attempt")
                     try:
                         self._play_queue.put_nowait(pcm)
                     except queue.Full:
-                        pass
+                        logger.debug("Voice play queue still full after drop attempt, skipping frame")
 
             time.sleep(0.08)

@@ -1,6 +1,9 @@
+import logging
 import time
 
 from kivy.app import App
+
+logger = logging.getLogger(__name__)
 from kivy.clock import Clock
 from kivy.metrics import dp, sp
 from kivy.uix.anchorlayout import AnchorLayout
@@ -342,13 +345,13 @@ class RoomScreen(RoomStateMixin, RoomVoiceMixin, RoomChatMixin, RoomLayoutMixin,
         self.add_widget(root)
 
     def on_pre_enter(self, *_):
-        print(f"\n[ON_PRE_ENTER] Entering room screen")
+        logger.debug("Entering room screen")
         self.disabled = False
         app = App.get_running_app()
         room_data = app.get_active_room() if app is not None else {}
         self.room_code = (room_data or {}).get("code", "")
         self.room_state = {}
-        print(f"[ON_PRE_ENTER] Room code: {self.room_code}")
+        logger.debug(f"Room code: {self.room_code}")
         player_name = self._player_name()
         self._last_voice_ping_ts = 0.0
         self._smoothed_voice_level = 0.0
@@ -391,14 +394,14 @@ class RoomScreen(RoomStateMixin, RoomVoiceMixin, RoomChatMixin, RoomLayoutMixin,
             room_info = initial_state.get("room", {})
             if isinstance(room_info, dict):
                 self._room_state_version = (room_info.get("updated_at") or "")
-            print(f"[ON_PRE_ENTER] Loaded cached state. Phase: {initial_state.get('game_phase', '?')}, Version: {self._room_state_version}")
+            logger.debug(f"Loaded cached state. Phase: {initial_state.get('game_phase', '?')}, Version: {self._room_state_version}")
             self.room_state = initial_state
             self.status_label.color = COLORS["text_muted"]
             self.status_label.text = ""
             if app is not None:
                 app.set_active_room(initial_state.get("room", room_data))
         else:
-            print(f"[ON_PRE_ENTER] No cached state available")
+            logger.debug("No cached state available")
 
         self.polling_controller.start_polling()
         self._start_voice_ui_sync()
@@ -409,7 +412,7 @@ class RoomScreen(RoomStateMixin, RoomVoiceMixin, RoomChatMixin, RoomLayoutMixin,
         self._ensure_interaction_ready()
 
     def on_leave(self, *_):
-        print(f"[ON_LEAVE] Leaving room screen. Current phase: {self._current_phase()}")
+        logger.debug(f"Leaving room screen. Current phase: {self._current_phase()}")
         self.polling_controller.stop_polling()
         self._stop_voice_ui_sync()
         self._stop_countdown_timer()
