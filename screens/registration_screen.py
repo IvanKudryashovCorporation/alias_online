@@ -15,6 +15,7 @@ from kivy.uix.scrollview import ScrollView
 from kivy.uix.screenmanager import Screen
 from kivy.uix.widget import Widget
 
+from async_utils import run_async
 from services import begin_registration_verification, change_profile_password, update_profile
 from ui import AppButton, AppTextInput, BodyLabel, BrandTitle, CoinBadge, COLORS, PixelLabel, RoundedPanel, ScreenBackground, register_game_font, resolve_image_source
 
@@ -606,20 +607,47 @@ class RegistrationScreen(Screen):
                 app.sign_in(profile)
             self.status_label.color = COLORS["success"]
             self.status_label.text = (
-                f"\u041f\u0440\u043e\u0444\u0438\u043b\u044c {profile.name} \u043e\u0431\u043d\u043e\u0432\u043b\u0451\u043d. "
-                "\u041f\u0435\u0440\u0435\u0445\u043e\u0434\u0438\u043c \u0432 \u043c\u0435\u043d\u044e."
+                f"Профиль {profile.name} обновлён. "
+                "Переходим в меню."
             )
             self.manager.current = "start"
             return
+        
+        # Show loading state
+        self.status_label.color = COLORS["text_soft"]
+        self.status_label.text = "Отправляем код подтверждения..."
+        
+        # Async registration in background thread
+        name_text = self.name_input.text
+        email_text = self.email_input.text
+        password_text = entered_password
+        bio_text = self.bio_input.text
+        avatar_path_text = self.selected_avatar_path
+        
+        def worker():
+            return begin_registration_verification(
+                name=name_text,
+                email=email_text,
+                password=password_text,
+                bio=bio_text,
+                avatar_path=avatar_path_text,
+            )
 
-        if app is not None:
-            app.set_pending_registration_session(verification["session_id"])
+        def on_success(verification):
+            self.password_input.text = ""
+            if app is not None:
+                app.set_pending_registration_session(verification["session_id"])
+            verification_screen = self.manager.get_screen("email_verification")
+            verification_screen.start_verification(verification)
+            self.status_label.color = COLORS["success"]
+            self.status_label.text = "Код отправлен на e-mail. Подтверди регистрацию."
+            self.manager.current = "email_verification"
 
-        verification_screen = self.manager.get_screen("email_verification")
-        verification_screen.start_verification(verification)
-        self.status_label.color = COLORS["success"]
-        self.status_label.text = "Код отправлен на e-mail. Подтверди регистрацию."
-        self.manager.current = "email_verification"
+        def on_error(error):
+            self.status_label.color = COLORS["error"]
+            self.status_label.text = str(error)
+
+        run_async(worker, on_success, on_error)
 
     def open_avatar_picker(self, *_):
         chooser = FileChooserListView(
