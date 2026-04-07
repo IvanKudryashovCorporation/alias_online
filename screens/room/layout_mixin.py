@@ -800,7 +800,8 @@ class RoomLayoutMixin:
             self._set_panel_visibility(self.voice_card, False, self.voice_card_height)
             self._set_panel_visibility(self.scores_wrap, phase == "round" and is_explainer, scores_panel_height)
             self._set_panel_visibility(self.phase_wrap, phase in {"countdown", "round"}, self.phase_wrap_height)
-            self._content_scroll.disabled = phase in {"countdown", "round"}
+            self._content_scroll.disabled = False
+            self._content_scroll.do_scroll_y = phase == "lobby"
             if phase == "lobby":
                 self.chat_host.size_hint_y = None
                 self.chat_host.height = dp(210)

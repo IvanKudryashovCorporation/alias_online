@@ -163,7 +163,7 @@ class VoicePollingController:
             response = get_room_voice_chunks(
                 room_code=room_code,
                 player_name=player_name,
-                since_id=since_id if since_id > 0 else None,
+                since_id=since_id if since_id > 0 else 0,
                 client_id=client_id,
                 timeout=4,
             )

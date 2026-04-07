@@ -197,8 +197,10 @@ class RoomVoiceEngine:
         rms = float(np.sqrt(np.mean(mono * mono))) if mono.size else 0.0
         level = min(1.0, max(0.0, (rms - 0.004) * 12.5))
         with self._lock:
-            self._set_level(0.0 if self._muted else level)
             is_muted = self._muted
+            # IMPORTANT: never call _set_level() while holding _lock,
+            # because _set_level() also acquires this lock.
+            self._level = max(0.0, min(1.0, float(0.0 if is_muted else level)))
 
         if is_muted or not self._should_transmit() or not self.room_code:
             return

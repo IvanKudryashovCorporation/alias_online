@@ -905,9 +905,10 @@ def get_room_voice_chunks(
     *,
     room_code: str,
     player_name: str,
-    since_id: int = 0,
+    since_id: Optional[int] = 0,
     client_id: Optional[str] = None,
     base_url: Optional[str] = None,
+    timeout: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Fetch voice audio chunks from other players (optional filtering by ID).
 
@@ -917,6 +918,7 @@ def get_room_voice_chunks(
         since_id: Optional message ID to fetch chunks since (for polling)
         client_id: Optional client identifier for tracking
         base_url: Optional override for server base URL (for testing)
+        timeout: Optional request timeout override in seconds
 
     Returns:
         Dictionary containing voice chunks and metadata
@@ -925,9 +927,15 @@ def get_room_voice_chunks(
         ValueError: If fetch fails
         ConnectionError: If unable to reach server
     """
+    try:
+        safe_since_id = int(since_id) if since_id is not None else 0
+    except (TypeError, ValueError):
+        safe_since_id = 0
+    safe_since_id = max(0, safe_since_id)
+
     query_payload = {
         "player_name": player_name,
-        "since_id": str(int(since_id)),
+        "since_id": str(safe_since_id),
     }
     if client_id:
         query_payload["client_id"] = str(client_id).strip()
@@ -936,4 +944,5 @@ def get_room_voice_chunks(
         "GET",
         f"/api/rooms/{urllib.parse.quote(room_code)}/voice-chunks?{query}",
         base_url=base_url,
+        timeout=timeout if timeout is not None else 7,
     )

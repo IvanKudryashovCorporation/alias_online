@@ -65,6 +65,59 @@ class RoomPollingController:
             self._poll_event.cancel()
             self._poll_event = Clock.schedule_interval(lambda _dt: self._poll_state(), self._poll_current_interval)
 
+    @staticmethod
+    def _players_signature(players):
+        if not isinstance(players, list):
+            return ()
+        normalized = []
+        for item in players:
+            name = (item or "").strip().casefold()
+            if name:
+                normalized.append(name)
+        return tuple(sorted(normalized))
+
+    @staticmethod
+    def _viewer_signature(viewer):
+        if not isinstance(viewer, dict):
+            return ()
+        keys = (
+            "player_name",
+            "is_player",
+            "is_explainer",
+            "is_host",
+            "can_control_start",
+            "can_start_game",
+            "can_send_chat",
+            "can_use_voice",
+            "can_toggle_mic",
+            "explainer_mic_state",
+            "required_players_to_start",
+        )
+        return tuple((key, viewer.get(key)) for key in keys)
+
+    @staticmethod
+    def _word_signature(state):
+        if not isinstance(state, dict):
+            return (False, "")
+        return (
+            bool(state.get("can_see_word")),
+            (state.get("current_word") or "").strip(),
+        )
+
+    @staticmethod
+    def _last_message_id(messages):
+        if not isinstance(messages, list) or not messages:
+            return 0
+        last_id = 0
+        for row in messages:
+            if not isinstance(row, dict):
+                continue
+            try:
+                last_id = max(last_id, int(row.get("id") or 0))
+            except (TypeError, ValueError):
+                continue
+        return last_id
+
     def request_rejoin_state(self):
         """Request fresh room state via rejoin."""
         with self._rejoin_lock:
@@ -370,14 +423,34 @@ class RoomPollingController:
             current_phase_priority = phase_priority.get(current_phase, -1)
 
             state_updated = False
-            # Apply if version is newer OR (same version AND incoming phase has higher priority)
+            current_state = self.screen.room_state if isinstance(self.screen.room_state, dict) else {}
+            same_version_payload_changed = False
+            if incoming_version == self.screen._room_state_version and incoming_phase_priority == current_phase_priority:
+                incoming_players_sig = self._players_signature(state.get("players"))
+                current_players_sig = self._players_signature(current_state.get("players"))
+                incoming_viewer_sig = self._viewer_signature(state.get("viewer"))
+                current_viewer_sig = self._viewer_signature(current_state.get("viewer"))
+                incoming_word_sig = self._word_signature(state)
+                current_word_sig = self._word_signature(current_state)
+                incoming_last_message_id = self._last_message_id(state.get("messages"))
+                current_last_message_id = self._last_message_id(current_state.get("messages"))
+                same_version_payload_changed = (
+                    incoming_players_sig != current_players_sig
+                    or incoming_viewer_sig != current_viewer_sig
+                    or incoming_word_sig != current_word_sig
+                    or incoming_last_message_id > current_last_message_id
+                )
+
+            # Apply if version is newer, phase is higher priority,
+            # or payload changed under equal version (same-second server updates).
             will_apply = incoming_version > self.screen._room_state_version or (
                 incoming_version == self.screen._room_state_version and incoming_phase_priority > current_phase_priority
-            )
+            ) or same_version_payload_changed
             logger.debug(
                 f"Poll version comparison: '{incoming_version}' > '{self.screen._room_state_version}'? "
                 f"{incoming_version > self.screen._room_state_version}, "
                 f"Phase: {incoming_phase}({incoming_phase_priority}) vs {current_phase}({current_phase_priority}), "
+                f"same_version_payload_changed={same_version_payload_changed}, "
                 f"will_apply={will_apply}"
             )
 
