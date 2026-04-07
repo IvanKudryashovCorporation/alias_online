@@ -688,23 +688,35 @@ class RoomLayoutMixin:
             if phase == "round":
                 self.players_wrap_title.text = f"Игроки • {players_text}"
 
+            logger.debug("[_apply_state] Before _explainer_chat_locked")
             explainer_can_only_voice = is_explainer and phase == "round"
             explainer_chat_locked = self._explainer_chat_locked()
+            logger.debug("[_apply_state] After _explainer_chat_locked")
             explainer_round = explainer_can_only_voice
 
             round_active = phase == "round"
+            logger.debug(f"[_apply_state] Before brand_title assignments (round_active={round_active})")
             self.brand_title.height = dp(0) if round_active else self.brand_title_height
+            logger.debug("[_apply_state] After brand_title.height assignment")
             self.brand_title.opacity = 0 if round_active else 1
+            logger.debug("[_apply_state] After brand_title.opacity assignment")
+
+            logger.debug("[_apply_state] Before chat_card color assignments")
             if phase == "round":
                 self.chat_card._bg_color.rgba = (0.05, 0.09, 0.15, 0.24 if is_explainer else 0.30)
                 self.chat_card._border_color.rgba = (1, 1, 1, 0.08)
                 self.chat_card._shadow_color.rgba = (0, 0, 0, 0.05)
                 self.chat_title.color = COLORS["text"]
             else:
+                logger.debug("[_apply_state] In else block: setting chat_card colors (lobby phase)")
                 self.chat_card._bg_color.rgba = COLORS["surface"]
+                logger.debug("[_apply_state] After chat_card._bg_color assignment")
                 self.chat_card._border_color.rgba = COLORS["outline"]
+                logger.debug("[_apply_state] After chat_card._border_color assignment")
                 self.chat_card._shadow_color.rgba = (0, 0, 0, 0.24)
+                logger.debug("[_apply_state] After chat_card._shadow_color assignment")
                 self.chat_title.color = COLORS["text"]
+                logger.debug("[_apply_state] After chat_title.color assignment")
 
             can_chat = self._can_send_chat()
             if explainer_can_only_voice:
