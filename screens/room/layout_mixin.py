@@ -641,7 +641,9 @@ class RoomLayoutMixin:
                 caller_frame = stack[-2]
                 print(f"[APPLY_STATE] UNKNOWN CALLER: {caller_frame.filename}:{caller_frame.lineno} in {caller_frame.name}")
 
+            logger.debug("[_apply_state] Before _set_room_exit_button")
             self._set_room_exit_button(self._is_match_active())
+            logger.debug("[_apply_state] After _set_room_exit_button")
             countdown_left = int(self.room_state.get("countdown_left_sec") or 0)
             round_left = int(self.room_state.get("round_left_sec") or 0)
             explainer_name = room.get("current_explainer") or "—"
@@ -659,7 +661,9 @@ class RoomLayoutMixin:
             players_count = int(room.get("players_count") or len(players) or 0)
             max_players = int(room.get("max_players") or max(players_count, 1))
             players_text = f"{players_count}/{max_players}"
+            logger.debug("[_apply_state] Before _profile_map")
             profile_map = self._profile_map()
+            logger.debug("[_apply_state] After _profile_map")
             score_map = {
                 (score_entry.get("player_name") or "").strip().lower(): int(score_entry.get("score") or 0)
                 for score_entry in scores
@@ -672,12 +676,14 @@ class RoomLayoutMixin:
             if remote_starts_count > self._local_starts_count:
                 self._local_starts_count = remote_starts_count
 
+            logger.debug("[_apply_state] Before setting labels")
             self.room_meta_label.text = f"{room_name} | Код: {code} | Игроков: {players_text}"
             if phase == "round":
                 self.players_wrap_title.text = f"Игроки и очки • {players_text}"
             else:
                 self.players_wrap_title.text = f"Игроки в комнате • {players_text}"
             self.players_label.text = f"Игроков: {players_text}"
+            logger.debug("[_apply_state] After setting labels")
 
             if phase == "round":
                 self.players_wrap_title.text = f"Игроки • {players_text}"
@@ -751,10 +757,13 @@ class RoomLayoutMixin:
             else:
                 self.explainer_status_label.text = f"Объясняет слова: {explainer_name} | Микрофон: {mic_state_text}"
 
+            logger.debug("[_apply_state] Before _show_explainer_controls")
             self._show_explainer_controls(is_explainer, phase)
+            logger.debug("[_apply_state] Before panel visibility updates")
             show_players_grid = phase in {"lobby", "round"}
             players_panel_height = self.players_wrap_round_height if phase == "round" else self.players_wrap_height
             scores_panel_height = self.scores_wrap_overlay_height if phase == "round" and is_explainer else self.scores_wrap_height
+            logger.debug("[_apply_state] Before _set_panel_visibility calls")
             self._set_panel_visibility(self.room_meta_wrap, phase not in {"lobby", "round"} and not is_explainer, self.room_meta_wrap_height)
             self._set_panel_visibility(self.players_wrap, show_players_grid, players_panel_height)
             self._set_panel_visibility(self.players_summary_wrap, False, self.players_summary_wrap_height)
@@ -814,9 +823,13 @@ class RoomLayoutMixin:
                     if server_time:
                         self._start_round_timer(server_time, round_left)
 
+            logger.debug("[_apply_state] Before _render_player_cards")
             self._render_player_cards(players, explainer_name, host_name, profile_map, score_map, phase)
+            logger.debug("[_apply_state] After _render_player_cards")
             if phase == "round" and is_explainer:
+                logger.debug("[_apply_state] Before _sync_word_stage_layout")
                 self._sync_word_stage_layout()
+                logger.debug("[_apply_state] After _sync_word_stage_layout")
 
             current_player_score = 0
             for score_entry in scores:
