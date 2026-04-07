@@ -243,7 +243,6 @@ class RoomVoiceEngine:
                 try:
                     self._play_buffer = self._play_queue.get_nowait()
                 except queue.Empty:
-                    logger.debug("Voice play queue empty, filling with silence")
                     break
 
             take = min(frames - written, len(self._play_buffer))
