@@ -724,12 +724,17 @@ class RoomLayoutMixin:
             logger.debug("[_apply_state] Before _can_send_chat")
             can_chat = self._can_send_chat()
             logger.debug(f"[_apply_state] After _can_send_chat (can_chat={can_chat})")
+            logger.debug(f"[_apply_state] About to check explainer_can_only_voice (value={explainer_can_only_voice})")
             if explainer_can_only_voice:
+                logger.debug("[_apply_state] In explainer_can_only_voice block")
                 self._set_word_text(self.room_state.get("current_word"))
                 self.chat_input.hint_text = "Объясняющий не пишет в чат."
                 self._set_mic_enabled(self._can_toggle_mic())
             else:
+                logger.debug("[_apply_state] In else block (not explainer)")
+                logger.debug("[_apply_state] Before _set_word_text('Слово скрыто')")
                 self._set_word_text("Слово скрыто")
+                logger.debug("[_apply_state] After _set_word_text('Слово скрыто')")
                 if explainer_chat_locked:
                     self.chat_input.hint_text = "Объясняющий не пишет в чат."
                 else:
