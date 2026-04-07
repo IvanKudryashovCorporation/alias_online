@@ -684,9 +684,12 @@ class RoomLayoutMixin:
                 self.players_wrap_title.text = f"Игроки в комнате • {players_text}"
             self.players_label.text = f"Игроков: {players_text}"
             logger.debug("[_apply_state] After setting labels")
+            logger.debug(f"[_apply_state] About to check if phase == round (phase={phase})")
 
             if phase == "round":
+                logger.debug("[_apply_state] In phase==round block, setting players_wrap_title")
                 self.players_wrap_title.text = f"Игроки • {players_text}"
+                logger.debug("[_apply_state] After players_wrap_title assignment in round")
 
             logger.debug("[_apply_state] Before _explainer_chat_locked")
             explainer_can_only_voice = is_explainer and phase == "round"
