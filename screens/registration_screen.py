@@ -576,41 +576,52 @@ class RegistrationScreen(Screen):
             if self.profile_mode:
                 current_profile = app.current_profile() if app is not None and getattr(app, "authenticated", False) else None
                 if current_profile is None:
-                    raise ValueError("\u0421\u043d\u0430\u0447\u0430\u043b\u0430 \u0432\u043e\u0439\u0434\u0438 \u0432 \u0430\u043a\u043a\u0430\u0443\u043d\u0442.")
-
-                profile = update_profile(
-                    email=current_profile.email,
-                    name=self.name_input.text,
-                    avatar_path=self.selected_avatar_path,
-                    bio=self.bio_input.text,
-                )
+                    raise ValueError("Сначала войди в аккаунт.")
             else:
                 entered_password = self.password_input.text
                 confirmed_password = self.confirm_password_input.text
                 if entered_password != confirmed_password:
-                    raise ValueError("\u041f\u0430\u0440\u043e\u043b\u0438 \u043d\u0435 \u0441\u043e\u0432\u043f\u0430\u0434\u0430\u044e\u0442. \u041f\u0440\u043e\u0432\u0435\u0440\u044c \u0438 \u043f\u043e\u0432\u0442\u043e\u0440\u0438 \u0432\u0432\u043e\u0434.")
-                verification = begin_registration_verification(
-                    name=self.name_input.text,
-                    email=self.email_input.text,
-                    password=entered_password,
-                    bio=self.bio_input.text,
-                    avatar_path=self.selected_avatar_path,
-                )
+                    raise ValueError("Пароли не совпадают. Проверь и повтори ввод.")
         except ValueError as error:
             self.status_label.color = COLORS["error"]
             self.status_label.text = str(error)
             return
 
         self.password_input.text = ""
+        self.status_label.color = COLORS["text_soft"]
+        
         if self.profile_mode:
-            if app is not None:
-                app.sign_in(profile)
-            self.status_label.color = COLORS["success"]
-            self.status_label.text = (
-                f"Профиль {profile.name} обновлён. "
-                "Переходим в меню."
-            )
-            self.manager.current = "start"
+            # Profile update - async to prevent UI freeze on network call
+            self.status_label.text = "Обновляем профиль..."
+            
+            current_email = current_profile.email
+            name_text = self.name_input.text
+            avatar_path_text = self.selected_avatar_path
+            bio_text = self.bio_input.text
+            
+            def worker():
+                return update_profile(
+                    email=current_email,
+                    name=name_text,
+                    avatar_path=avatar_path_text,
+                    bio=bio_text,
+                )
+            
+            def on_success(profile):
+                if app is not None:
+                    app.sign_in(profile)
+                self.status_label.color = COLORS["success"]
+                self.status_label.text = (
+                    f"Профиль {profile.name} обновлён. "
+                    "Переходим в меню."
+                )
+                self.manager.current = "start"
+            
+            def on_error(error):
+                self.status_label.color = COLORS["error"]
+                self.status_label.text = str(error)
+            
+            run_async(worker, on_success, on_error)
             return
         
         # Show loading state
@@ -634,7 +645,6 @@ class RegistrationScreen(Screen):
             )
 
         def on_success(verification):
-            self.password_input.text = ""
             if app is not None:
                 app.set_pending_registration_session(verification["session_id"])
             verification_screen = self.manager.get_screen("email_verification")
