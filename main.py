@@ -314,7 +314,7 @@ class AliasApp(App):
             return False
         health_url = f"{target_url}/health"
         try:
-            with urllib.request.urlopen(health_url, timeout=0.35) as response:
+            with urllib.request.urlopen(health_url, timeout=2.0) as response:
                 return response.status == 200
         except (urllib.error.URLError, TimeoutError) as e:
             # Local room server health check failure - not critical for startup
