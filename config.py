@@ -217,6 +217,17 @@ REMOTE_MUTATION_ATTEMPTS = 4
 REMOTE_RETRY_BASE_DELAY_SECONDS = 0.55
 RETRYABLE_HTTP_STATUSES = {408, 425, 429, 500, 502, 503, 504}
 
+# Room creation optimization (faster feedback to user)
+CREATE_ROOM_TIMEOUT_SECONDS = 8  # Faster than generic mutation (22s)
+CREATE_ROOM_MUTATION_ATTEMPTS = 2  # Fewer retries for faster failure detection
+REMOTE_WAKE_TIMEOUT_BEFORE_CREATE_SECONDS = 15  # Max 15s to wait for server wake-up
+
+# Debug/diagnostic mode (set via env var DISABLE_VOICE_AUDIO_INIT)
+DISABLE_VOICE_AUDIO_INIT = _env_bool("DISABLE_VOICE_AUDIO_INIT", False)
+
+# Voice polling diagnostics (enable verbose logging)
+VOICE_POLLING_DEBUG = _env_bool("VOICE_POLLING_DEBUG", True)
+
 # SSL/TLS
 DISABLE_SSL_VERIFY = _env_bool("DISABLE_SSL_VERIFY", False)
 

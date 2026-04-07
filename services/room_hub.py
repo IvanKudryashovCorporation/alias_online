@@ -30,6 +30,8 @@ from config import (
     REMOTE_WAKE_PROBE_TIMEOUT_SECONDS,
     REMOTE_GET_ATTEMPTS,
     REMOTE_MUTATION_ATTEMPTS,
+    CREATE_ROOM_TIMEOUT_SECONDS,
+    CREATE_ROOM_MUTATION_ATTEMPTS,
 )
 
 ROOM_SERVER_URL_ENV = "ALIAS_ROOM_SERVER_URL"
@@ -286,7 +288,7 @@ def _map_connection_error(
             msg = "Не удалось подключиться к серверу комнат. Проверь интернет и адрес сервера."
     else:
         msg = "Не удалось подключиться к серверу комнат. Проверь интернет и запусти server/room_server.py."
-    return ConnectionError(msg) from original_error
+    raise ConnectionError(msg) from original_error
 
 
 def _request_json(
@@ -295,6 +297,7 @@ def _request_json(
     payload: Optional[Dict[str, Any]] = None,
     timeout: float = 7,
     base_url: Optional[str] = None,
+    max_retries: Optional[int] = None,
 ) -> Dict[str, Any]:
     """Execute JSON HTTP request with retry, fallback, and local server handling."""
     server_url = _normalize_room_server_url(base_url or room_server_url())
@@ -334,14 +337,15 @@ def _request_json(
         else:
             calculated_timeout = max(float(calculated_timeout), 15.0)
 
-    # Determine max retries based on method and local/remote
-    if method_name == "GET":
-        max_retries = REMOTE_GET_ATTEMPTS
-    else:
-        max_retries = REMOTE_MUTATION_ATTEMPTS
+    # Determine max retries based on method and local/remote (unless explicitly overridden)
+    if max_retries is None:
+        if method_name == "GET":
+            max_retries = REMOTE_GET_ATTEMPTS
+        else:
+            max_retries = REMOTE_MUTATION_ATTEMPTS
 
-    if local_room_server:
-        max_retries = 2
+        if local_room_server:
+            max_retries = 2
 
     # Create API client with calculated timeout
     client = ApiClient(base_url=server_url, max_retries=max_retries, timeout=calculated_timeout)
@@ -408,6 +412,7 @@ def create_online_room(
     client_id: Optional[str] = None,
     requested_code: Optional[str] = None,
     base_url: Optional[str] = None,
+    timeout: Optional[float] = None,
 ) -> Dict[str, Any]:
     """Create a new online room with specified configuration.
 
@@ -422,6 +427,7 @@ def create_online_room(
         client_id: Optional client identifier for tracking
         requested_code: Optional specific room code to request
         base_url: Optional override for server base URL (for testing)
+        timeout: Optional request timeout in seconds (defaults to CREATE_ROOM_TIMEOUT_SECONDS)
 
     Returns:
         Dictionary containing room data
@@ -443,7 +449,14 @@ def create_online_room(
         payload["client_id"] = str(client_id).strip()
     if requested_code:
         payload["requested_code"] = str(requested_code).strip().upper()
-    response = _request_json("POST", "/api/rooms", payload=payload, base_url=base_url)
+    response = _request_json(
+        "POST",
+        "/api/rooms",
+        payload=payload,
+        base_url=base_url,
+        timeout=timeout or CREATE_ROOM_TIMEOUT_SECONDS,
+        max_retries=CREATE_ROOM_MUTATION_ATTEMPTS,
+    )
     return response.get("room", {})
 
 

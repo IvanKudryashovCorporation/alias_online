@@ -1,7 +1,10 @@
+import logging
 import random
 import string
 from threading import Thread
 from types import SimpleNamespace
+
+logger = logging.getLogger(__name__)
 
 from kivy.app import App
 from kivy.clock import Clock
@@ -942,7 +945,9 @@ class CreateRoomScreen(Screen):
 
     def _create_room_worker_async(self, request_token, payload):
         result = {"status": "error", "message": "Не удалось создать комнату.", "tone": "error"}
+        logger.debug(f"[CreateRoom] Starting room creation for: {payload.get('room_name')}")
         try:
+            logger.debug(f"[CreateRoom] Calling create_online_room API...")
             room = create_online_room(
                 host_name=payload["player_name"],
                 room_name=payload["room_name"],
@@ -954,25 +959,31 @@ class CreateRoomScreen(Screen):
                 client_id=payload.get("client_id"),
                 requested_code=payload["requested_code"],
             )
+            logger.info(f"[CreateRoom] Room created successfully: {room.get('code')}")
 
             room_code = room.get("code")
             active_room = room
             if room_code:
                 try:
+                    logger.debug(f"[CreateRoom] Joining room as host: {room_code}")
                     active_room = join_online_room(
                         room_code=room_code,
                         player_name=payload["player_name"],
                         is_guest=bool(payload.get("is_guest")),
                         client_id=payload.get("client_id"),
                     )
-                except (ConnectionError, ValueError):
+                    logger.debug(f"[CreateRoom] Joined room successfully")
+                except (ConnectionError, ValueError) as e:
+                    logger.warning(f"[CreateRoom] Failed to rejoin after creation: {e}, using cached room state")
                     active_room = room
 
             updated_profile = None
             if payload.get("profile_email"):
                 try:
+                    logger.debug(f"[CreateRoom] Spending coins for room creation...")
                     updated_profile = spend_alias_coins(email=payload["profile_email"], amount=ROOM_CREATION_COST)
-                except ValueError:
+                except ValueError as e:
+                    logger.warning(f"[CreateRoom] Failed to spend coins: {e}, using fallback profile")
                     updated_profile = payload["profile_fallback"]
 
             result = {
@@ -986,12 +997,16 @@ class CreateRoomScreen(Screen):
                 "is_guest": bool(payload.get("is_guest")),
             }
         except ConnectionError as error:
+            logger.error(f"[CreateRoom] Connection error: {error}", exc_info=True)
             result = {"status": "error", "message": str(error), "tone": "error"}
         except ValueError as error:
+            logger.warning(f"[CreateRoom] Validation error: {error}")
             result = {"status": "error", "message": str(error), "tone": "warning"}
         except Exception as error:
+            logger.error(f"[CreateRoom] Unexpected error: {error}", exc_info=True)
             result = {"status": "error", "message": f"Неожиданная ошибка: {error}", "tone": "error"}
 
+        logger.debug(f"[CreateRoom] Worker finishing with status: {result.get('status')}")
         Clock.schedule_once(lambda _dt, token=request_token, data=result: self._finish_create_room_async(token, data))
 
     def _finish_create_room_async(self, request_token, result):

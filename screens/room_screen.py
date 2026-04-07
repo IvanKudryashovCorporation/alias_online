@@ -17,6 +17,14 @@ from kivy.uix.widget import Widget
 
 from services import RoomVoiceEngine
 from controllers import RoomGameController, RoomPollingController
+
+# Import safe voice polling controller
+try:
+    from controllers.voice_polling_controller_safe import VoicePollingController
+    logger.info("Loaded VoicePollingController from voice_polling_controller_safe")
+except ImportError:
+    logger.warning("Could not import voice_polling_controller_safe, falling back to regular")
+    from controllers import VoicePollingController
 from ui import (
     AppButton,
     AppTextInput,
@@ -95,6 +103,7 @@ class RoomScreen(RoomStateMixin, RoomVoiceMixin, RoomChatMixin, RoomLayoutMixin,
 
         self.game_controller = RoomGameController(self)
         self.polling_controller = RoomPollingController(self)
+        self.voice_polling_controller = VoicePollingController(self.voice_engine)
 
         self.COLORS = COLORS
 
@@ -372,6 +381,7 @@ class RoomScreen(RoomStateMixin, RoomVoiceMixin, RoomChatMixin, RoomLayoutMixin,
 
         self.game_controller.reset_for_new_room()
         self.polling_controller.reset_for_new_room()
+        self.voice_polling_controller.reset_for_new_room()
 
         self._reset_transient_layers()
         self._set_mic_muted(True)
@@ -403,17 +413,95 @@ class RoomScreen(RoomStateMixin, RoomVoiceMixin, RoomChatMixin, RoomLayoutMixin,
         else:
             logger.debug("No cached state available")
 
-        self.polling_controller.start_polling()
-        self._start_voice_ui_sync()
-        self._start_voice_engine()
+        logger.debug("[RoomScreen.on_pre_enter] Starting state polling")
+        try:
+            self.polling_controller.start_polling()
+            logger.debug("[RoomScreen.on_pre_enter] State polling started")
+        except Exception as e:
+            logger.error("[RoomScreen.on_pre_enter] State polling FAILED", exc_info=True)
+
+        logger.debug("[RoomScreen.on_pre_enter] Starting voice UI sync")
+        try:
+            self._start_voice_ui_sync()
+            logger.debug("[RoomScreen.on_pre_enter] Voice UI sync started")
+        except Exception as e:
+            logger.error("[RoomScreen.on_pre_enter] Voice UI sync FAILED", exc_info=True)
+
+        logger.debug("[RoomScreen.on_pre_enter] Starting voice engine")
+        try:
+            self._start_voice_engine()
+            logger.debug("[RoomScreen.on_pre_enter] Voice engine started")
+        except Exception as e:
+            logger.error("[RoomScreen.on_pre_enter] Voice engine FAILED", exc_info=True)
+
+        logger.debug("[RoomScreen.on_pre_enter] [CRITICAL] Checking if initial poll needed")
         if not self.room_state.get("viewer"):
+            logger.debug("[RoomScreen.on_pre_enter] [CRITICAL] Initial poll state needed")
             self.polling_controller._poll_state()
-        self._apply_state()
-        self._ensure_interaction_ready()
+
+        logger.debug("[RoomScreen.on_pre_enter] [CRITICAL] Applying state - THIS MAY HANG IF BUG")
+        try:
+            self._apply_state()
+            logger.debug("[RoomScreen.on_pre_enter] [CRITICAL] State applied successfully")
+        except Exception as e:
+            logger.error("[RoomScreen.on_pre_enter] [CRITICAL] Apply state FAILED", exc_info=True)
+            raise
+
+        logger.debug("[RoomScreen.on_pre_enter] [CRITICAL] Ensuring interaction ready")
+        try:
+            self._ensure_interaction_ready()
+            logger.info("[RoomScreen.on_pre_enter] [CRITICAL] COMPLETED SUCCESSFULLY - VOICE POLLING DEFERRED TO on_enter()")
+        except Exception as e:
+            logger.error("[RoomScreen.on_pre_enter] [CRITICAL] Ensure interaction FAILED", exc_info=True)
+            raise
+
+    def on_enter(self):
+        """Called when screen is fully visible and ready. Start voice polling here."""
+        logger.info("[RoomScreen.on_enter] ===== ENTRY - Screen is now fully visible and initialized =====")
+        try:
+            # At this point, screen is fully ready, all widgets rendered, _apply_state completed
+            player_name = self._player_name()
+            client_id = self._client_id()
+
+            logger.info(
+                f"[RoomScreen.on_enter] Screen fully ready. "
+                f"room_code={self.room_code}, player_name={player_name}"
+            )
+
+            if self.room_code and player_name:
+                logger.info("[RoomScreen.on_enter] ===== STARTING VOICE POLLING NOW (screen ready) =====")
+                try:
+                    # Enable polling callbacks to execute
+                    self.voice_polling_controller._is_polling_active = True
+                    logger.debug("[RoomScreen.on_enter] Marked polling as active")
+
+                    self.voice_polling_controller.start_polling(
+                        room_code=self.room_code,
+                        player_name=player_name,
+                        client_id=client_id,
+                    )
+                    logger.info("[RoomScreen.on_enter] ===== VOICE POLLING STARTED SUCCESSFULLY =====")
+                except Exception as e:
+                    logger.error(
+                        "[RoomScreen.on_enter] Voice polling FAILED",
+                        exc_info=True
+                    )
+                    self.status_label.color = COLORS["warning"]
+                    self.status_label.text = "Ошибка голосового чата. Игра продолжает работать."
+            else:
+                logger.warning(
+                    f"[RoomScreen.on_enter] Cannot start polling: "
+                    f"room_code={self.room_code}, player_name={player_name}"
+                )
+
+            logger.info("[RoomScreen.on_enter] ===== COMPLETED SUCCESSFULLY =====")
+        except Exception as e:
+            logger.error("[RoomScreen.on_enter] ===== CRASHED =====", exc_info=True)
 
     def on_leave(self, *_):
         logger.debug(f"Leaving room screen. Current phase: {self._current_phase()}")
         self.polling_controller.stop_polling()
+        self.voice_polling_controller.stop_polling()
         self._stop_voice_ui_sync()
         self._stop_countdown_timer()
         self._stop_round_timer()

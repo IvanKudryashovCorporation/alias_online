@@ -18,7 +18,7 @@ except ImportError as e:
     logger.warning(f"sounddevice not available (voice feature disabled): {e}")
     sd = None
 
-from .room_hub import get_room_voice_chunks, send_room_voice_chunk
+from .room_hub import send_room_voice_chunk
 
 
 class RoomVoiceEngine:
@@ -40,10 +40,8 @@ class RoomVoiceEngine:
         self._send_queue = queue.Queue(maxsize=24)
         self._play_queue = queue.Queue(maxsize=64)
         self._play_buffer = None
-        self._last_voice_id = 0
 
         self._send_thread = None
-        self._recv_thread = None
         self._lock = threading.Lock()
         self._agc_gain = 1.0
 
@@ -57,7 +55,6 @@ class RoomVoiceEngine:
         self.player_name = (player_name or "").strip()
         self._should_transmit = should_transmit or (lambda: False)
         self._stop_event.clear()
-        self._last_voice_id = 0
 
         try:
             self._input_stream = sd.InputStream(
@@ -86,9 +83,7 @@ class RoomVoiceEngine:
             return
 
         self._send_thread = threading.Thread(target=self._send_loop, daemon=True)
-        self._recv_thread = threading.Thread(target=self._recv_loop, daemon=True)
         self._send_thread.start()
-        self._recv_thread.start()
 
     def stop(self):
         self._stop_event.set()
@@ -112,7 +107,6 @@ class RoomVoiceEngine:
             self._output_stream = None
 
         self._send_thread = None
-        self._recv_thread = None
         self._play_buffer = None
 
         while not self._send_queue.empty():
@@ -268,68 +262,60 @@ class RoomVoiceEngine:
                 logger.warning(f"Failed to send voice chunk: {e}")
                 time.sleep(0.2)
 
-    def _recv_loop(self):
-        while not self._stop_event.is_set():
-            if not self.room_code:
-                time.sleep(0.2)
+    def queue_remote_chunks(self, chunks: list):
+        """Queue voice chunks received from remote polling for playback.
+
+        This replaces the old _recv_loop - now polling is done by
+        VoicePollingController, chunks arrive via this method.
+
+        Args:
+            chunks: List of voice chunk dicts from server response.
+                Each chunk should have 'pcm16_b64' and optionally 'sample_rate'.
+        """
+        if not chunks:
+            return
+
+        logger.debug(f"Processing {len(chunks)} remote voice chunks")
+
+        for chunk in chunks:
+            encoded = chunk.get("pcm16_b64") or ""
+            if not encoded:
                 continue
 
             try:
-                response = get_room_voice_chunks(
-                    room_code=self.room_code,
-                    player_name=self.player_name,
-                    since_id=self._last_voice_id,
-                )
+                raw = base64.b64decode(encoded)
+                pcm = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32767.0
             except Exception as e:
-                logger.debug(f"Failed to receive voice chunks: {e}")
-                time.sleep(0.3)
+                logger.debug(f"Failed to decode voice chunk: {e}")
                 continue
 
-            chunks = response.get("chunks", [])
-            last_id = int(response.get("last_id") or self._last_voice_id)
-            self._last_voice_id = max(self._last_voice_id, last_id)
+            if pcm.size == 0:
+                continue
 
-            for chunk in chunks:
-                encoded = chunk.get("pcm16_b64") or ""
-                if not encoded:
-                    continue
+            try:
+                source_rate = int(chunk.get("sample_rate") or self.sample_rate)
+            except (TypeError, ValueError):
+                source_rate = self.sample_rate
+            pcm = self._resample_pcm(pcm, source_rate, self.sample_rate)
 
+            # Tiny fade-in/out avoids clicks between chunks.
+            if pcm.size >= 8:
+                fade_len = min(24, pcm.size // 4)
+                if fade_len > 0:
+                    fade = np.linspace(0.0, 1.0, num=fade_len, dtype=np.float32)
+                    pcm[:fade_len] *= fade
+                    pcm[-fade_len:] *= fade[::-1]
+            pcm = np.tanh(pcm * 1.08).astype(np.float32, copy=False)
+
+            try:
+                self._play_queue.put_nowait(pcm)
+            except queue.Full:
+                logger.debug("Voice play queue full, dropping audio frame to make space")
                 try:
-                    raw = base64.b64decode(encoded)
-                    pcm = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32767.0
-                except Exception as e:
-                    logger.debug(f"Failed to decode voice chunk: {e}")
-                    continue
-
-                if pcm.size == 0:
-                    continue
-
-                try:
-                    source_rate = int(chunk.get("sample_rate") or self.sample_rate)
-                except (TypeError, ValueError):
-                    source_rate = self.sample_rate
-                pcm = self._resample_pcm(pcm, source_rate, self.sample_rate)
-
-                # Tiny fade-in/out avoids clicks between chunks.
-                if pcm.size >= 8:
-                    fade_len = min(24, pcm.size // 4)
-                    if fade_len > 0:
-                        fade = np.linspace(0.0, 1.0, num=fade_len, dtype=np.float32)
-                        pcm[:fade_len] *= fade
-                        pcm[-fade_len:] *= fade[::-1]
-                pcm = np.tanh(pcm * 1.08).astype(np.float32, copy=False)
-
+                    self._play_queue.get_nowait()
+                except queue.Empty:
+                    logger.debug("Voice play queue unexpectedly empty during drop attempt")
                 try:
                     self._play_queue.put_nowait(pcm)
                 except queue.Full:
-                    logger.debug("Voice play queue full, dropping audio frame to make space")
-                    try:
-                        self._play_queue.get_nowait()
-                    except queue.Empty:
-                        logger.debug("Voice play queue unexpectedly empty during drop attempt")
-                    try:
-                        self._play_queue.put_nowait(pcm)
-                    except queue.Full:
-                        logger.debug("Voice play queue still full after drop attempt, skipping frame")
-
-            time.sleep(0.08)
+                    logger.debug("Voice play queue still full after drop attempt, skipping frame")

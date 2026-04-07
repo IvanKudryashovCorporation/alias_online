@@ -1,10 +1,13 @@
 """Layout, rendering, and navigation mixin for RoomScreen."""
 
+import logging
 import traceback
 from threading import Thread
 
 from kivy.app import App
 from kivy.clock import Clock
+
+logger = logging.getLogger(__name__)
 from kivy.metrics import dp, sp
 from kivy.uix.anchorlayout import AnchorLayout
 from kivy.uix.boxlayout import BoxLayout
@@ -578,257 +581,267 @@ class RoomLayoutMixin:
     # ------------------------------------------------------- apply state
 
     def _apply_state(self):
-        room = self.room_state.get("room", {})
-
-        incoming_version = (room.get("updated_at") or "")
-
-        if self._room_state_version and incoming_version:
-            is_older = incoming_version < self._room_state_version
-            if is_older:
-                print(f"[APPLY_STATE] SKIPPED - old state. incoming={incoming_version} < current={self._room_state_version}")
-                return
-
-        players = self.room_state.get("players", [])
-        scores = self.room_state.get("scores", [])
-        messages = self.room_state.get("messages", [])
-        viewer = self._viewer_state()
-
-        player_name = self._player_name() or ""
-        is_explainer = self._is_explainer()
-        phase = self._current_phase()
-
-        stack = traceback.extract_stack()
-        caller = "unknown"
-        for frame in reversed(stack[-8:-1]):
-            if "finish_start_game" in frame.name:
-                caller = "finish_start_game"
-                break
-            elif "_finish_poll_state" in frame.name:
-                caller = "polling"
-                break
-            elif "on_pre_enter" in frame.name:
-                caller = "on_pre_enter"
-                break
-            elif "_finish_rejoin_state" in frame.name:
-                caller = "rejoin"
-                break
-            elif "_send_chat_message" in frame.name:
-                caller = "_send_chat_message"
-                break
-            elif "_skip_word" in frame.name:
-                caller = "_skip_word"
-                break
-            elif "_finish_toggle_mic" in frame.name:
-                caller = "_finish_toggle_mic"
-                break
-            elif "sync_room_progress" in frame.name:
-                caller = "sync_room_progress"
-                break
-            elif "_ensure_interaction_ready" in frame.name:
-                caller = "_ensure_interaction_ready"
-                break
-
-        print(f"[APPLY_STATE] Phase: {phase}, Version: {room.get('updated_at', '?')}, Caller: {caller}")
-
-        if caller == "unknown":
-            caller_frame = stack[-2]
-            print(f"[APPLY_STATE] UNKNOWN CALLER: {caller_frame.filename}:{caller_frame.lineno} in {caller_frame.name}")
-
-        self._set_room_exit_button(self._is_match_active())
-        countdown_left = int(self.room_state.get("countdown_left_sec") or 0)
-        round_left = int(self.room_state.get("round_left_sec") or 0)
-        explainer_name = room.get("current_explainer") or "—"
-        server_mic_muted_raw = self.room_state.get("explainer_mic_muted")
-        if server_mic_muted_raw is None and isinstance(room, dict):
-            server_mic_muted_raw = room.get("explainer_mic_muted")
-        server_mic_muted = bool(server_mic_muted_raw) if server_mic_muted_raw is not None else True
-        server_mic_state = (
-            (self.room_state.get("explainer_mic_state") or viewer.get("explainer_mic_state") or "").strip().lower()
-        )
-
-        room_name = room.get("room_name", "Комната")
-        code = room.get("code", self.room_code)
-        host_name = room.get("host_name") or ""
-        players_count = int(room.get("players_count") or len(players) or 0)
-        max_players = int(room.get("max_players") or max(players_count, 1))
-        players_text = f"{players_count}/{max_players}"
-        profile_map = self._profile_map()
-        score_map = {
-            (score_entry.get("player_name") or "").strip().lower(): int(score_entry.get("score") or 0)
-            for score_entry in scores
-        }
-        explainer_profile = profile_map.get((explainer_name or "").strip().lower())
+        logger.debug("[_apply_state] ENTRY")
         try:
-            remote_starts_count = int((room or {}).get("starts_count") or 0)
-        except (TypeError, ValueError):
-            remote_starts_count = 0
-        if remote_starts_count > self._local_starts_count:
-            self._local_starts_count = remote_starts_count
+            room = self.room_state.get("room", {})
+            logger.debug("[_apply_state] Got room dict")
 
-        self.room_meta_label.text = f"{room_name} | Код: {code} | Игроков: {players_text}"
-        if phase == "round":
-            self.players_wrap_title.text = f"Игроки и очки • {players_text}"
-        else:
-            self.players_wrap_title.text = f"Игроки в комнате • {players_text}"
-        self.players_label.text = f"Игроков: {players_text}"
+            incoming_version = (room.get("updated_at") or "")
+            logger.debug(f"[_apply_state] incoming_version={incoming_version}")
 
-        if phase == "round":
-            self.players_wrap_title.text = f"Игроки • {players_text}"
+            if self._room_state_version and incoming_version:
+                is_older = incoming_version < self._room_state_version
+                if is_older:
+                    print(f"[APPLY_STATE] SKIPPED - old state. incoming={incoming_version} < current={self._room_state_version}")
+                    return
 
-        explainer_can_only_voice = is_explainer and phase == "round"
-        explainer_chat_locked = self._explainer_chat_locked()
-        explainer_round = explainer_can_only_voice
+            players = self.room_state.get("players", [])
+            scores = self.room_state.get("scores", [])
+            messages = self.room_state.get("messages", [])
+            viewer = self._viewer_state()
 
-        round_active = phase == "round"
-        self.brand_title.height = dp(0) if round_active else self.brand_title_height
-        self.brand_title.opacity = 0 if round_active else 1
-        if phase == "round":
-            self.chat_card._bg_color.rgba = (0.05, 0.09, 0.15, 0.24 if is_explainer else 0.30)
-            self.chat_card._border_color.rgba = (1, 1, 1, 0.08)
-            self.chat_card._shadow_color.rgba = (0, 0, 0, 0.05)
-            self.chat_title.color = COLORS["text"]
-        else:
-            self.chat_card._bg_color.rgba = COLORS["surface"]
-            self.chat_card._border_color.rgba = COLORS["outline"]
-            self.chat_card._shadow_color.rgba = (0, 0, 0, 0.24)
-            self.chat_title.color = COLORS["text"]
+            player_name = self._player_name() or ""
+            is_explainer = self._is_explainer()
+            phase = self._current_phase()
 
-        can_chat = self._can_send_chat()
-        if explainer_can_only_voice:
-            self._set_word_text(self.room_state.get("current_word"))
-            self.chat_input.hint_text = "Объясняющий не пишет в чат."
-            self._set_mic_enabled(self._can_toggle_mic())
-        else:
-            self._set_word_text("Слово скрыто")
-            if explainer_chat_locked:
+            stack = traceback.extract_stack()
+            caller = "unknown"
+            for frame in reversed(stack[-8:-1]):
+                if "finish_start_game" in frame.name:
+                    caller = "finish_start_game"
+                    break
+                elif "_finish_poll_state" in frame.name:
+                    caller = "polling"
+                    break
+                elif "on_pre_enter" in frame.name:
+                    caller = "on_pre_enter"
+                    break
+                elif "_finish_rejoin_state" in frame.name:
+                    caller = "rejoin"
+                    break
+                elif "_send_chat_message" in frame.name:
+                    caller = "_send_chat_message"
+                    break
+                elif "_skip_word" in frame.name:
+                    caller = "_skip_word"
+                    break
+                elif "_finish_toggle_mic" in frame.name:
+                    caller = "_finish_toggle_mic"
+                    break
+                elif "sync_room_progress" in frame.name:
+                    caller = "sync_room_progress"
+                    break
+                elif "_ensure_interaction_ready" in frame.name:
+                    caller = "_ensure_interaction_ready"
+                    break
+
+            print(f"[APPLY_STATE] Phase: {phase}, Version: {room.get('updated_at', '?')}, Caller: {caller}")
+
+            if caller == "unknown":
+                caller_frame = stack[-2]
+                print(f"[APPLY_STATE] UNKNOWN CALLER: {caller_frame.filename}:{caller_frame.lineno} in {caller_frame.name}")
+
+            self._set_room_exit_button(self._is_match_active())
+            countdown_left = int(self.room_state.get("countdown_left_sec") or 0)
+            round_left = int(self.room_state.get("round_left_sec") or 0)
+            explainer_name = room.get("current_explainer") or "—"
+            server_mic_muted_raw = self.room_state.get("explainer_mic_muted")
+            if server_mic_muted_raw is None and isinstance(room, dict):
+                server_mic_muted_raw = room.get("explainer_mic_muted")
+            server_mic_muted = bool(server_mic_muted_raw) if server_mic_muted_raw is not None else True
+            server_mic_state = (
+                (self.room_state.get("explainer_mic_state") or viewer.get("explainer_mic_state") or "").strip().lower()
+            )
+
+            room_name = room.get("room_name", "Комната")
+            code = room.get("code", self.room_code)
+            host_name = room.get("host_name") or ""
+            players_count = int(room.get("players_count") or len(players) or 0)
+            max_players = int(room.get("max_players") or max(players_count, 1))
+            players_text = f"{players_count}/{max_players}"
+            profile_map = self._profile_map()
+            score_map = {
+                (score_entry.get("player_name") or "").strip().lower(): int(score_entry.get("score") or 0)
+                for score_entry in scores
+            }
+            explainer_profile = profile_map.get((explainer_name or "").strip().lower())
+            try:
+                remote_starts_count = int((room or {}).get("starts_count") or 0)
+            except (TypeError, ValueError):
+                remote_starts_count = 0
+            if remote_starts_count > self._local_starts_count:
+                self._local_starts_count = remote_starts_count
+
+            self.room_meta_label.text = f"{room_name} | Код: {code} | Игроков: {players_text}"
+            if phase == "round":
+                self.players_wrap_title.text = f"Игроки и очки • {players_text}"
+            else:
+                self.players_wrap_title.text = f"Игроки в комнате • {players_text}"
+            self.players_label.text = f"Игроков: {players_text}"
+
+            if phase == "round":
+                self.players_wrap_title.text = f"Игроки • {players_text}"
+
+            explainer_can_only_voice = is_explainer and phase == "round"
+            explainer_chat_locked = self._explainer_chat_locked()
+            explainer_round = explainer_can_only_voice
+
+            round_active = phase == "round"
+            self.brand_title.height = dp(0) if round_active else self.brand_title_height
+            self.brand_title.opacity = 0 if round_active else 1
+            if phase == "round":
+                self.chat_card._bg_color.rgba = (0.05, 0.09, 0.15, 0.24 if is_explainer else 0.30)
+                self.chat_card._border_color.rgba = (1, 1, 1, 0.08)
+                self.chat_card._shadow_color.rgba = (0, 0, 0, 0.05)
+                self.chat_title.color = COLORS["text"]
+            else:
+                self.chat_card._bg_color.rgba = COLORS["surface"]
+                self.chat_card._border_color.rgba = COLORS["outline"]
+                self.chat_card._shadow_color.rgba = (0, 0, 0, 0.24)
+                self.chat_title.color = COLORS["text"]
+
+            can_chat = self._can_send_chat()
+            if explainer_can_only_voice:
+                self._set_word_text(self.room_state.get("current_word"))
                 self.chat_input.hint_text = "Объясняющий не пишет в чат."
+                self._set_mic_enabled(self._can_toggle_mic())
             else:
-                self.chat_input.hint_text = "Пиши догадку в чат..." if phase == "round" else "Сообщение в чат..."
-            self._set_mic_enabled(False)
-            self._set_mic_muted(True)
-        if phase == "round" and is_explainer and self._mic_is_muted() != server_mic_muted:
-            self._set_mic_muted(server_mic_muted)
-        self._set_chat_input_visibility(can_chat)
-        if phase == "round":
-            self._mount_chat_overlay(can_chat, is_explainer=is_explainer)
-        else:
-            self._mount_chat_in_column()
-
-        voice_active = bool(self.room_state.get("voice_active"))
-        voice_speaker = self.room_state.get("voice_speaker")
-        if phase != "round":
-            mic_state_text = "ожидает старт"
-        elif server_mic_state == "speaking" or (voice_active and self._same_player(voice_speaker, explainer_name)):
-            mic_state_text = "говорит"
-        elif server_mic_state == "off" or server_mic_muted:
-            mic_state_text = "выключен"
-        elif server_mic_state == "on":
-            mic_state_text = "включен"
-        else:
-            mic_state_text = "молчит"
-        self.explainer_card.set_explainer(explainer_name, explainer_profile, mic_state_text)
-        if not self.voice_engine.available:
-            self.voice_status.text = "Голос недоступен на этом устройстве."
-        elif self._mic_is_muted():
-            self.voice_status.text = "Выключен"
-        elif voice_active and self._same_player(voice_speaker, explainer_name):
-            self.voice_status.text = "Говоришь"
-        else:
-            self.voice_status.text = "Включен"
-        if phase == "lobby":
-            if self._can_control_start():
-                self.explainer_status_label.text = f"Объясняет слова: {explainer_name} | Ты: хост"
+                self._set_word_text("Слово скрыто")
+                if explainer_chat_locked:
+                    self.chat_input.hint_text = "Объясняющий не пишет в чат."
+                else:
+                    self.chat_input.hint_text = "Пиши догадку в чат..." if phase == "round" else "Сообщение в чат..."
+                self._set_mic_enabled(False)
+                self._set_mic_muted(True)
+            if phase == "round" and is_explainer and self._mic_is_muted() != server_mic_muted:
+                self._set_mic_muted(server_mic_muted)
+            self._set_chat_input_visibility(can_chat)
+            if phase == "round":
+                self._mount_chat_overlay(can_chat, is_explainer=is_explainer)
             else:
-                self.explainer_status_label.text = f"Объясняет слова: {explainer_name} | Ты: отгадывающий"
-            self.wait_host_btn.text = f"Ожидание: {explainer_name} запускает игру"
-        else:
-            self.explainer_status_label.text = f"Объясняет слова: {explainer_name} | Микрофон: {mic_state_text}"
+                self._mount_chat_in_column()
 
-        self._show_explainer_controls(is_explainer, phase)
-        show_players_grid = phase in {"lobby", "round"}
-        players_panel_height = self.players_wrap_round_height if phase == "round" else self.players_wrap_height
-        scores_panel_height = self.scores_wrap_overlay_height if phase == "round" and is_explainer else self.scores_wrap_height
-        self._set_panel_visibility(self.room_meta_wrap, phase not in {"lobby", "round"} and not is_explainer, self.room_meta_wrap_height)
-        self._set_panel_visibility(self.players_wrap, show_players_grid, players_panel_height)
-        self._set_panel_visibility(self.players_summary_wrap, False, self.players_summary_wrap_height)
-        self._set_lobby_action_bar_visibility(
-            self._show_lobby_action_row(phase),
-            self.lobby_start_height,
-        )
-        lobby_bar_visible = phase == "lobby" and self._show_lobby_action_row(phase)
-        self._content_box.padding[3] = dp(10) + (self.lobby_start_height if lobby_bar_visible else 0)
-        self._set_panel_visibility(self.explainer_card, phase in {"countdown", "round"} and not is_explainer, self.explainer_card_height)
-        self._set_panel_visibility(self.word_stage, phase == "round" and is_explainer, self.word_stage_height)
-        self._set_panel_visibility(self.voice_card, False, self.voice_card_height)
-        self._set_panel_visibility(self.scores_wrap, phase == "round" and is_explainer, scores_panel_height)
-        self._set_panel_visibility(self.phase_wrap, phase in {"countdown", "round"}, self.phase_wrap_height)
-        self._content_scroll.disabled = phase in {"countdown", "round"}
-        if phase == "lobby":
-            self.chat_host.size_hint_y = None
-            self.chat_host.height = dp(210)
-        else:
-            self.chat_host.size_hint_y = 1
-            self.chat_host.height = dp(0)
-        if phase == "round" and is_explainer:
-            self.word_push_spacer.size_hint_y = 1
-            self.word_push_spacer.height = dp(0)
-        else:
-            self.word_push_spacer.size_hint_y = None
-            self.word_push_spacer.height = dp(0)
-        self.mic_button_top.opacity = 1 if phase == "round" and is_explainer else 0
-        self.mic_button_top.disabled = not (phase == "round" and is_explainer)
-
-        if phase == "lobby":
-            self.phase_label.text = ""
-            print(f"[PHASE] Hiding countdown overlay (lobby)")
-            self._stop_countdown_timer()
-            self._stop_round_timer()
-            self.countdown_overlay.hide()
-        elif phase == "countdown":
-            self.phase_label.color = COLORS["accent"]
-            self.phase_label.text = f"СТАРТ ЧЕРЕЗ {countdown_left} СЕК"
-            print(f"[PHASE] Showing countdown overlay ({countdown_left} sec)")
-            if countdown_left > 0:
-                self.countdown_overlay.show(countdown_left)
+            voice_active = bool(self.room_state.get("voice_active"))
+            voice_speaker = self.room_state.get("voice_speaker")
+            if phase != "round":
+                mic_state_text = "ожидает старт"
+            elif server_mic_state == "speaking" or (voice_active and self._same_player(voice_speaker, explainer_name)):
+                mic_state_text = "говорит"
+            elif server_mic_state == "off" or server_mic_muted:
+                mic_state_text = "выключен"
+            elif server_mic_state == "on":
+                mic_state_text = "включен"
             else:
-                self.countdown_overlay.show(1)
-            if self._countdown_event is None:
-                server_time = self.room_state.get("server_time", 0)
-                if server_time:
-                    self._start_countdown_timer(server_time, countdown_left)
-        else:
-            self.phase_label.color = COLORS["success"]
-            self.phase_label.text = f"ОСТАЛОСЬ {round_left} СЕК"
-            print(f"[PHASE] Hiding countdown overlay (round)")
-            self._stop_countdown_timer()
-            self.countdown_overlay.hide()
-            if self._round_timer_event is None:
-                server_time = self.room_state.get("server_time", 0)
-                if server_time:
-                    self._start_round_timer(server_time, round_left)
+                mic_state_text = "молчит"
+            self.explainer_card.set_explainer(explainer_name, explainer_profile, mic_state_text)
+            if not self.voice_engine.available:
+                self.voice_status.text = "Голос недоступен на этом устройстве."
+            elif self._mic_is_muted():
+                self.voice_status.text = "Выключен"
+            elif voice_active and self._same_player(voice_speaker, explainer_name):
+                self.voice_status.text = "Говоришь"
+            else:
+                self.voice_status.text = "Включен"
+            if phase == "lobby":
+                if self._can_control_start():
+                    self.explainer_status_label.text = f"Объясняет слова: {explainer_name} | Ты: хост"
+                else:
+                    self.explainer_status_label.text = f"Объясняет слова: {explainer_name} | Ты: отгадывающий"
+                self.wait_host_btn.text = f"Ожидание: {explainer_name} запускает игру"
+            else:
+                self.explainer_status_label.text = f"Объясняет слова: {explainer_name} | Микрофон: {mic_state_text}"
 
-        self._render_player_cards(players, explainer_name, host_name, profile_map, score_map, phase)
-        if phase == "round" and is_explainer:
-            self._sync_word_stage_layout()
+            self._show_explainer_controls(is_explainer, phase)
+            show_players_grid = phase in {"lobby", "round"}
+            players_panel_height = self.players_wrap_round_height if phase == "round" else self.players_wrap_height
+            scores_panel_height = self.scores_wrap_overlay_height if phase == "round" and is_explainer else self.scores_wrap_height
+            self._set_panel_visibility(self.room_meta_wrap, phase not in {"lobby", "round"} and not is_explainer, self.room_meta_wrap_height)
+            self._set_panel_visibility(self.players_wrap, show_players_grid, players_panel_height)
+            self._set_panel_visibility(self.players_summary_wrap, False, self.players_summary_wrap_height)
+            self._set_lobby_action_bar_visibility(
+                self._show_lobby_action_row(phase),
+                self.lobby_start_height,
+            )
+            lobby_bar_visible = phase == "lobby" and self._show_lobby_action_row(phase)
+            self._content_box.padding[3] = dp(10) + (self.lobby_start_height if lobby_bar_visible else 0)
+            self._set_panel_visibility(self.explainer_card, phase in {"countdown", "round"} and not is_explainer, self.explainer_card_height)
+            self._set_panel_visibility(self.word_stage, phase == "round" and is_explainer, self.word_stage_height)
+            self._set_panel_visibility(self.voice_card, False, self.voice_card_height)
+            self._set_panel_visibility(self.scores_wrap, phase == "round" and is_explainer, scores_panel_height)
+            self._set_panel_visibility(self.phase_wrap, phase in {"countdown", "round"}, self.phase_wrap_height)
+            self._content_scroll.disabled = phase in {"countdown", "round"}
+            if phase == "lobby":
+                self.chat_host.size_hint_y = None
+                self.chat_host.height = dp(210)
+            else:
+                self.chat_host.size_hint_y = 1
+                self.chat_host.height = dp(0)
+            if phase == "round" and is_explainer:
+                self.word_push_spacer.size_hint_y = 1
+                self.word_push_spacer.height = dp(0)
+            else:
+                self.word_push_spacer.size_hint_y = None
+                self.word_push_spacer.height = dp(0)
+            self.mic_button_top.opacity = 1 if phase == "round" and is_explainer else 0
+            self.mic_button_top.disabled = not (phase == "round" and is_explainer)
 
-        current_player_score = 0
-        for score_entry in scores:
-            if score_entry.get("player_name") == player_name:
-                try:
-                    current_player_score = int(score_entry.get("score") or 0)
-                except (TypeError, ValueError):
-                    current_player_score = 0
-                break
-        self.score_badge.set_score(current_player_score)
-        self._sync_profile_progress(
-            current_player_score,
-            phase,
-            role="explainer" if is_explainer else "guesser",
-        )
-        self.coin_badge.refresh_from_session()
+            if phase == "lobby":
+                self.phase_label.text = ""
+                print(f"[PHASE] Hiding countdown overlay (lobby)")
+                self._stop_countdown_timer()
+                self._stop_round_timer()
+                self.countdown_overlay.hide()
+            elif phase == "countdown":
+                self.phase_label.color = COLORS["accent"]
+                self.phase_label.text = f"СТАРТ ЧЕРЕЗ {countdown_left} СЕК"
+                print(f"[PHASE] Showing countdown overlay ({countdown_left} sec)")
+                if countdown_left > 0:
+                    self.countdown_overlay.show(countdown_left)
+                else:
+                    self.countdown_overlay.show(1)
+                if self._countdown_event is None:
+                    server_time = self.room_state.get("server_time", 0)
+                    if server_time:
+                        self._start_countdown_timer(server_time, countdown_left)
+            else:
+                self.phase_label.color = COLORS["success"]
+                self.phase_label.text = f"ОСТАЛОСЬ {round_left} СЕК"
+                print(f"[PHASE] Hiding countdown overlay (round)")
+                self._stop_countdown_timer()
+                self.countdown_overlay.hide()
+                if self._round_timer_event is None:
+                    server_time = self.room_state.get("server_time", 0)
+                    if server_time:
+                        self._start_round_timer(server_time, round_left)
 
-        self._render_messages(messages)
-        self._ensure_interaction_ready()
+            self._render_player_cards(players, explainer_name, host_name, profile_map, score_map, phase)
+            if phase == "round" and is_explainer:
+                self._sync_word_stage_layout()
+
+            current_player_score = 0
+            for score_entry in scores:
+                if score_entry.get("player_name") == player_name:
+                    try:
+                        current_player_score = int(score_entry.get("score") or 0)
+                    except (TypeError, ValueError):
+                        current_player_score = 0
+                    break
+            self.score_badge.set_score(current_player_score)
+            self._sync_profile_progress(
+                current_player_score,
+                phase,
+                role="explainer" if is_explainer else "guesser",
+            )
+            self.coin_badge.refresh_from_session()
+
+            logger.debug("[_apply_state] Rendering messages")
+            self._render_messages(messages)
+            logger.debug("[_apply_state] Ensuring interaction ready")
+            self._ensure_interaction_ready()
+            logger.info("[_apply_state] COMPLETED SUCCESSFULLY")
+        except Exception as e:
+            logger.error("[_apply_state] CRASHED", exc_info=True)
+            raise
 
     # ------------------------------------------------------- profile progress
 
