@@ -1,10 +1,13 @@
 """State query mixin for RoomScreen - viewer state, permissions, phase checks."""
 
+import logging
 import time
 
 from kivy.app import App
 
 from services import list_profiles
+
+logger = logging.getLogger(__name__)
 
 
 class RoomStateMixin:
@@ -82,11 +85,19 @@ class RoomStateMixin:
         return self._is_explainer() and self._current_phase() in {"countdown", "round"}
 
     def _can_send_chat(self):
+        logger.debug("[_can_send_chat] ENTRY")
+        logger.debug("[_can_send_chat] Checking _explainer_chat_locked")
         if self._explainer_chat_locked():
+            logger.debug("[_can_send_chat] Returning False (explainer locked)")
             return False
+        logger.debug("[_can_send_chat] Getting viewer state")
         viewer = self._viewer_state()
+        logger.debug(f"[_can_send_chat] Viewer state retrieved: {bool(viewer)}")
         if viewer and "can_send_chat" in viewer:
-            return bool(viewer.get("can_send_chat"))
+            result = bool(viewer.get("can_send_chat"))
+            logger.debug(f"[_can_send_chat] Returning {result} from viewer state")
+            return result
+        logger.debug("[_can_send_chat] Returning False (default)")
         return False
 
     def _can_use_voice(self):
