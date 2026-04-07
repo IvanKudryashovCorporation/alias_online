@@ -61,8 +61,10 @@ def _emit_haptic():
             vibrator.vibrate(effect)
         else:
             vibrator.vibrate(20)
-    except Exception:
-        return
+    except Exception as e:
+        # Haptic feedback not supported on this device
+        import logging
+        logging.getLogger(__name__).debug(f"Haptic feedback failed: {e}")
 
 
 def trigger_tap_feedback(play_sound=True, haptic=True):
@@ -72,8 +74,9 @@ def trigger_tap_feedback(play_sound=True, haptic=True):
             try:
                 sound.stop()
                 sound.play()
-            except Exception:
-                pass
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).debug(f"Sound playback failed: {e}")
 
     if haptic:
         _emit_haptic()

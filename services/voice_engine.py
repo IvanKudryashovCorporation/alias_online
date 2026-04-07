@@ -1,16 +1,21 @@
 import base64
+import logging
 import queue
 import threading
 import time
 
+logger = logging.getLogger(__name__)
+
 try:
     import numpy as np
-except Exception:  # pragma: no cover
+except ImportError as e:
+    logger.warning(f"numpy not available (voice feature disabled): {e}")
     np = None
 
 try:
     import sounddevice as sd
-except Exception:  # pragma: no cover
+except ImportError as e:
+    logger.warning(f"sounddevice not available (voice feature disabled): {e}")
     sd = None
 
 from .room_hub import get_room_voice_chunks, send_room_voice_chunk
@@ -91,16 +96,16 @@ class RoomVoiceEngine:
             try:
                 self._input_stream.stop()
                 self._input_stream.close()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Error stopping input stream: {e}")
             self._input_stream = None
 
         if self._output_stream is not None:
             try:
                 self._output_stream.stop()
                 self._output_stream.close()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.debug(f"Error stopping output stream: {e}")
             self._output_stream = None
 
         self._send_thread = None
@@ -251,7 +256,8 @@ class RoomVoiceEngine:
                     pcm16_b64=payload["pcm16_b64"],
                     sample_rate=payload["sample_rate"],
                 )
-            except Exception:
+            except Exception as e:
+                logger.warning(f"Failed to send voice chunk: {e}")
                 time.sleep(0.2)
 
     def _recv_loop(self):
@@ -266,7 +272,8 @@ class RoomVoiceEngine:
                     player_name=self.player_name,
                     since_id=self._last_voice_id,
                 )
-            except Exception:
+            except Exception as e:
+                logger.debug(f"Failed to receive voice chunks: {e}")
                 time.sleep(0.3)
                 continue
 

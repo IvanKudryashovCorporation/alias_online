@@ -15,12 +15,25 @@ Multiplayer word-guessing game (like Alias/Taboo). Kivy 2.3.1 mobile app (Androi
 - **Server deploy**: Auto-deploys to Render on push (`render.yaml`)
 
 ## Architecture
+
+### New (Post-Refactoring)
 - **Client**: Kivy 2.3.1, Python 3.11, single-activity Android app. Entry point: `main.py`
 - **Server**: `server/room_server.py` — `ThreadingHTTPServer` on Render (free tier, 10-20s cold start). SQLite DB at `/var/data/rooms.db`
-- **Network**: `services/room_hub.py` — HTTP client using `urllib.request`. Raises `ConnectionError` / `ValueError` only. Exponential backoff with retry for 408/425/429/5xx
-- **UI framework**: Custom components in `ui/components.py`, theme/colors in `ui/theme.py`, feedback toasts in `ui/feedback.py`
-- **Screens**: `screens/` — each screen is a separate file. `room_screen.py` is the largest (~2700+ lines)
-- **Services**: `services/room_hub.py` (room API client), `services/profile_store.py` (local profile), `services/email_verification.py`, `services/voice_engine.py`
+- **Configuration**: `config.py` — ALL constants (sizes, timeouts, colors, API endpoints) configured here. Supports env vars with fallbacks.
+- **Network/API**:
+  - `api_client.py` — centralized HTTP client with retry logic, interceptors, unified error handling
+  - `services/room_hub.py` — room API calls (using api_client)
+  - Custom exceptions: `ApiError`, `ConnectionError`, `ValidationError`, `ServerError`
+- **Async Utilities**: `async_utils.py` — `run_async()` wrapper for Thread + Clock.schedule_once pattern to avoid duplication
+- **Logging**: `logging_config.py` — centralized logging setup, all modules use `logging.getLogger(__name__)`
+- **UI framework**: Custom components in `ui/components.py`, theme/colors in `ui/theme.py`, feedback in `ui/feedback.py`
+  - Screens refactored: `room_screen.py` split into mixins (state, voice, chat, layout) + thin main class
+- **Screens**: `screens/` — each screen is a separate file. Large screens (CreateRoom, Registration, StartScreen) still need component breakdown.
+- **Services**:
+  - `services/room_hub.py` (room API client using api_client)
+  - `services/profile_store.py` (local profile storage)
+  - `services/email_verification.py` (email sending)
+  - `services/voice_engine.py` (voice recording/playback)
 
 ## Core Design Principle: Server Authority
 
@@ -58,16 +71,84 @@ Multiplayer word-guessing game (like Alias/Taboo). Kivy 2.3.1 mobile app (Androi
 - Lobby: correct player list, correct roles, only host sees "Start", others see "Waiting"
 - Game: explainer sees word, guessers see chat, only guessers can send messages
 
+## Configuration
+
+All constants are centralized in `config.py`:
+- **Sizes**: `BUTTON_COMPACT_WIDTH`, `BUTTON_NORMAL_HEIGHT`, `SPACING_MD`, `PADDING_LG`, etc.
+- **Timing**: `POLLING_INTERVAL_SECONDS`, `COUNTDOWN_TIMER_INTERVAL`, `GAME_START_WATCHDOG_TIMEOUT`, etc.
+- **Network**: `DEFAULT_LOCAL_ROOM_SERVER_URL`, `REMOTE_GET_ATTEMPTS`, `RETRYABLE_HTTP_STATUSES`, etc.
+- **Game**: `ROOM_CREATION_COST`, `ROOM_EXIT_PENALTY_COINS`, `MESSAGE_HISTORY_MAX_SIZE`, etc.
+- **Colors**: All 47 colors in `COLORS` dict
+- **Env vars**: All constants support env var overrides (e.g., `POLLING_INTERVAL_SECONDS=1.0`, `DEBUG_MODE=true`)
+
+To use: `from config import POLLING_INTERVAL_SECONDS, COLORS`
+
+## Networking & API
+
+### API Client Pattern
+All HTTP requests go through `api_client.ApiClient`:
+```python
+from api_client import get_api_client, ConnectionError, ValidationError
+
+client = get_api_client()
+try:
+    response = client.get("/api/endpoint", params={"key": "value"})
+except ConnectionError as e:
+    print(f"Network error: {e}")
+except ValidationError as e:
+    print(f"Bad request: {e}")
+```
+
+Features:
+- Automatic retry with exponential backoff (configurable retryable statuses)
+- Request/response interceptors for logging
+- SSL verification fallback for mobile
+- Unified exception types
+
+### Async Pattern
+Instead of `Thread + Clock.schedule_once`, use `run_async()`:
+```python
+from async_utils import run_async
+
+def fetch_data():
+    return api_client.get("/api/data")
+
+def on_success(data):
+    self.display_data(data)
+
+def on_error(exc):
+    logger.error(f"Failed: {exc}")
+
+run_async(fetch_data, on_success, on_error)
+```
+
+### Logging
+All modules use standard logging:
+```python
+import logging
+logger = logging.getLogger(__name__)
+logger.info("Message")
+logger.error("Error", exc_info=True)
+```
+
+Call `logging_config.setup_logging()` at app startup (see main.py).
+
 ## Key Technical Patterns
 
-### Network calls must be non-blocking
-Server has 10-20s cold start. ALL network calls from UI must run in background `Thread`, with callback via `Clock.schedule_once` to return to main thread:
+### Network calls must be non-blocking (UPDATED)
+Server has 10-20s cold start. Use `run_async()` for all network calls:
 ```python
 def _do_action(self):
-    Thread(target=self._worker, daemon=True).start()
+    run_async(self._worker, self._on_result, self._on_error)
+
 def _worker(self):
-    result = room_hub.some_call()
-    Clock.schedule_once(lambda dt: self._on_result(result))
+    return room_hub.some_call()
+
+def _on_result(self, result):
+    self.update_ui(result)
+
+def _on_error(self, exc):
+    logger.error(f"Failed: {exc}")
 ```
 
 ### Android text input bug (recurring)
@@ -93,3 +174,31 @@ Labels used for error messages must have `opacity=1` and non-zero `height` when 
 - UI text is in Russian
 - Code (variables, comments, commits) in English
 - User communication: respond in the language the user uses (usually Russian)
+
+## Refactoring Status
+
+### Completed
+✓ Centralized config.py with all constants
+✓ ApiClient abstraction layer (api_client.py)
+✓ Async utilities (async_utils.py) for run_async pattern
+✓ Logging infrastructure (logging_config.py)
+✓ Room screen split into mixins (state, voice, chat, layout)
+
+### In Progress / TODO
+- [ ] Replace all urllib.request calls in services/ with api_client
+- [ ] Add type hints (typing) to all functions (goal: 100% coverage)
+- [ ] Add docstrings to all public classes/functions
+- [ ] Break down monolithic screens (CreateRoom 1056 lines, Registration 1109, StartScreen 797)
+- [ ] Fix security: SSL_VERIFY fallback, remove console logging of sensitive data
+- [ ] Optimize performance: defer canvas operations, increase polling interval to 1.0s
+- [ ] Write unit tests: ApiClient, ValidationError, run_async, state versioning logic
+- [ ] Update all error handling to use new exception types from api_client
+
+### Anti-Patterns to Avoid
+❌ Direct `urllib.request` calls — use ApiClient
+❌ `Thread(...).start() + Clock.schedule_once(...)` duplication — use run_async()
+❌ Magic numbers in code — use config.py
+❌ `except: pass` or bare except — always log with exc_info=True
+❌ No type hints on function signatures
+❌ No docstrings on public methods
+❌ Kivy widget creation in loops without signature check (perf issue)

@@ -42,7 +42,8 @@ def _preload_kivy_input_package():
 
     try:
         import kivy  # local import to keep startup ordering explicit
-    except Exception:
+    except Exception as e:
+        print(f"[STARTUP] Failed to import kivy: {e}", file=sys.stderr)
         return
 
     try:
@@ -51,7 +52,9 @@ def _preload_kivy_input_package():
     except ModuleNotFoundError as exc:
         if getattr(exc, "name", "") != "kivy.input":
             return
-    except Exception:
+        print(f"[STARTUP] kivy.input not found: {exc}", file=sys.stderr)
+    except Exception as e:
+        print(f"[STARTUP] Failed to import kivy.input: {e}", file=sys.stderr)
         return
 
     try:
@@ -84,7 +87,8 @@ _preload_kivy_input_package()
 
 try:
     from kivy.core.window import Window
-except Exception:  # pragma: no cover - keep Android startup resilient
+except Exception as e:  # pragma: no cover - keep Android startup resilient
+    print(f"[STARTUP] Failed to import kivy.core.window: {e}", file=sys.stderr)
     Window = None
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.label import Label
@@ -309,7 +313,8 @@ class AliasApp(App):
         try:
             with urllib.request.urlopen(health_url, timeout=0.35) as response:
                 return response.status == 200
-        except (urllib.error.URLError, TimeoutError):
+        except (urllib.error.URLError, TimeoutError) as e:
+            # Local room server health check failure - not critical for startup
             return False
 
     def _ensure_local_room_server(self):
@@ -325,7 +330,8 @@ class AliasApp(App):
         if platform == "android":
             try:
                 from server.room_server import create_server
-            except Exception:
+            except Exception as e:
+                print(f"[ROOM_SERVER] Failed to import create_server: {e}", file=sys.stderr)
                 self._embedded_room_server = None
                 return
 

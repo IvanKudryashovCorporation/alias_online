@@ -62,70 +62,24 @@ class PendingPasswordReset:
 
 
 def _ensure_env_loaded():
+    """
+    SECURITY: Do NOT load .env.local or runtime config files.
+    All secrets must come from actual environment variables only (CI/CD, sys env).
+    
+    This method is kept for compatibility but is now a no-op to prevent
+    accidental credential leakage from development config files.
+    """
     global _DOTENV_LOADED
     if _DOTENV_LOADED:
         return
     _DOTENV_LOADED = True
-
-    project_root = Path(__file__).resolve().parents[1]
-    candidate_paths = []
-    try:
-        from kivy.app import App
-
-        app = App.get_running_app()
-        user_data_dir = getattr(app, "user_data_dir", None) if app is not None else None
-        if user_data_dir:
-            user_root = Path(user_data_dir)
-            candidate_paths.extend(
-                [
-                    user_root / ".env",
-                    user_root / ".env.local",
-                    user_root / "runtime.env",
-                    user_root / "email.env",
-                ]
-            )
-    except Exception:
-        pass
-
-    candidate_paths.extend(
-        [
-            project_root / ".env",
-            project_root / ".env.local",
-            project_root / "data" / "runtime.env",
-            project_root / "data" / "email.env",
-        ]
+    
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.info(
+        "Email verification using environment variables only. "
+        "Credentials must be set via CI/CD or system environment."
     )
-
-    seen_paths = set()
-    for env_path in candidate_paths:
-        normalized_path = str(env_path.resolve()) if env_path.is_absolute() else str(env_path)
-        if normalized_path in seen_paths:
-            continue
-        seen_paths.add(normalized_path)
-
-        if not env_path.exists():
-            continue
-
-        try:
-            lines = env_path.read_text(encoding="utf-8").splitlines()
-        except OSError:
-            continue
-
-        for line in lines:
-            clean_line = line.strip()
-            if not clean_line or clean_line.startswith("#") or "=" not in clean_line:
-                continue
-            key, value = clean_line.split("=", 1)
-            key = key.strip()
-            value = value.strip()
-            if not key:
-                continue
-
-            if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
-                value = value[1:-1]
-
-            if key not in os.environ:
-                os.environ[key] = value
 
 
 def _safe_int_env(name, default):

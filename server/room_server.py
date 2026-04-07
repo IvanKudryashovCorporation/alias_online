@@ -1295,7 +1295,14 @@ def _transcribe_wav_with_openai(wav_bytes):
     try:
         with urllib.request.urlopen(request, timeout=_OPENAI_TRANSCRIBE_TIMEOUT_SEC) as response:
             payload = json.loads(response.read().decode("utf-8"))
-    except Exception:
+    except urllib.error.URLError as e:
+        print(f"[OPENAI] Network error transcribing audio: {e}", file=sys.stderr)
+        return ""
+    except json.JSONDecodeError as e:
+        print(f"[OPENAI] Invalid JSON response from transcription API: {e}", file=sys.stderr)
+        return ""
+    except Exception as e:
+        print(f"[OPENAI] Failed to transcribe audio: {e}", file=sys.stderr)
         return ""
 
     text = (payload.get("text") or "").strip()

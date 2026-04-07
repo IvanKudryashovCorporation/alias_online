@@ -1,11 +1,14 @@
 """Game state management and transitions for room."""
 
+import logging
 import time
 from threading import Thread
 from kivy.clock import Clock
 from kivy.app import App
 
 from services import ROOM_CREATION_COST, start_room_game
+
+logger = logging.getLogger(__name__)
 
 
 class RoomGameController:
@@ -50,11 +53,11 @@ class RoomGameController:
 
     def start_game(self):
         """Initiate game start sequence."""
-        print(f"[START_GAME] Clicked. Current phase: {self.screen._current_phase()}")
+        logger.debug(f"Start game clicked. Current phase: {self.screen._current_phase()}")
         if self.screen._current_phase() != "lobby":
             self.screen.status_label.color = self.screen.COLORS["warning"]
             self.screen.status_label.text = "Игра уже запущена."
-            print(f"[START_GAME] BLOCKED - phase is not lobby")
+            logger.info("Start game blocked: phase is not lobby")
             return
 
         # Keep action gate aligned with button visibility/source-of-truth from server.
@@ -157,19 +160,19 @@ class RoomGameController:
         """Handle game start response."""
         try:
             token = int(payload.get("token") or 0)
-            print(f"[FINISH_START_GAME] Response arrived. Status: {payload.get('status')}")
+            logger.debug(f"Start game response received. Status: {payload.get('status')}")
             if token != self._start_game_request_token:
-                print(f"[FINISH_START_GAME] Token mismatch: {token} != {self._start_game_request_token}")
+                logger.debug(f"Start game token mismatch: {token} != {self._start_game_request_token}, ignoring")
                 return
 
             self._cancel_start_watchdog()
             if self.screen.manager is None or self.screen.manager.current != self.screen.name:
-                print(f"[FINISH_START_GAME] Screen not active")
+                logger.debug("Screen not active, discarding start game response")
                 return
 
             status = payload.get("status")
             if status != "success":
-                print(f"[FINISH_START_GAME] ERROR - {status}: {payload.get('message')}")
+                logger.warning(f"Start game failed with status={status}: {payload.get('message')}")
                 self.screen.loading_overlay.hide()
                 self.screen.start_game_btn.disabled = not self.can_start_game()
                 self.screen.status_label.color = self.screen.COLORS["warning"] if status == "value_error" else self.screen.COLORS["error"]
@@ -213,11 +216,11 @@ class RoomGameController:
             if isinstance(room_data, dict):
                 self.screen._room_state_version = (room_data.get("updated_at") or "")
             new_phase = updated_state.get("game_phase", "?")
-            print(f"[FINISH_START_GAME] Phase: {old_phase} -> {new_phase}, Version: {self.screen._room_state_version}")
+            logger.info(f"Start game success. Phase: {old_phase} -> {new_phase}, Version: {self.screen._room_state_version}")
             # Now set state AFTER version is locked
             self.screen.room_state = updated_state
             self.screen._apply_state()
-            print(f"[FINISH_START_GAME] After _apply_state(): current phase is {self.screen._current_phase()}")
+            logger.debug(f"After _apply_state(): current phase is {self.screen._current_phase()}")
 
             room_payload = updated_state.get("room") if isinstance(updated_state, dict) else {}
             try:
