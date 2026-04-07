@@ -721,7 +721,9 @@ class RoomLayoutMixin:
                 self.chat_title.color = COLORS["text"]
                 logger.debug("[_apply_state] After chat_title.color assignment")
 
+            logger.debug("[_apply_state] Before _can_send_chat")
             can_chat = self._can_send_chat()
+            logger.debug(f"[_apply_state] After _can_send_chat (can_chat={can_chat})")
             if explainer_can_only_voice:
                 self._set_word_text(self.room_state.get("current_word"))
                 self.chat_input.hint_text = "Объясняющий не пишет в чат."
