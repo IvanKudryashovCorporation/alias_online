@@ -16,6 +16,16 @@ from contextlib import suppress
 
 import config
 
+try:
+    import certifi
+except Exception:  # pragma: no cover - optional dependency fallback
+    certifi = None
+
+try:
+    from kivy.utils import platform as kivy_platform
+except Exception:  # pragma: no cover - keep client usable outside Kivy runtime
+    kivy_platform = ""
+
 logger = logging.getLogger(__name__)
 
 
@@ -108,7 +118,8 @@ class ApiClient:
             ServerError: On 5xx response
         """
         url = self._build_url(endpoint, params)
-        return self._request("GET", url, body=None, max_retries=config.REMOTE_GET_ATTEMPTS)
+        retries = int(self.max_retries) if self.max_retries is not None else config.REMOTE_GET_ATTEMPTS
+        return self._request("GET", url, body=None, max_retries=max(0, retries))
 
     def post(
         self,
@@ -134,7 +145,10 @@ class ApiClient:
         """
         url = self._build_url(endpoint)
         body = json.dumps(data or {}).encode("utf-8")
-        max_retries = config.REMOTE_MUTATION_ATTEMPTS if is_mutation else config.REMOTE_GET_ATTEMPTS
+        if self.max_retries is not None:
+            max_retries = int(self.max_retries)
+        else:
+            max_retries = config.REMOTE_MUTATION_ATTEMPTS if is_mutation else config.REMOTE_GET_ATTEMPTS
         return self._request("POST", url, body=body, max_retries=max_retries)
 
     def _request(
@@ -236,25 +250,47 @@ class ApiClient:
 
     def _urlopen_with_fallback(self, request: urllib.request.Request) -> urllib.response.addinfourl:
         """Open URL with SSL verification fallback for mobile."""
+        parsed = urllib.parse.urlparse(request.full_url)
+        use_https = (parsed.scheme or "").strip().lower() == "https"
+        verified_context = None
+        if use_https and not config.DISABLE_SSL_VERIFY:
+            verified_context = self._build_verified_ssl_context()
+
         try:
+            if verified_context is not None:
+                return urllib.request.urlopen(request, timeout=self.timeout, context=verified_context)
             return urllib.request.urlopen(request, timeout=self.timeout)
         except urllib.error.URLError as e:
-            # SSL fallback for mobile/Render: only on Render hosts + SSL error + flag explicitly enabled
+            is_cert_error = self._looks_like_cert_error(e)
+            # Android/iOS can miss CA chain in bundled Python. If TLS validation fails on
+            # Render, fall back to insecure context to preserve connectivity.
             if (
-                config.DISABLE_SSL_VERIFY
+                is_cert_error
                 and self._is_onrender_host(request.full_url)
-                and self._looks_like_cert_error(e)
+                and (config.DISABLE_SSL_VERIFY or self._is_mobile_platform())
             ):
                 logger.error(
                     f"INSECURE: SSL cert verification disabled for {request.full_url} "
                     f"(Render self-signed cert fallback). Error: {e}"
                 )
-                # Use ssl.create_default_context() with check_hostname=False for better compatibility
                 context = ssl.create_default_context()
                 context.check_hostname = False
                 context.verify_mode = ssl.CERT_NONE
                 return urllib.request.urlopen(request, timeout=self.timeout, context=context)
             raise
+
+    @staticmethod
+    def _is_mobile_platform() -> bool:
+        return (kivy_platform or "").strip().lower() in {"android", "ios"}
+
+    @staticmethod
+    def _build_verified_ssl_context() -> Optional[ssl.SSLContext]:
+        try:
+            if certifi is not None:
+                return ssl.create_default_context(cafile=certifi.where())
+            return ssl.create_default_context()
+        except Exception:
+            return None
 
     @staticmethod
     def _retry_delay(attempt: int) -> float:

@@ -32,6 +32,10 @@ from config import (
     REMOTE_MUTATION_ATTEMPTS,
     CREATE_ROOM_TIMEOUT_SECONDS,
     CREATE_ROOM_MUTATION_ATTEMPTS,
+    VOICE_POLLING_REQUEST_TIMEOUT_SECONDS,
+    VOICE_FETCH_MAX_RETRIES,
+    VOICE_SEND_REQUEST_TIMEOUT_SECONDS,
+    VOICE_SEND_MAX_RETRIES,
 )
 
 ROOM_SERVER_URL_ENV = "ALIAS_ROOM_SERVER_URL"
@@ -298,6 +302,7 @@ def _request_json(
     timeout: float = 7,
     base_url: Optional[str] = None,
     max_retries: Optional[int] = None,
+    realtime: bool = False,
 ) -> Dict[str, Any]:
     """Execute JSON HTTP request with retry, fallback, and local server handling."""
     server_url = _normalize_room_server_url(base_url or room_server_url())
@@ -318,33 +323,41 @@ def _request_json(
             if not ready:
                 raise ConnectionError("Не удалось запустить локальный сервер комнат. Перезапусти приложение.")
 
-    # Warm-up remote server (best effort, non-blocking)
-    if not local_room_server:
+    # Warm-up remote server (best effort, non-blocking).
+    # Realtime voice requests skip this to avoid per-request latency.
+    if not local_room_server and not realtime:
         _ensure_remote_server_awake(server_url)
 
     # Calculate timeouts and retry attempts based on platform and local/remote
     method_name = method.upper().strip()
     calculated_timeout = timeout if timeout is not None else 7.0
 
-    if platform in {"android", "ios"}:
+    if platform in {"android", "ios"} and not realtime:
         calculated_timeout = max(9, int(calculated_timeout))
 
     if local_room_server:
-        calculated_timeout = min(float(calculated_timeout), 4.5)
-    else:
-        if platform in {"android", "ios"}:
-            calculated_timeout = max(float(calculated_timeout), 22.0)
+        if realtime:
+            calculated_timeout = min(float(calculated_timeout), 2.5)
         else:
+            calculated_timeout = min(float(calculated_timeout), 4.5)
+    else:
+        if platform in {"android", "ios"} and not realtime:
+            calculated_timeout = max(float(calculated_timeout), 22.0)
+        elif not realtime:
             calculated_timeout = max(float(calculated_timeout), 15.0)
+        else:
+            calculated_timeout = max(0.6, float(calculated_timeout))
 
     # Determine max retries based on method and local/remote (unless explicitly overridden)
     if max_retries is None:
-        if method_name == "GET":
+        if realtime:
+            max_retries = 0
+        elif method_name == "GET":
             max_retries = REMOTE_GET_ATTEMPTS
         else:
             max_retries = REMOTE_MUTATION_ATTEMPTS
 
-        if local_room_server:
+        if local_room_server and not realtime:
             max_retries = 2
 
     # Create API client with calculated timeout
@@ -363,7 +376,7 @@ def _request_json(
     except ApiConnectionError as e:
         last_transport_error = e
         # Try fallback to public server if we haven't already and it's not local
-        if base_url is None and not local_room_server:
+        if base_url is None and not local_room_server and not realtime:
             fallback_url = _public_room_server_default()
             if fallback_url and fallback_url != server_url:
                 try:
@@ -373,6 +386,7 @@ def _request_json(
                         payload=payload,
                         timeout=timeout,
                         base_url=fallback_url,
+                        realtime=realtime,
                     )
                     set_room_server_url(fallback_url)
                     return response
@@ -897,7 +911,10 @@ def send_room_voice_chunk(
         "POST",
         f"/api/rooms/{urllib.parse.quote(room_code)}/voice-chunk",
         payload=payload,
+        timeout=VOICE_SEND_REQUEST_TIMEOUT_SECONDS,
+        max_retries=VOICE_SEND_MAX_RETRIES,
         base_url=base_url,
+        realtime=True,
     )
 
 
@@ -944,5 +961,7 @@ def get_room_voice_chunks(
         "GET",
         f"/api/rooms/{urllib.parse.quote(room_code)}/voice-chunks?{query}",
         base_url=base_url,
-        timeout=timeout if timeout is not None else 7,
+        timeout=timeout if timeout is not None else VOICE_POLLING_REQUEST_TIMEOUT_SECONDS,
+        max_retries=VOICE_FETCH_MAX_RETRIES,
+        realtime=True,
     )

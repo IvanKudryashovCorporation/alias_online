@@ -447,7 +447,7 @@ class AppTextInput(TextInput):
             background_color=(0, 0, 0, 0),
             foreground_color=COLORS["input_text"],
             disabled_foreground_color=COLORS["input_text"],
-            hint_text_color=(0.20, 0.24, 0.30, 0.96),
+            hint_text_color=(0.05, 0.07, 0.10, 1),
             cursor_color=COLORS["input_text"],
             selection_color=(0.18, 0.22, 0.3, 0.22),
             use_bubble=False,
@@ -460,8 +460,8 @@ class AppTextInput(TextInput):
         )
 
         self._corner_radius = dp(22)
-        self._base_hint_color = (0.22, 0.26, 0.32, 1)
-        self._muted_hint_color = (0.28, 0.33, 0.40, 1)
+        self._base_hint_color = (0.05, 0.07, 0.10, 1)
+        self._muted_hint_color = (0.09, 0.12, 0.17, 0.92)
         self._color_guard_events = []
         self._persistent_guard_event = None
         self._last_text_color = COLORS["input_text"]

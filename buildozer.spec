@@ -8,7 +8,7 @@ source.include_exts = py,png,jpg,jpeg,webp,bmp,ttf,kv,atlas,txt,csv,json,md,env,
 source.exclude_dirs = venv,.git,__pycache__,bin,dist,build,.buildozer
 source.exclude_patterns = *.pyc,*.pyo,data/*.db,data/_*.db
 
-version = 1.1.0
+version = 1.1.3
 requirements = python3,kivy==2.3.1,pyjnius,filetype,certifi
 orientation = portrait
 fullscreen = 1
@@ -22,7 +22,7 @@ android.ndk_api = 24
 android.accept_sdk_license = True
 android.enable_androidx = True
 android.permissions = INTERNET,ACCESS_NETWORK_STATE,VIBRATE,READ_MEDIA_IMAGES,RECORD_AUDIO
-android.archs = arm64-v8a,armeabi-v7a,x86_64
+android.archs = arm64-v8a,armeabi-v7a
 android.debug_artifact = apk
 android.release_artifact = apk
 android.allow_backup = False
@@ -32,4 +32,4 @@ presplash.color = #4fa4d6
 
 [buildozer]
 log_level = 2
-warn_on_root = 1
+warn_on_root = 0

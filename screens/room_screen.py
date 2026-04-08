@@ -15,6 +15,7 @@ from kivy.uix.scrollview import ScrollView
 from kivy.uix.screenmanager import Screen
 from kivy.uix.widget import Widget
 
+import config
 from services import RoomVoiceEngine
 from controllers import RoomGameController, RoomPollingController
 
@@ -68,7 +69,10 @@ class RoomScreen(RoomStateMixin, RoomVoiceMixin, RoomChatMixin, RoomLayoutMixin,
         self._last_chat_signature = None
         self._leave_sent = False
         self.leave_confirm_popup = None
-        self.voice_engine = RoomVoiceEngine()
+        self.voice_engine = RoomVoiceEngine(
+            sample_rate=config.VOICE_SAMPLE_RATE,
+            block_frames=config.VOICE_BLOCK_FRAMES,
+        )
         self._mic_muted_state = True
         self._start_game_scheduled = False
         self._last_start_attempt_ts = 0.0

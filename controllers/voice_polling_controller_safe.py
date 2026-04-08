@@ -24,7 +24,7 @@ class VoicePollingController:
             self._poll_in_flight = False
             self._poll_token = 0
             self._poll_started_at = 0.0
-            self._poll_current_interval = config.POLLING_INTERVAL_SECONDS
+            self._poll_current_interval = config.VOICE_POLLING_INTERVAL_SECONDS
             self._poll_consecutive_errors = 0
             self._last_voice_id = 0
             self._room_code = ""
@@ -68,7 +68,7 @@ class VoicePollingController:
 
             logger.debug("[VoicePollingController.start_polling] Resetting state")
             self._last_voice_id = 0
-            self._poll_current_interval = config.POLLING_INTERVAL_SECONDS
+            self._poll_current_interval = config.VOICE_POLLING_INTERVAL_SECONDS
             self._poll_consecutive_errors = 0
             self._poll_token = 0
             self._is_polling_active = True
@@ -134,10 +134,10 @@ class VoicePollingController:
         """Increase polling interval after error."""
         try:
             self._poll_consecutive_errors += 1
-            new_interval = config.POLLING_INTERVAL_SECONDS * (
-                config.POLLING_ERROR_BACKOFF_FACTOR ** self._poll_consecutive_errors
+            new_interval = config.VOICE_POLLING_INTERVAL_SECONDS * (
+                config.VOICE_POLLING_ERROR_BACKOFF_FACTOR ** self._poll_consecutive_errors
             )
-            self._poll_current_interval = min(new_interval, config.POLLING_MAX_BACKOFF_SECONDS)
+            self._poll_current_interval = min(new_interval, config.VOICE_POLLING_MAX_BACKOFF_SECONDS)
             logger.warning(
                 f"[VoicePollingController._apply_poll_backoff] "
                 f"Error #{self._poll_consecutive_errors}, backoff to {self._poll_current_interval:.2f}s"
@@ -155,7 +155,7 @@ class VoicePollingController:
                     f"Resetting {self._poll_consecutive_errors} errors"
                 )
                 self._poll_consecutive_errors = 0
-                self._poll_current_interval = config.POLLING_INTERVAL_SECONDS
+                self._poll_current_interval = config.VOICE_POLLING_INTERVAL_SECONDS
                 self._reschedule_polling()
         except Exception as e:
             logger.error(f"[VoicePollingController._reset_poll_backoff] CRASHED: {e}", exc_info=True)
@@ -203,10 +203,12 @@ class VoicePollingController:
         with self._poll_lock:
             # Check if already in flight
             if self._poll_in_flight:
-                if self._poll_started_at > 0 and (time.time() - self._poll_started_at) > 9.0:
+                if self._poll_started_at > 0 and (
+                    time.time() - self._poll_started_at
+                ) > config.VOICE_POLLING_INFLIGHT_TIMEOUT_SECONDS:
                     logger.warning(
                         f"[VoicePollingController._poll_voice_impl] "
-                        f"Request timeout (9s), marking as complete"
+                        f"Request timeout ({config.VOICE_POLLING_INFLIGHT_TIMEOUT_SECONDS:.1f}s), marking as complete"
                     )
                     self._poll_in_flight = False
                     self._poll_started_at = 0.0
@@ -301,7 +303,7 @@ class VoicePollingController:
                 player_name=player_name,
                 since_id=since_id if since_id > 0 else 0,
                 client_id=client_id,
-                timeout=4,
+                timeout=config.VOICE_POLLING_REQUEST_TIMEOUT_SECONDS,
             )
 
             chunks = response.get("chunks", [])

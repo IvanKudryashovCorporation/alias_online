@@ -614,8 +614,42 @@ class AliasApp(App):
         if not self.has_session_access():
             manager.current = "entry"
 
+    def _ensure_android_runtime_permissions(self):
+        if platform != "android":
+            return
+        try:
+            from android.permissions import Permission, check_permission, request_permissions
+        except Exception as error:
+            logger.debug(f"[PERMISSIONS] Android runtime permissions API unavailable: {error}")
+            return
+
+        required_permissions = [Permission.RECORD_AUDIO]
+        missing_permissions = []
+        for permission_name in required_permissions:
+            try:
+                if not check_permission(permission_name):
+                    missing_permissions.append(permission_name)
+            except Exception:
+                missing_permissions.append(permission_name)
+
+        if not missing_permissions:
+            return
+
+        def _on_permissions(permissions, grants):
+            try:
+                for permission_name, granted in zip(list(permissions or []), list(grants or [])):
+                    logger.info(f"[PERMISSIONS] {permission_name} granted={bool(granted)}")
+            except Exception:
+                logger.info("[PERMISSIONS] Runtime permission callback completed.")
+
+        try:
+            request_permissions(missing_permissions, _on_permissions)
+        except Exception as error:
+            logger.warning(f"[PERMISSIONS] Failed to request runtime permissions: {error}")
+
     def on_start(self):
         if platform == "android":
+            self._ensure_android_runtime_permissions()
             self._prime_startup_redraw(4.0)
             if os.getenv("ALIAS_DEBUG_UI_DUMP", "").strip() == "1":
                 Clock.schedule_once(lambda *_: self._debug_dump_ui("start+1s"), 1.0)
